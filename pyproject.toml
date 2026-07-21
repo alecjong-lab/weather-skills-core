@@ -27,6 +27,14 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/weather_skills_core"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # zarr-python warns on every consolidated write; consolidated=True is part
+    # of the envelope contract, so the warning is expected noise in tests.
+    "ignore:Consolidated metadata is currently not part in the Zarr format 3 specification",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

@@ -227,6 +227,8 @@ def weather_skill(
         raise ValueError(f"bbox must be None, 'optional', or 'required', not {bbox!r}")
     if variable not in (None, "single", "repeat"):
         raise ValueError(f"variable must be None, 'single', or 'repeat', not {variable!r}")
+    if start_time != end_time:
+        raise ValueError("start_time and end_time must be enabled together")
     png_labels = history_labels if history_labels is not None else input_names
     if output_type == PNG and len(input_types) > 1:
         if png_labels is None or len(png_labels) != len(input_types):
