@@ -25,7 +25,7 @@ body holds only domain logic.
 
 | Class | Declaration shape | Function returns |
 | --- | --- | --- |
-| Transform | `input_type` + zarr `output_type` | a Dataset |
+| Transform | `input_type` + zarr `output_type` (or `"same"`) | a Dataset |
 | Fetcher | no `input_type`, zarr `output_type`, `source=` | a Dataset |
 | Streaming fetcher | fetcher + `streaming=True` | a generator of per-period Datasets |
 | Plot | `input_type` + `output_type="png"` | a matplotlib Figure |
@@ -85,19 +85,66 @@ Declaration surface (all keyword-only after `name`, `version`):
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
   receives one list of datasets).
-- `output_type` — `None`, a zarr envelope type, or `"png"`.
+- `output_type` — `None`, a zarr envelope type, `"same"`, or `"png"`.
+  `"same"` declares a shape-preserving transform: the output is whatever
+  envelope type the input carries. Use it (instead of hard-coding one zarr
+  type) when `input_type` admits several shapes (`"gridded|forecast"`,
+  `"any"`) and the skill preserves whichever came in. It requires at least
+  one declared zarr input and writes through the zarr path exactly like an
+  explicit zarr type.
 - Standard flags, enabled by toggles and passed as keyword arguments:
   `start_time`/`end_time` (`--start`/`--end`), `date` (`--date`), `bbox`
   (`"required"` or `"optional"`; the function receives a parsed
   `(N, W, S, E)` tuple), `variable` (`"single"` or `"repeat"`), `workers`
-  (pass the default int), `title`, `dims`, `time_dim`.
+  (pass the default int), `title`, `dims`, `time_dim`. Standard toggles
+  carry fixed, decorator-owned help text; a per-flag help string can only
+  be set on `extra_args` entries (the dict spec's `help` key).
 - `extra_args` — dest name to a bare type (`int`; `bool` makes a store-true
   flag), a constraint set (`{int, range(0, 2)}` derives `choices`), or an
-  argparse-keyword dict (supports `positional`, `flag`, `aliases`, `repeat`).
+  argparse-keyword dict (supports `positional`, `flag`, `aliases`, `repeat`,
+  and any argparse keyword such as `help`).
+- `mutex_groups` — named groups of mutually exclusive `extra_args` (see
+  below).
+- `input_paths=True` — the function also receives an `input_paths` keyword
+  argument: the CLI-given input path(s) as a list of `pathlib.Path`, in
+  input order. Use it for diagnostics and messages that name the inputs; the
+  datasets still arrive positionally, and the paths never enter the recorded
+  provenance args. This is the supported way to learn an input's path — do
+  not fish it out of `ds.encoding`.
 - Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
-  `hash_input`, `completeness_probe`, `validate_args`, `normalize_args`,
-  `exclude_args`, `reference_args`, `history_labels`, `write_encoding`,
-  `append_dim`, `savefig_kwargs`.
+  `cache`, `hash_input`, `completeness_probe`, `validate_args`,
+  `normalize_args`, `exclude_args`, `reference_args`, `history_labels`,
+  `write_encoding`, `append_dim`, `savefig_kwargs`, `cache_hit_label`.
+
+### Mutually exclusive groups
+
+`mutex_groups` maps a group name to a sequence of `extra_args` dests (an
+optional group) or to `{"args": (...), "required": True}`. The decorator
+builds a real argparse mutually exclusive group per entry, so usage renders
+the `(--a | --b)` bracketing and argparse enforces at-most-one (exactly-one
+when required):
+
+```python
+@weather_skill(
+    "downscale", _SKILL_VERSION,
+    input_type="gridded", output_type="gridded",
+    extra_args={
+        "factor": {"type": float, "aliases": ["-f"]},
+        "target_resolution": {"type": float},
+        "reference_grid": {},
+    },
+    mutex_groups={
+        "target": {"args": ("factor", "target_resolution", "reference_grid"),
+                   "required": True},
+    },
+)
+```
+
+Members must be non-positional `extra_args` entries that do not set their own
+`required` (requiredness belongs to the group); a dest may belong to at most
+one group, and a group needs at least two members. Declare groups here —
+never assemble them by reaching into `wrapper.parser._actions` after
+decoration.
 
 The function receives the opened input dataset(s) positionally, then the
 resolved parameters as keyword arguments. Raise
@@ -117,6 +164,7 @@ itself defers them.
     input_type="gridded", output_type="gridded",
     bbox="required", dims=True,
     hash_input=False,  # cheap cache check; hash computed only on a miss
+    cache_hit_label="clip",  # cache-hit line reads "skipping clip."
 )
 def clip_region(ds, bbox, dims):
     """Spatially subset a gridded weather-skills envelope Zarr."""
@@ -125,6 +173,13 @@ def clip_region(ds, bbox, dims):
     lat_dim, lon_dim = detect_spatial_dims(ds, dims)
     return bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
 ```
+
+A typed `input_type="gridded"` composes with `dims=True`: when the caller
+passes `--dims LAT,LON`, input validation checks that the overridden names
+exist on the dataset instead of running CF/heuristic detection, so an input
+with nonstandard dim names validates and reaches the body (the same holds
+for `--time-dim`). Overrides participate only in typed validation; an input
+declared `any` skips all shape checks.
 
 The decorator writes the returned Dataset: it carries the first input's attrs
 forward, stamps the provenance chain, clears encodings, and replaces the
@@ -268,6 +323,11 @@ hit it returns without calling you or touching the store. What you control:
   `--workers` excluded. Use `normalize_args` to canonicalize (sort a repeated
   `--variable`, coerce types) so flag order cannot cause spurious misses, and
   `exclude_args` for any other pure-concurrency or presentation knob.
+- `cache=False` removes the cache check entirely: the function runs and the
+  output is rewritten on every invocation, with the provenance entry still
+  built and stamped. Declare it when a meaningful cache key does not exist
+  or the recompute is cheaper than the check; it is valid only on zarr
+  output types (PNG and no-artifact skills have no cache to disable).
 - `hash_input=False` defers the input content hash until after a cheap cache
   check (the stamped entry still carries the hash). Keep the default when a
   modified same-named input must force a recompute.
@@ -360,6 +420,30 @@ Do not re-implement these in a skill body:
   `write_encoding`, which runs after the clear), `consolidated=True`,
   streaming first-write/append ordering, partial-store rollback on failure.
 
+## Decorator-owned stderr lines
+
+These lines are printed by the decorator; a skill body never re-prints its
+own version of any of them:
+
+- the resolved-dates line for relative date tokens
+  (`resolved "now-1w".."now" -> ... (7 days; ...)`);
+- `Cache hit: <output> already matches requested params; skipping <label>.`
+  — `<label>` defaults to the skill name; set `cache_hit_label` to change
+  the word (e.g. `cache_hit_label="clip"`);
+- `Wrote: <output> (<detail>)` — the default detail is the output's sizes
+  for a standard zarr skill, `<append_dim>=<total>` for a streaming skill,
+  and nothing for a PNG skill. To add or replace detail, return
+  `weather_skills_core.WroteSummary("...")` alongside the output (a tuple:
+  `return ds, WroteSummary("variable 'precip' -> 'rain'")`; combinable with
+  an `EntryOverride`), or yield it from a streaming generator. The text is
+  appended after the default detail unless `replace=True`;
+- the opaque-input warnings (`no upstream weather_skills_history ...`), the
+  incomplete-store re-fetch note, the partial-store removal note, and the
+  malformed-history note.
+
+Everything else the body wants to say goes to stderr under its own wording
+(stdout stays reserved for load-bearing results).
+
 ## Versioning
 
 `_SKILL_VERSION` sits at the top of the script and is passed to the decorator
@@ -376,8 +460,22 @@ one-line assignment shape so the bump tooling's regex continues to match.
 - Dependencies go in the PEP 723 inline header, including
   `weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core`.
   No `uv add`, no shared helper module in the skills repo.
+- The core library declares `cftime` (its zarr reads decode model calendars
+  such as `360_day`/`noleap`) plus `xarray`/`zarr`/`numpy`/`cf-xarray` — but
+  NOT `pandas`, `pint`, or `matplotlib`. The inline header must keep every
+  package the script body itself imports; do not drop a dependency on the
+  assumption that core carries it.
+- A repo-side dependency guard that scans script bodies for `open_zarr`
+  calls (a `check_cftime_deps`-style check) cannot see the reads the
+  decorator performs on the script's behalf, so it will not flag a missing
+  `cftime`; core's own `cftime` dependency is what covers calendar decoding
+  on those reads.
 - Each script has a sibling `<name>.py.lock`, regenerated with
-  `uv lock --script` when the inline dependencies change.
+  `uv lock --script` when the inline dependencies change. Bootstrap window:
+  until the weather-skills-core repo is pushed to the git URL above, `uv
+  lock --script` cannot resolve the core dependency and lock regeneration is
+  impossible — defer the regeneration and record it as a follow-up; never
+  skip it silently or hand-edit a `.py.lock`.
 
 ## Where tests live
 
@@ -417,8 +515,9 @@ Before calling a skill done, confirm:
       failures classified; required env declared in frontmatter metadata.
 - [ ] `write_encoding` sets any controlled time units/calendar and
       `_FillValue`; nothing else touches `.encoding`.
-- [ ] Cache declaration is deliberate: `hash_input`, `normalize_args`,
-      `exclude_args`, `reference_args`, `completeness_probe` each considered.
+- [ ] Cache declaration is deliberate: `cache`, `hash_input`,
+      `normalize_args`, `exclude_args`, `reference_args`,
+      `completeness_probe` each considered.
 - [ ] `_SKILL_VERSION` untouched by hand; PEP 723 header carries the core git
       dependency; `<name>.py.lock` present.
 - [ ] No tests in the skills repo; new behavior is covered in
