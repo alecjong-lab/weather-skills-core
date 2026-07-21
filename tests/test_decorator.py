@@ -656,6 +656,52 @@ class TestExitCodes:
         assert "non-empty" in capsys.readouterr().err
 
 
+class TestUnprefixedErrors:
+    def make_skill(self, exc):
+        @weather_skill("submit-feedback", "0.1.0", extra_args={"body": str})
+        def skill(body):
+            """Submit a feedback body."""
+            raise exc
+
+        return skill
+
+    def test_unprefixed_data_error_exits_1_with_exact_message(self, capsys):
+        skill = self.make_skill(
+            DataError("Body too long: 120 characters over the limit.", prefix=False)
+        )
+        with pytest.raises(SystemExit) as exc:
+            skill(["--body", "x"])
+        assert exc.value.code == 1
+        assert capsys.readouterr().err == "Body too long: 120 characters over the limit.\n"
+
+    def test_unprefixed_usage_error_exits_2_with_exact_message(self, capsys):
+        skill = self.make_skill(UsageError("retry with a shorter body", prefix=False))
+        with pytest.raises(SystemExit) as exc:
+            skill(["--body", "x"])
+        assert exc.value.code == 2
+        assert capsys.readouterr().err == "retry with a shorter body\n"
+
+    def test_default_keeps_error_prefix(self, capsys):
+        skill = self.make_skill(DataError("hard failure"))
+        with pytest.raises(SystemExit) as exc:
+            skill(["--body", "x"])
+        assert exc.value.code == 1
+        assert capsys.readouterr().err == "Error: hard failure\n"
+
+    def test_unprefixed_error_in_zarr_mode(self, tmp_path, gridded_store, capsys):
+        @weather_skill("identity", "0.1.0", input_type="gridded", output_type="gridded")
+        def skill(ds):
+            """Copy the input envelope unchanged."""
+            raise DataError("Body too long: 1 character over the limit.", prefix=False)
+
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(tmp_path / "out.zarr")])
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.endswith("Body too long: 1 character over the limit.\n")
+        assert "Error:" not in err
+
+
 class TestMultiInput:
     def test_fixed_two_inputs(self, tmp_path):
         a = tmp_path / "a.zarr"

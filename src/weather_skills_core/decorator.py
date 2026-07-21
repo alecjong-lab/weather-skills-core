@@ -414,7 +414,8 @@ def weather_skill(
             try:
                 _execute(fn, args)
             except SkillError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
+                message = f"Error: {exc}" if exc.prefix else str(exc)
+                print(message, file=sys.stderr)
                 sys.exit(exc.exit_code)
 
         wrapper.parser = parser
