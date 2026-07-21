@@ -235,6 +235,49 @@ class TestCacheShortCircuit:
         assert chain[-1]["input"]["basename"] == "mid.zarr"
 
 
+class TestCacheDisabled:
+    def test_always_recomputes_and_stamps(self, tmp_path, gridded_store, capsys):
+        calls = []
+        skill = make_identity_skill(calls, cache=False)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert len(calls) == 2
+        assert "Cache hit" not in capsys.readouterr().err
+        chain = history_of(out)
+        assert chain[-1]["skill"] == "identity"
+        assert "hash" in chain[-1]["input"]
+
+    def test_fetcher_always_recomputes(self, tmp_path):
+        calls = []
+
+        @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", cache=False)
+        def fetch(**params):
+            """Fetch a toy dataset."""
+            calls.append(params)
+            return make_gridded()
+
+        out = tmp_path / "out.zarr"
+        fetch(["-o", str(out)])
+        fetch(["-o", str(out)])
+        assert len(calls) == 2
+        assert history_of(out)[0]["input"] is None
+
+    def test_deferred_hash_still_stamped(self, tmp_path, gridded_store):
+        skill = make_identity_skill([], cache=False, hash_input=False)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert "hash" in history_of(out)[-1]["input"]
+
+    def test_requires_zarr_output(self):
+        with pytest.raises(ValueError, match="cache=False"):
+            weather_skill("x", "0.1.0", input_type="any", output_type="png", cache=False)(
+                lambda ds: None
+            )
+        with pytest.raises(ValueError, match="cache=False"):
+            weather_skill("x", "0.1.0", cache=False)(lambda: None)
+
+
 class TestFetcherMode:
     def make_fetcher(self, calls, **declaration):
         @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", **declaration)

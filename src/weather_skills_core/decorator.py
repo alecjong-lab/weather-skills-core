@@ -152,6 +152,7 @@ def weather_skill(
     latest_resolver=None,
     source=None,
     streaming=False,
+    cache=True,
     hash_input=True,
     completeness_probe=None,
     validate_args=None,
@@ -196,9 +197,12 @@ def weather_skill(
     - ``source`` -- ``weather_skills_source`` value stamped on fetcher output.
     - ``streaming`` -- the function is a generator yielding per-period
       datasets, written as ``mode="w"`` then appends along ``append_dim``.
-    - cache behavior: ``hash_input`` compares the input's content hash in the
-      cache key (``False`` defers the expensive hash until after a cheap
-      check); ``completeness_probe`` (``callable(Path) -> bool``) verifies a
+    - cache behavior: ``cache=False`` disables the cache check entirely -- the
+      function runs and the output is rewritten on every invocation, with the
+      provenance entry still built and stamped (for skills whose recompute is
+      cheaper than a meaningful cache key); ``hash_input`` compares the
+      input's content hash in the cache key (``False`` defers the expensive
+      hash until after a cheap check); ``completeness_probe`` (``callable(Path) -> bool``) verifies a
       candidate fetcher hit actually reads back; ``reference_args`` names
       arg dests holding secondary reference-store paths, content-hashed into
       the entry's ``reference_inputs``.
@@ -221,6 +225,10 @@ def weather_skill(
         raise ValueError(f"unknown output_type {output_type!r}")
     if streaming and output_type not in _ZARR_OUTPUT_TYPES:
         raise ValueError("streaming requires a zarr output_type")
+    if cache is False and output_type not in _ZARR_OUTPUT_TYPES:
+        raise ValueError(
+            "cache=False requires a zarr output_type; PNG and no-artifact skills have no cache"
+        )
     if output_type is None and input_types:
         raise ValueError("no-artifact skills do not declare input_type")
     if bbox not in (None, "optional", "required"):
@@ -504,7 +512,7 @@ def weather_skill(
         if not paths:
             upstream = []
             entry = _provenance.build_entry(name, version, entry_args, None, reference_inputs)
-            if _provenance.cache_hit(
+            if cache and _provenance.cache_hit(
                 out, entry, fetcher=True, completeness_probe=completeness_probe
             ):
                 print(
@@ -521,7 +529,7 @@ def weather_skill(
                 _provenance.input_ref(paths[0], include_hash=hash_input),
                 reference_inputs,
             )
-            if _provenance.cache_hit(out, entry, upstream, compare_hash=hash_input):
+            if cache and _provenance.cache_hit(out, entry, upstream, compare_hash=hash_input):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {name}.",
                     file=sys.stderr,
@@ -547,7 +555,7 @@ def weather_skill(
                 _provenance.multi_input_ref(paths, histories),
                 reference_inputs,
             )
-            if _provenance.cache_hit(out, entry, upstream):
+            if cache and _provenance.cache_hit(out, entry, upstream):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {name}.",
                     file=sys.stderr,
