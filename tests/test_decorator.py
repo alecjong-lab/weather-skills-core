@@ -7,7 +7,7 @@ import pytest
 import xarray as xr
 from conftest import make_gridded
 
-from weather_skills_core import DataError, EntryOverride, UsageError, weather_skill
+from weather_skills_core import DataError, EntryOverride, UsageError, WroteSummary, weather_skill
 from weather_skills_core.decorator import rewrite_bbox_argv
 
 
@@ -1022,6 +1022,110 @@ class TestPngMode:
         plot(["-i", str(mid), "-o", str(tmp_path / "p.png")])
         chain = json.loads(fig.saved["metadata"]["weather_skills_history"])
         assert [e["skill"] for e in chain] == ["identity", "plot"]
+
+
+class TestOutputMessages:
+    def test_cache_hit_label_overrides_skill_word(self, tmp_path, gridded_store, capsys):
+        @weather_skill(
+            "clip-region",
+            "0.1.0",
+            input_type="any",
+            output_type="gridded",
+            cache_hit_label="clip",
+        )
+        def clip_region(ds):
+            """Clip."""
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        clip_region(argv)
+        clip_region(argv)
+        assert "skipping clip." in capsys.readouterr().err
+
+    def test_cache_hit_defaults_to_skill_name(self, tmp_path, gridded_store, capsys):
+        skill = make_identity_skill([])
+        out = tmp_path / "o.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        skill(argv)
+        skill(argv)
+        assert "skipping identity." in capsys.readouterr().err
+
+    def test_wrote_summary_appends_to_default_detail(self, tmp_path, gridded_store, capsys):
+        @weather_skill("rename", "0.1.0", input_type="any", output_type="gridded")
+        def rename(ds):
+            """Rename."""
+            return ds.copy(), WroteSummary("variable 'precip' -> 'rain'")
+
+        rename(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        err = capsys.readouterr().err
+        assert "'time': 2" in err
+        assert "; variable 'precip' -> 'rain')" in err
+
+    def test_wrote_summary_replaces_default_detail(self, tmp_path, gridded_store, capsys):
+        @weather_skill("rename", "0.1.0", input_type="any", output_type="gridded")
+        def rename(ds):
+            """Rename."""
+            return ds.copy(), WroteSummary("variable 'precip' -> 'rain'", replace=True)
+
+        rename(["-i", str(gridded_store), "-o", str(tmp_path / "out.zarr")])
+        err = capsys.readouterr().err
+        assert f"Wrote: {tmp_path / 'out.zarr'} (variable 'precip' -> 'rain')" in err
+        assert "'time': 2" not in err
+
+    def test_wrote_summary_combines_with_entry_override(self, tmp_path, capsys):
+        @weather_skill("f", "0.1.0", output_type="gridded", start_time=True, end_time=True)
+        def fetch(start_time, end_time):
+            """Fetch."""
+            return (
+                make_gridded(),
+                WroteSummary("2 of 31 days"),
+                EntryOverride({"end": "2026-01-02"}),
+            )
+
+        out = tmp_path / "o.zarr"
+        fetch(["--start", "2026-01-01", "--end", "2026-01-31", "-o", str(out)])
+        assert history_of(out)[0]["args"]["end"] == "2026-01-02"
+        assert "; 2 of 31 days)" in capsys.readouterr().err
+
+    def test_unexpected_extra_return_is_type_error(self, tmp_path, gridded_store):
+        @weather_skill("bad", "0.1.0", input_type="any", output_type="gridded")
+        def bad(ds):
+            """Bad return."""
+            return ds.copy(), "not a marker"
+
+        with pytest.raises(TypeError, match="unexpected extra return value"):
+            bad(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+
+    def test_streaming_yielded_summary(self, tmp_path, capsys):
+        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        def fetch():
+            """Stream."""
+            yield make_gridded(n_time=1, start="2026-01-01")
+            yield WroteSummary("1 gap skipped")
+            yield make_gridded(n_time=1, start="2026-01-02")
+
+        fetch(["-o", str(tmp_path / "o.zarr")])
+        assert "(time=2; 1 gap skipped)" in capsys.readouterr().err
+
+    def test_png_summary_fills_empty_default(self, tmp_path, gridded_store, capsys):
+        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        def plot(ds):
+            """Plot."""
+            return FakeFigure(), WroteSummary("2 rows, shared scale")
+
+        out = tmp_path / "p.png"
+        plot(["-i", str(gridded_store), "-o", str(out)])
+        assert f"Wrote: {out} (2 rows, shared scale)" in capsys.readouterr().err
+
+    def test_png_rejects_entry_override(self, tmp_path, gridded_store):
+        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        def plot(ds):
+            """Plot."""
+            return FakeFigure(), EntryOverride({"x": 1})
+
+        with pytest.raises(TypeError, match="unexpected extra return value"):
+            plot(["-i", str(gridded_store), "-o", str(tmp_path / "p.png")])
 
 
 class TestNoArtifactMode:

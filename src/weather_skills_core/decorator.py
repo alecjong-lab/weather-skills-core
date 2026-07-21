@@ -17,6 +17,11 @@ the resolved parameters as keyword arguments, and returns its output:
   (the decorator saves it with provenance embedded in the PNG metadata);
 - anything (ignored) for a no-artifact skill.
 
+An artifact-writing skill may return a tuple -- the output first, followed by
+marker objects: an :class:`EntryOverride` rewriting the recorded provenance
+args (zarr modes) and/or a :class:`WroteSummary` customizing the ``Wrote:``
+stderr line. A streaming skill yields either marker from its generator.
+
 Calling the decorated function runs the CLI on ``sys.argv``; pass ``argv`` to
 run it on an explicit argument list. Usage/validation failures exit 2 and
 occur before any network work; data-availability and hard failures exit 1
@@ -55,6 +60,38 @@ SAME = "same"
 
 
 @dataclass
+class WroteSummary:
+    """Customize the detail of the decorator's ``Wrote:`` stderr line.
+
+    ``detail`` is extra text for the line's parenthetical: appended after the
+    default detail (``"; "``-separated) unless ``replace=True``, which makes
+    it the whole parenthetical. The defaults are the output sizes for a
+    standard zarr skill, ``<append_dim>=<total>`` for a streaming skill, and
+    nothing for a PNG skill.
+
+    A standard-mode skill returns it alongside the dataset -- ``(dataset,
+    WroteSummary(...))``, in any combination with an :class:`EntryOverride`;
+    a PNG skill returns ``(figure, WroteSummary(...))``; a streaming skill
+    yields it from the generator (the last one yielded wins).
+    """
+
+    detail: str
+    replace: bool = False
+
+
+def _wrote_line(output, default_detail, summary):
+    """Compose the ``Wrote:`` stderr line from the default detail and a summary."""
+    if summary is None:
+        detail = default_detail
+    elif summary.replace or not default_detail:
+        detail = summary.detail
+    else:
+        detail = f"{default_detail}; {summary.detail}"
+    suffix = f" ({detail})" if detail else ""
+    return f"Wrote: {output}{suffix}"
+
+
+@dataclass
 class EntryOverride:
     """Post-run provenance-entry rewrite.
 
@@ -68,6 +105,34 @@ class EntryOverride:
     """
 
     args: dict
+
+
+def _split_extras(result, *, allow_override=True):
+    """Unpack a wrapped function's return into ``(primary, override, summary)``.
+
+    A non-tuple return is the primary result alone. A tuple return's first
+    element is the primary result (the dataset or figure); each remaining
+    element must be a marker -- at most one :class:`EntryOverride` (rejected
+    with ``allow_override=False``, i.e. in PNG mode, where the entries are
+    embedded before the function runs) and at most one :class:`WroteSummary`.
+    Anything else raises :class:`TypeError`.
+    """
+    if not isinstance(result, tuple):
+        return result, None, None
+    primary, *extras = result
+    override = summary = None
+    for extra in extras:
+        if allow_override and isinstance(extra, EntryOverride) and override is None:
+            override = extra
+        elif isinstance(extra, WroteSummary) and summary is None:
+            summary = extra
+        else:
+            raise TypeError(
+                f"unexpected extra return value {extra!r}: a tuple return holds the "
+                "output first, then at most one EntryOverride (zarr mode only) and "
+                "at most one WroteSummary"
+            )
+    return primary, override, summary
 
 
 def rewrite_bbox_argv(argv):
@@ -217,6 +282,7 @@ def weather_skill(
     write_encoding=None,
     append_dim="time",
     savefig_kwargs=None,
+    cache_hit_label=None,
     software=_provenance.DEFAULT_SOFTWARE,
 ):
     """Declare a weather skill.
@@ -286,6 +352,11 @@ def weather_skill(
     - PNG: ``history_labels`` gives the per-input suffix for the embedded
       history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
       the ``savefig`` call (default ``{"dpi": 150}``).
+    - stderr messages: ``cache_hit_label`` replaces the skill name as the
+      word after "skipping" in the cache-hit line (default: ``name``); the
+      ``Wrote:`` line's detail is customized by returning or yielding a
+      :class:`WroteSummary` (see its docstring). All other decorator-emitted
+      stderr lines are fixed.
     """
     input_types = _normalize_input_types(input_type)
     if variadic_input and len(input_types) != 1:
@@ -320,6 +391,7 @@ def weather_skill(
     input_dests = [d.replace("-", "_") for d in input_dests]
 
     group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, extra_args)
+    hit_label = cache_hit_label if cache_hit_label is not None else name
 
     def decorate(fn):
         parser = _build_parser(fn)
@@ -577,7 +649,7 @@ def weather_skill(
             chains.append((label, upstream + [entry]))
 
         datasets = _open_inputs(paths, args)
-        fig = _call(fn, datasets, params)
+        fig, _, summary = _split_extras(_call(fn, datasets, params), allow_override=False)
 
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(
@@ -593,7 +665,7 @@ def weather_skill(
             pass
         else:
             plt.close(fig)
-        print(f"Wrote: {args.output}", file=sys.stderr)
+        print(_wrote_line(args.output, "", summary), file=sys.stderr)
 
     def _run_zarr(fn, args, paths, out, entry_args, params):
         # The provenance entry is computed BEFORE the function runs: the entry
@@ -607,7 +679,7 @@ def weather_skill(
                 out, entry, fetcher=True, completeness_probe=completeness_probe
             ):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,
                 )
                 return
@@ -622,7 +694,7 @@ def weather_skill(
             )
             if cache and _provenance.cache_hit(out, entry, upstream, compare_hash=hash_input):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,
                 )
                 return
@@ -648,7 +720,7 @@ def weather_skill(
             )
             if cache and _provenance.cache_hit(out, entry, upstream):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,
                 )
                 return
@@ -667,8 +739,8 @@ def weather_skill(
             _write_streaming(result, out, upstream, entry, args)
             return
 
-        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], EntryOverride):
-            result, override = result
+        result, override, summary = _split_extras(result)
+        if override is not None:
             entry = {**entry, "args": {**entry["args"], **override.args}}
         # Carry the first input's attrs (source metadata, upstream history)
         # under the function's own attrs, then stamp the new chain over both.
@@ -681,7 +753,7 @@ def weather_skill(
             shutil.rmtree(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         result.to_zarr(out, mode="w", consolidated=True)
-        print(f"Wrote: {args.output} ({dict(result.sizes)})", file=sys.stderr)
+        print(_wrote_line(args.output, f"{dict(result.sizes)}", summary), file=sys.stderr)
 
     def _write_streaming(gen, out, upstream, entry, args):
         # First write is mode="w"; later periods append along append_dim.
@@ -694,10 +766,14 @@ def weather_skill(
         # flips and so can never be deleted by the rollback.
         store_created = False
         total = 0
+        summary = None
         try:
             for item in gen:
                 if isinstance(item, EntryOverride):
                     entry = {**entry, "args": {**entry["args"], **item.args}}
+                    continue
+                if isinstance(item, WroteSummary):
+                    summary = item
                     continue
                 piece = item
                 _provenance.stamp_zarr(piece, upstream + [entry], source=source)
@@ -723,7 +799,7 @@ def weather_skill(
             raise
         if not store_created:
             raise DataError(f"{name} produced no data for the requested window; nothing written.")
-        print(f"Wrote: {args.output} ({append_dim}={total})", file=sys.stderr)
+        print(_wrote_line(args.output, f"{append_dim}={total}", summary), file=sys.stderr)
 
     return decorate
 

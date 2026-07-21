@@ -1,6 +1,6 @@
 """Core library for weather skills: CLI, envelope, provenance, and caching."""
 
-from weather_skills_core.decorator import EntryOverride, weather_skill
+from weather_skills_core.decorator import EntryOverride, WroteSummary, weather_skill
 from weather_skills_core.errors import DataError, SkillError, UsageError
 
 __all__ = [
@@ -8,5 +8,6 @@ __all__ = [
     "EntryOverride",
     "SkillError",
     "UsageError",
+    "WroteSummary",
     "weather_skill",
 ]
