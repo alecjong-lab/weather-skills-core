@@ -257,6 +257,7 @@ def weather_skill(
     output_type=None,
     input_names=None,
     variadic_input=False,
+    input_paths=False,
     start_time=False,
     end_time=False,
     date=False,
@@ -300,6 +301,12 @@ def weather_skill(
       ``["forecast", "mclimate"]``), or ``variadic_input=True`` accepts two or
       more ``--input`` repeats of a single declared type (the function then
       receives one list of datasets).
+    - ``input_paths`` -- with ``True``, the function also receives an
+      ``input_paths`` keyword argument: the CLI-given input path(s) as a list
+      of :class:`~pathlib.Path`, in input order (declaration order for
+      ``input_names``, repeat order otherwise). For diagnostics and messages;
+      the datasets still arrive positionally, and the paths never enter the
+      recorded provenance args. Requires a declared ``input_type``.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
       ``"same"``, or ``"png"`` for a Figure-writing skill. ``"same"``
@@ -363,6 +370,8 @@ def weather_skill(
         raise ValueError("variadic_input requires exactly one declared input type")
     if input_names is not None and len(input_names) != len(input_types):
         raise ValueError("input_names must declare one flag per declared input type")
+    if input_paths and not input_types:
+        raise ValueError("input_paths=True requires a declared input_type")
     if output_type not in (None, PNG, SAME, *_ZARR_OUTPUT_TYPES):
         raise ValueError(f"unknown output_type {output_type!r}")
     zarr_output = output_type in (SAME, *_ZARR_OUTPUT_TYPES)
@@ -526,6 +535,8 @@ def weather_skill(
             params["time_dim"] = args.time_dim
         for dest in extra_args or {}:
             params[dest] = getattr(args, dest)
+        if input_paths:
+            params["input_paths"] = list(paths)
 
         if output_type is None:
             fn(**params)

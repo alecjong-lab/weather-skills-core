@@ -1240,6 +1240,75 @@ class TestWriteTail:
         assert "treating input as opaque" in capsys.readouterr().err
 
 
+class TestInputPaths:
+    def test_single_input_receives_path_list(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(calls, input_paths=True)
+        out = tmp_path / "o.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert calls == [{"input_paths": [gridded_store]}]
+        assert isinstance(calls[0]["input_paths"][0], Path)
+        # The paths never enter the recorded provenance args.
+        assert "input_paths" not in history_of(out)[-1]["args"]
+
+    def test_variadic_inputs_in_repeat_order(self, tmp_path):
+        a = tmp_path / "a.zarr"
+        b = tmp_path / "b.zarr"
+        make_gridded(fill=1.0).to_zarr(a, mode="w", consolidated=True)
+        make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
+        received = {}
+
+        @weather_skill(
+            "concat",
+            "0.1.0",
+            input_type="any",
+            output_type="gridded",
+            variadic_input=True,
+            input_paths=True,
+        )
+        def concat(datasets, input_paths):
+            """Concatenate."""
+            received["paths"] = input_paths
+            return datasets[0].copy()
+
+        concat(["-i", str(b), "-i", str(a), "-o", str(tmp_path / "o.zarr")])
+        assert received["paths"] == [b, a]
+
+    def test_named_inputs_in_declaration_order(self, tmp_path, gridded_store):
+        other = tmp_path / "mc.zarr"
+        make_gridded(fill=3.0).to_zarr(other, mode="w", consolidated=True)
+        received = {}
+
+        @weather_skill(
+            "plot-mediogram",
+            "0.1.0",
+            input_type=["any", "any"],
+            output_type="png",
+            input_names=["forecast", "mclimate"],
+            input_paths=True,
+        )
+        def plot_mediogram(forecast_ds, mclimate_ds, input_paths):
+            """Mediogram."""
+            received["paths"] = input_paths
+            return FakeFigure()
+
+        plot_mediogram(
+            [
+                "--mclimate",
+                str(other),
+                "--forecast",
+                str(gridded_store),
+                "-o",
+                str(tmp_path / "p.png"),
+            ]
+        )
+        assert received["paths"] == [gridded_store, other]
+
+    def test_requires_declared_input_type(self):
+        with pytest.raises(ValueError, match="input_paths"):
+            weather_skill("x", "0.1.0", output_type="gridded", input_paths=True)(lambda: None)
+
+
 class TestFunctionParams:
     def test_bbox_and_np_data_roundtrip(self, tmp_path, gridded_store):
         received = {}
