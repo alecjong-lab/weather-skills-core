@@ -349,6 +349,110 @@ class TestCacheShortCircuit:
         assert chain[-1]["input"]["basename"] == "mid.zarr"
 
 
+class TestValidationOverrides:
+    @pytest.fixture
+    def renamed_store(self, tmp_path):
+        path = tmp_path / "renamed.zarr"
+        ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
+        ds.to_zarr(path, mode="w", consolidated=True)
+        return path
+
+    def make_clip_skill(self, calls):
+        @weather_skill(
+            "clip-region",
+            "0.1.0",
+            input_type="gridded",
+            output_type="gridded",
+            bbox="required",
+            dims=True,
+        )
+        def clip_region(ds, bbox, dims):
+            """Clip."""
+            from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
+
+            calls.append(dims)
+            lat_dim, lon_dim = detect_spatial_dims(ds, dims)
+            return bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
+
+        return clip_region
+
+    def test_undetectable_dims_rejected_without_override(self, tmp_path, renamed_store, capsys):
+        skill = self.make_clip_skill([])
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--bbox", "3/10/1/13"])
+        assert exc.value.code == 2
+        assert "Pass --dims" in capsys.readouterr().err
+
+    def test_dims_override_validates_typed_gridded_input(self, tmp_path, renamed_store):
+        calls = []
+        skill = self.make_clip_skill(calls)
+        out = tmp_path / "o.zarr"
+        skill(
+            [
+                "-i",
+                str(renamed_store),
+                "-o",
+                str(out),
+                "--bbox",
+                "2.5/10.5/0.5/12.5",
+                "--dims",
+                "yy,xx",
+            ]
+        )
+        assert calls == ["yy,xx"]
+        written = xr.open_zarr(out, consolidated=True)
+        assert written.sizes["yy"] == 2
+
+    def test_dims_override_naming_absent_dims_exits_2(self, tmp_path, renamed_store, capsys):
+        skill = self.make_clip_skill([])
+        with pytest.raises(SystemExit) as exc:
+            skill(
+                [
+                    "-i",
+                    str(renamed_store),
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                    "--bbox",
+                    "3/10/1/13",
+                    "--dims",
+                    "a,b",
+                ]
+            )
+        assert exc.value.code == 2
+        assert "not in dataset dims" in capsys.readouterr().err
+
+    def test_time_dim_override_validated(self, tmp_path, gridded_store, capsys):
+        calls = []
+        skill = make_identity_skill(calls, time_dim=True)
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--time-dim", "t"])
+        assert exc.value.code == 2
+        assert "not in dataset dims" in capsys.readouterr().err
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--time-dim", "time"])
+        assert calls == [{"time_dim": "time"}]
+
+
+class TestOutputTypeSame:
+    def test_shape_preserving_transform_end_to_end(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(calls, input_type="any", output_type="same")
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert len(calls) == 1  # cache applies as for any zarr output
+        assert history_of(out)[-1]["skill"] == "identity"
+
+    def test_overlap_guard_applies(self, gridded_store):
+        skill = make_identity_skill([], output_type="same")
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(gridded_store)])
+        assert exc.value.code == 2
+
+    def test_requires_a_declared_input(self):
+        with pytest.raises(ValueError, match="declared zarr input"):
+            weather_skill("x", "0.1.0", output_type="same")(lambda: None)
+
+
 class TestCacheDisabled:
     def test_always_recomputes_and_stamps(self, tmp_path, gridded_store, capsys):
         calls = []

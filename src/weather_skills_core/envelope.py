@@ -117,13 +117,27 @@ def detect_type(ds) -> str:
     return GRIDDED
 
 
-def validate_input(ds, allowed, name: str) -> str:
+def validate_input(
+    ds, allowed, name: str, *, dims: str | None = None, time_dim: str | None = None
+) -> str:
     """Validate a dataset against the declared input type(s).
 
     ``allowed`` is a type string or list of type strings from :data:`TYPES`;
     ``name`` labels the input in error messages (usually the path). Returns
     the detected type. Raises :class:`UsageError` naming the offending or
     missing dim/variable when the shape does not match.
+
+    ``dims`` and ``time_dim`` are the user's override flag values (``--dims``
+    as a ``LAT,LON`` string, ``--time-dim`` as a dim name). When ``dims`` is
+    given, the gridded/forecast spatial-dims check validates that the named
+    dims exist instead of running CF/heuristic detection, so an input whose
+    spatial dims detection cannot find still validates under the overridden
+    names (and fails naming them when they are absent). When ``time_dim`` is
+    given, the named dim must exist on the dataset. Overrides participate
+    only in typed validation: an input declared ``any`` skips every shape
+    check, overrides included. Type classification (:func:`detect_type`) is
+    override-independent; it keys on the fixed ``station_id``/``step``/
+    ``time`` names.
     """
     if isinstance(allowed, str):
         allowed = [allowed]
@@ -151,8 +165,12 @@ def validate_input(ds, allowed, name: str) -> str:
                     "('station_id',)."
                 )
     elif actual in (GRIDDED, FORECAST) and ANY not in allowed:
-        # Gridded/forecast envelopes must expose identifiable spatial dims.
-        detect_spatial_dims(ds)
+        # Gridded/forecast envelopes must expose identifiable spatial dims;
+        # a --dims override replaces detection with an existence check.
+        detect_spatial_dims(ds, dims)
+    if time_dim and ANY not in allowed:
+        # A --time-dim override must name an existing dim.
+        detect_time_dim(ds, time_dim)
     return actual
 
 

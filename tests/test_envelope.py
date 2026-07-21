@@ -130,6 +130,27 @@ class TestValidateInput:
         with pytest.raises(ValueError, match="unknown envelope type"):
             envelope.validate_input(make_gridded(), "grid", "in.zarr")
 
+    def test_dims_override_validates_undetectable_gridded(self):
+        ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
+        with pytest.raises(UsageError, match="Pass --dims"):
+            envelope.validate_input(ds, "gridded", "in.zarr")
+        assert envelope.validate_input(ds, "gridded", "in.zarr", dims="yy,xx") == "gridded"
+
+    def test_dims_override_names_must_exist(self):
+        ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
+        with pytest.raises(UsageError, match="not in dataset dims"):
+            envelope.validate_input(ds, "gridded", "in.zarr", dims="a,b")
+
+    def test_time_dim_override_must_exist(self):
+        with pytest.raises(UsageError, match="not in dataset dims"):
+            envelope.validate_input(make_gridded(), "gridded", "in.zarr", time_dim="t")
+        ds = make_gridded().rename({"time": "t"})
+        assert envelope.validate_input(ds, "gridded", "in.zarr", time_dim="t") == "gridded"
+
+    def test_any_skips_override_checks(self):
+        ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
+        assert envelope.validate_input(ds, "any", "in.zarr", dims="a,b", time_dim="t") == "gridded"
+
 
 class TestBboxSubset:
     def test_ascending_latitude(self):

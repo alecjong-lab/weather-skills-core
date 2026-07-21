@@ -51,6 +51,7 @@ _BBOX_OPTIONAL_HELP = "Spatial subset N/W/S/E decimal degrees. Omit for the full
 
 _ZARR_OUTPUT_TYPES = (_envelope.GRIDDED, _envelope.FORECAST, _envelope.STATION)
 PNG = "png"
+SAME = "same"
 
 
 @dataclass
@@ -235,14 +236,24 @@ def weather_skill(
       receives one list of datasets).
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
-      or ``"png"`` for a Figure-writing skill.
+      ``"same"``, or ``"png"`` for a Figure-writing skill. ``"same"``
+      declares a shape-preserving transform: the output is whatever envelope
+      type the (first) input carries, useful for skills whose ``input_type``
+      admits several shapes (``"gridded|forecast"``, ``"any"``, ...). It
+      requires at least one declared zarr input and is written through the
+      zarr path exactly like an explicit zarr type; it asserts nothing new
+      about the output's shape beyond "the input's shape, preserved".
     - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
       relative-or-absolute date grammar; resolved dates are passed to the
       function and recorded in provenance), ``bbox`` (``"required"`` or
       ``"optional"``; parsed to an (N, W, S, E) tuple), ``variable``
       (``"single"`` or ``"repeat"``), ``workers`` (an int default; excluded
       from the cache key), ``title``, ``dims`` (LAT,LON override), and
-      ``time_dim`` (pass a string to set a default).
+      ``time_dim`` (pass a string to set a default). A user-supplied
+      ``--dims``/``--time-dim`` value is honored during input validation:
+      typed inputs are validated against the overridden dim names instead of
+      relying on CF/heuristic detection (see
+      :func:`weather_skills_core.envelope.validate_input`).
     - ``extra_args`` -- mapping of dest name to a bare type, a constraint set
       (``{int, range(0, 2)}``), or an argparse-keyword dict.
     - ``mutex_groups`` -- mapping of group name to either a sequence of
@@ -281,11 +292,14 @@ def weather_skill(
         raise ValueError("variadic_input requires exactly one declared input type")
     if input_names is not None and len(input_names) != len(input_types):
         raise ValueError("input_names must declare one flag per declared input type")
-    if output_type not in (None, PNG, *_ZARR_OUTPUT_TYPES):
+    if output_type not in (None, PNG, SAME, *_ZARR_OUTPUT_TYPES):
         raise ValueError(f"unknown output_type {output_type!r}")
-    if streaming and output_type not in _ZARR_OUTPUT_TYPES:
+    zarr_output = output_type in (SAME, *_ZARR_OUTPUT_TYPES)
+    if output_type == SAME and not input_types:
+        raise ValueError('output_type="same" requires at least one declared zarr input')
+    if streaming and not zarr_output:
         raise ValueError("streaming requires a zarr output_type")
-    if cache is False and output_type not in _ZARR_OUTPUT_TYPES:
+    if cache is False and not zarr_output:
         raise ValueError(
             "cache=False requires a zarr output_type; PNG and no-artifact skills have no cache"
         )
@@ -404,7 +418,7 @@ def weather_skill(
                 raise UsageError(f"{p} not found.")
 
         out = Path(args.output) if output_type is not None else None
-        if output_type in _ZARR_OUTPUT_TYPES:
+        if zarr_output:
             _overlap_guard(paths, out, args)
 
         # Resolve dates and bbox before any provenance or network work: a
@@ -496,13 +510,17 @@ def weather_skill(
             raw = normalize_args(raw)
         return raw
 
-    def _open_inputs(paths):
+    def _open_inputs(paths, args):
         import xarray as xr
 
         if variadic_input:
             declared_per_path = [input_types[0]] * len(paths)
         else:
             declared_per_path = input_types
+        # User-supplied --dims/--time-dim overrides apply to every validated
+        # input: validation checks the overridden names instead of detecting.
+        dims_override = args.dims if dims else None
+        time_dim_override = args.time_dim if time_dim else None
         datasets = []
         for p, declared in zip(paths, declared_per_path, strict=True):
             try:
@@ -512,7 +530,13 @@ def weather_skill(
                     f"{p} is not a readable Zarr store ({type(exc).__name__}: {exc})."
                 ) from None
             # An input may declare alternatives with "|" (e.g. "gridded|forecast").
-            _envelope.validate_input(ds, [t.strip() for t in declared.split("|")], str(p))
+            _envelope.validate_input(
+                ds,
+                [t.strip() for t in declared.split("|")],
+                str(p),
+                dims=dims_override,
+                time_dim=time_dim_override,
+            )
             datasets.append(ds)
         return datasets
 
@@ -552,7 +576,7 @@ def weather_skill(
             )
             chains.append((label, upstream + [entry]))
 
-        datasets = _open_inputs(paths)
+        datasets = _open_inputs(paths, args)
         fig = _call(fn, datasets, params)
 
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -636,7 +660,7 @@ def weather_skill(
                         file=sys.stderr,
                     )
 
-        datasets = _open_inputs(paths)
+        datasets = _open_inputs(paths, args)
         result = _call(fn, datasets, params)
 
         if streaming:
