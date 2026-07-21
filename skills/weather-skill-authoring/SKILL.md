@@ -60,7 +60,7 @@ The script is a PEP 723 single file. Skeleton:
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
-"""One-line summary; becomes the argparse description."""
+"""Module docstring: what the script is. Not read by the decorator."""
 
 from weather_skills_core import weather_skill
 
@@ -77,6 +77,13 @@ def my_skill(ds, ...):
 if __name__ == "__main__":
     my_skill()
 ```
+
+The **function docstring** is the `--help` description: the decorator builds
+the parser with `description=fn.__doc__` and never reads the module
+docstring. When a skill's `--help` description is its full module docstring
+(the standalone-script pattern of `description=__doc__`), that full text must
+live in the function docstring — a shortened function docstring shortens
+`--help`.
 
 Declaration surface (all keyword-only after `name`, `version`):
 
@@ -343,6 +350,29 @@ Everything else — chain append on the first input's trunk, per-branch
 histories for multi-input entries, legacy attribute migration, the
 `weather_skills_source` stamp, PNG metadata keys — the decorator does for you.
 
+### Raw-string parsers and the schema validator
+
+A skill that reads `weather_skills_history` values itself (a provenance
+inspector reading zarr attrs or PNG tEXt keys) uses the functions exported by
+`weather_skills_core.provenance` instead of reimplementing them:
+
+- `parse_chain(raw)` — strict: returns the chain list, or raises
+  `ValueError` with the message `"value is not valid JSON"` or
+  `"value is not a JSON array"` (schema checkers such as
+  `provenance --check` record the raised message as a violation).
+- `coerce_chain(raw, label)` — lenient: returns the chain list, or `None`
+  for a value that is not a JSON array, after a one-line stderr warning
+  naming `label` (the artifact basename or key being read) and pointing at
+  `provenance --check`. A valid array passes through unchanged, even when
+  its entries are imperfect.
+- `validate_chain(chain, loc)` — validates a parsed chain against the entry
+  schema and returns `(violations, notes)`, both lists of location-prefixed
+  strings rooted at `loc`. Violations cover a non-array chain, non-object
+  entries, and missing or mistyped required entry keys
+  (`skill`/`version`/`args`/`input`), recursing into a multi-input entry's
+  nested per-branch `history`; unknown/extra keys land in `notes` and do not
+  fail validation.
+
 ## Units
 
 Units are the single most error-prone surface. For any skill that produces or
@@ -393,6 +423,29 @@ the calling agent what to change, classified where the remedies differ:
 
 Raise `UsageError`/`DataError` with the message; never let a known failure
 mode reach the user as a raw traceback.
+
+### Unprefixed failures
+
+The decorator prints a raised `UsageError`/`DataError` as `Error: <message>`.
+Raising with `prefix=False` prints exactly the given message, with no
+`Error: ` prefix; the exit code is unchanged (2 for `UsageError`, 1 for
+`DataError`):
+
+```python
+raise DataError(f"Body too long: {over} characters over the limit.", prefix=False)
+```
+
+Two surfaces legitimately need this — and both still raise instead of
+calling `sys.exit` (the never-`sys.exit`-from-the-body rule holds):
+
+- exit-code-as-product programs, where the exit code is the skill's result
+  and the printed line is a report rather than an error (`provenance
+  --check` exits 0/1/2 for valid/absent/invalid);
+- machine-consumed retry signals, where a caller parses the stderr text
+  verbatim (submit-feedback's over-budget retry contract: stderr starts
+  `Body too long: ...`).
+
+Everything else keeps the default prefix.
 
 ## Credentials
 
