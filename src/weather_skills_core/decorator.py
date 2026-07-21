@@ -131,6 +131,58 @@ def _add_extra_argument(parser, dest, spec):
     parser.add_argument(flag_name, dest=dest, **kwargs)
 
 
+def _normalize_mutex_groups(mutex_groups, extra_args):
+    """Validate a ``mutex_groups`` declaration against ``extra_args``.
+
+    Returns ``(group_required, dest_to_group)``: the per-group ``required``
+    flag and the dest-to-group-name membership map. Raises :class:`ValueError`
+    for a group naming an undeclared dest, a dest in two groups, a group with
+    fewer than two members, a positional member, or a member carrying its own
+    ``required`` (requiredness belongs to the group).
+    """
+    group_required = {}
+    dest_to_group = {}
+    for group_name, group_spec in (mutex_groups or {}).items():
+        if isinstance(group_spec, dict):
+            unknown = set(group_spec) - {"args", "required"}
+            if unknown:
+                raise ValueError(f"mutex group {group_name!r} has unknown keys {sorted(unknown)}")
+            if "args" not in group_spec:
+                raise ValueError(f"mutex group {group_name!r} must list member dests under 'args'")
+            dests = list(group_spec["args"])
+            required = bool(group_spec.get("required", False))
+        else:
+            dests = list(group_spec)
+            required = False
+        if len(dests) < 2:
+            raise ValueError(f"mutex group {group_name!r} needs at least two member dests")
+        for dest in dests:
+            if dest not in (extra_args or {}):
+                raise ValueError(
+                    f"mutex group {group_name!r} names {dest!r}, which is not an extra_args dest"
+                )
+            if dest in dest_to_group:
+                raise ValueError(
+                    f"extra arg {dest!r} is in both mutex groups "
+                    f"{dest_to_group[dest]!r} and {group_name!r}"
+                )
+            spec = extra_args[dest]
+            if isinstance(spec, dict):
+                if spec.get("positional"):
+                    raise ValueError(
+                        f"mutex group {group_name!r} member {dest!r} is positional; "
+                        "mutually exclusive arguments must be flags"
+                    )
+                if spec.get("required"):
+                    raise ValueError(
+                        f"mutex group {group_name!r} member {dest!r} sets required=True; "
+                        "declare requiredness on the group, not the member"
+                    )
+            dest_to_group[dest] = group_name
+        group_required[group_name] = required
+    return group_required, dest_to_group
+
+
 def weather_skill(
     name,
     version,
@@ -149,6 +201,7 @@ def weather_skill(
     dims=False,
     time_dim=False,
     extra_args=None,
+    mutex_groups=None,
     latest_resolver=None,
     source=None,
     streaming=False,
@@ -192,6 +245,13 @@ def weather_skill(
       ``time_dim`` (pass a string to set a default).
     - ``extra_args`` -- mapping of dest name to a bare type, a constraint set
       (``{int, range(0, 2)}``), or an argparse-keyword dict.
+    - ``mutex_groups`` -- mapping of group name to either a sequence of
+      ``extra_args`` dests (an optional group) or a dict
+      ``{"args": (dests...), "required": True}``. Each group becomes a real
+      argparse mutually exclusive group: at most one member may be given, and
+      ``required=True`` demands exactly one. Members must be non-positional
+      ``extra_args`` entries that do not set their own ``required``; the group
+      name labels the declaration only (argparse mutex groups are untitled).
     - ``latest_resolver`` -- ``callable(args) -> date`` resolving the
       ``latest`` token; invoked lazily, at most once per run.
     - ``source`` -- ``weather_skills_source`` value stamped on fetcher output.
@@ -244,6 +304,8 @@ def weather_skill(
 
     input_dests = list(input_names) if input_names else (["input"] if input_types else [])
     input_dests = [d.replace("-", "_") for d in input_dests]
+
+    group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, extra_args)
 
     def decorate(fn):
         parser = _build_parser(fn)
@@ -321,8 +383,13 @@ def weather_skill(
             if isinstance(time_dim, str):
                 kwargs["default"] = time_dim
             parser.add_argument("--time-dim", **kwargs)
+        groups = {
+            group_name: parser.add_mutually_exclusive_group(required=required)
+            for group_name, required in group_required.items()
+        }
         for dest, spec in (extra_args or {}).items():
-            _add_extra_argument(parser, dest, spec)
+            target = groups.get(dest_to_group.get(dest), parser)
+            _add_extra_argument(target, dest, spec)
         return parser
 
     def _execute(fn, args):

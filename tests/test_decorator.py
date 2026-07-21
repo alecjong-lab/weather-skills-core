@@ -128,6 +128,120 @@ class TestParserConstruction:
             )
 
 
+class TestMutexGroups:
+    def make_select_skill(self, calls, required=True):
+        return make_identity_skill(
+            calls,
+            extra_args={"index": int, "value": str},
+            mutex_groups={"selector": {"args": ("index", "value"), "required": required}},
+        )
+
+    def test_one_member_parses_and_reaches_function(self, tmp_path, gridded_store):
+        calls = []
+        skill = self.make_select_skill(calls)
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--index", "3"])
+        assert calls == [{"index": 3, "value": None}]
+
+    def test_two_members_exit_2(self, tmp_path, gridded_store, capsys):
+        skill = self.make_select_skill([])
+        with pytest.raises(SystemExit) as exc:
+            skill(
+                [
+                    "-i",
+                    str(gridded_store),
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                    "--index",
+                    "3",
+                    "--value",
+                    "x",
+                ]
+            )
+        assert exc.value.code == 2
+        assert "not allowed with" in capsys.readouterr().err
+
+    def test_required_group_with_no_member_exits_2(self, tmp_path, gridded_store, capsys):
+        skill = self.make_select_skill([])
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "is required" in capsys.readouterr().err
+
+    def test_optional_group_allows_no_member(self, tmp_path, gridded_store):
+        calls = []
+        skill = self.make_select_skill(calls, required=False)
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert calls == [{"index": None, "value": None}]
+
+    def test_sequence_shorthand_is_optional_group(self, tmp_path, gridded_store):
+        skill = make_identity_skill(
+            [],
+            extra_args={"index": int, "value": str},
+            mutex_groups={"selector": ("index", "value")},
+        )
+        with pytest.raises(SystemExit) as exc:
+            skill.parser.parse_args(["-i", "a", "-o", "b", "--index", "1", "--value", "x"])
+        assert exc.value.code == 2
+        args = skill.parser.parse_args(["-i", "a", "-o", "b"])
+        assert args.index is None
+
+    def test_usage_renders_group_brackets(self):
+        skill = self.make_select_skill([])
+        assert "(--index INDEX | --value VALUE)" in skill.parser.format_usage()
+
+    def test_aliases_work_inside_group(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            extra_args={
+                "factor": {"type": float, "aliases": ["-f"]},
+                "target_resolution": {"type": float},
+                "reference_grid": {},
+            },
+            mutex_groups={
+                "target": {
+                    "args": ("factor", "target_resolution", "reference_grid"),
+                    "required": True,
+                }
+            },
+        )
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "-f", "2.0"])
+        assert calls[0]["factor"] == 2.0
+        with pytest.raises(SystemExit):
+            skill.parser.parse_args(["-i", "a", "-o", "b", "-f", "2", "--reference-grid", "g"])
+
+    def test_declaration_errors(self):
+        def declare(**kwargs):
+            return weather_skill("x", "0.1.0", **kwargs)(lambda: None)
+
+        with pytest.raises(ValueError, match="not an extra_args dest"):
+            declare(extra_args={"a": int}, mutex_groups={"g": ("a", "b")})
+        with pytest.raises(ValueError, match="at least two"):
+            declare(extra_args={"a": int}, mutex_groups={"g": ("a",)})
+        with pytest.raises(ValueError, match="both mutex groups"):
+            declare(
+                extra_args={"a": int, "b": int, "c": int},
+                mutex_groups={"g1": ("a", "b"), "g2": ("a", "c")},
+            )
+        with pytest.raises(ValueError, match="positional"):
+            declare(
+                extra_args={"a": {"positional": True}, "b": int},
+                mutex_groups={"g": ("a", "b")},
+            )
+        with pytest.raises(ValueError, match="on the group"):
+            declare(
+                extra_args={"a": {"required": True}, "b": int},
+                mutex_groups={"g": ("a", "b")},
+            )
+        with pytest.raises(ValueError, match="unknown keys"):
+            declare(
+                extra_args={"a": int, "b": int},
+                mutex_groups={"g": {"args": ("a", "b"), "exclusive": True}},
+            )
+        with pytest.raises(ValueError, match="under 'args'"):
+            declare(extra_args={"a": int, "b": int}, mutex_groups={"g": {"required": True}})
+
+
 class TestBboxArgv:
     def test_rewrite(self):
         assert rewrite_bbox_argv(["--bbox", "-1/32/-5/42", "-o", "x"]) == [
