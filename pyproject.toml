@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "weather-skills-core"
+version = "0.1.0"
+description = "Core library for weather skills: the @weather_skill decorator owning CLI construction, envelope validation, provenance, cache short-circuit, and output writing."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "cf-xarray>=0.11",
+    "numpy>=2.5",
+    "xarray>=2026.7",
+    "zarr>=3.2",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6",
+    "pytest>=9.1",
+    "ruff>=0.15",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weather_skills_core"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP"]
