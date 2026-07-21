@@ -48,6 +48,147 @@ def hash_zarr(zarr_path: Path) -> str:
     return h.hexdigest()
 
 
+def parse_chain(raw: str) -> list:
+    """Strictly parse a raw ``weather_skills_history`` value into a chain list.
+
+    Raises :class:`ValueError` with the message ``"value is not valid JSON"``
+    when the value does not decode, or ``"value is not a JSON array"`` when it
+    decodes to anything but an array. Schema checkers record the raised
+    message as a violation; lenient render paths use :func:`coerce_chain`.
+    """
+    try:
+        chain = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        raise ValueError("value is not valid JSON") from None
+    if not isinstance(chain, list):
+        raise ValueError("value is not a JSON array")
+    return chain
+
+
+def coerce_chain(raw: str, label: str) -> list | None:
+    """Leniently parse a raw ``weather_skills_history`` value for render paths.
+
+    A value that is present but not a JSON array (non-JSON, or a JSON
+    object/scalar) is malformed under the ``weather_skills_history`` array
+    contract; return ``None`` after a one-line stderr warning naming
+    ``label`` (the artifact basename or key being read) and pointing at
+    ``provenance --check``, so the caller omits the branch. A valid array
+    (including an empty one) passes through unchanged, even when its entries
+    are imperfect.
+    """
+    try:
+        chain = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        chain = None
+    if not isinstance(chain, list):
+        print(
+            f"ignoring malformed weather_skills_history on {label}; "
+            "run `provenance --check` for details",
+            file=sys.stderr,
+        )
+        return None
+    return chain
+
+
+_ENTRY_KNOWN_KEYS = {"skill", "version", "args", "input"}
+_INPUT_ITEM_KNOWN_KEYS = {"basename", "hash", "history"}
+
+
+def _validate_input(value, loc: str, violations: list, notes: list) -> None:
+    """Validate an entry's ``input`` field against the array contract.
+
+    ``input`` is one of: ``null``; a ``{basename, hash}`` dict; or an array of
+    ``{basename, hash}`` dicts, each of which may also carry a nested
+    ``history`` chain (recursively validated). Appends violations and notes in
+    place.
+    """
+    if value is None:
+        return
+
+    def _check_item(item, item_loc: str) -> None:
+        if not isinstance(item, dict):
+            violations.append(f"{item_loc}: input entry is not an object")
+            return
+        if "basename" not in item:
+            violations.append(f"{item_loc}: missing required key 'basename'")
+        elif not isinstance(item["basename"], str):
+            violations.append(f"{item_loc}.basename: must be a string")
+        if "hash" not in item:
+            violations.append(f"{item_loc}: missing required key 'hash'")
+        elif not isinstance(item["hash"], str):
+            violations.append(f"{item_loc}.hash: must be a string")
+        if "history" in item:
+            _validate_chain(item["history"], f"{item_loc}.history", violations, notes)
+        for key in item:
+            if key not in _INPUT_ITEM_KNOWN_KEYS:
+                notes.append(f"{item_loc}: unknown key {key!r}")
+
+    if isinstance(value, list):
+        for j, item in enumerate(value):
+            _check_item(item, f"{loc}[{j}]")
+        return
+    if isinstance(value, dict):
+        _check_item(value, loc)
+        return
+    violations.append(f"{loc}: must be null, an object, or an array of objects")
+
+
+def _validate_chain(chain, loc: str, violations: list, notes: list) -> None:
+    """Validate one chain (an array of entries) against the schema, in place.
+
+    Records every violation with its location into ``violations``; records
+    unknown/extra keys (which do not fail validation) into ``notes``. Recurses
+    into a multi-input entry's ``input[*].history``.
+    """
+    if not isinstance(chain, list):
+        violations.append(f"{loc}: value is not a JSON array")
+        return
+    for i, entry in enumerate(chain):
+        eloc = f"{loc}[{i}]"
+        if not isinstance(entry, dict):
+            violations.append(f"{eloc}: entry is not an object")
+            continue
+        if "skill" not in entry:
+            violations.append(f"{eloc}: missing required key 'skill'")
+        elif not isinstance(entry["skill"], str):
+            violations.append(f"{eloc}.skill: must be a string")
+        elif not entry["skill"]:
+            violations.append(f"{eloc}.skill: must be a non-empty string")
+        if "version" not in entry:
+            violations.append(f"{eloc}: missing required key 'version'")
+        elif not isinstance(entry["version"], str):
+            violations.append(f"{eloc}.version: must be a string")
+        if "args" not in entry:
+            violations.append(f"{eloc}: missing required key 'args'")
+        elif not isinstance(entry["args"], dict):
+            violations.append(f"{eloc}.args: must be an object")
+        if "input" not in entry:
+            violations.append(f"{eloc}: missing required key 'input'")
+        else:
+            _validate_input(entry["input"], f"{eloc}.input", violations, notes)
+        for key in entry:
+            if key not in _ENTRY_KNOWN_KEYS:
+                notes.append(f"{eloc}: unknown key {key!r}")
+
+
+def validate_chain(chain, loc: str) -> tuple[list, list]:
+    """Validate a parsed ``weather_skills_history`` chain against the entry schema.
+
+    Returns ``(violations, notes)``, both lists of location-prefixed strings.
+    Violations cover a non-array chain, non-object entries, missing or
+    mistyped required entry keys (``skill``/``version``/``args``/``input``),
+    and a malformed ``input`` value; a multi-input entry's nested per-branch
+    ``history`` is validated recursively, its findings located under
+    ``<loc>[i].input[j].history``. Unknown/extra keys land in ``notes`` and do
+    not fail validation. ``loc`` prefixes every location (typically the attr
+    or tEXt key name the chain was read from).
+    """
+    violations: list = []
+    notes: list = []
+    _validate_chain(chain, loc, violations, notes)
+    return violations, notes
+
+
 def load_history(zarr_path: Path) -> list:
     """Read an artifact's provenance chain, tolerating absence and malformation.
 
@@ -69,18 +210,8 @@ def load_history(zarr_path: Path) -> list:
         return []
     if not raw:
         return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        parsed = None
-    if not isinstance(parsed, list):
-        print(
-            f"ignoring malformed weather_skills_history on {zarr_path}; "
-            "run `provenance --check` for details",
-            file=sys.stderr,
-        )
-        return []
-    return parsed
+    parsed = coerce_chain(raw, str(zarr_path))
+    return [] if parsed is None else parsed
 
 
 def input_ref(path: Path, *, include_hash: bool = True) -> dict:

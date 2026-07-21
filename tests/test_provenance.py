@@ -81,6 +81,162 @@ class TestLoadHistory:
         assert provenance.load_history(store) == chain
 
 
+class TestParseChain:
+    def test_valid_array(self):
+        chain = [entry()]
+        assert provenance.parse_chain(json.dumps(chain)) == chain
+
+    def test_empty_array(self):
+        assert provenance.parse_chain("[]") == []
+
+    def test_non_json_raises(self):
+        with pytest.raises(ValueError, match="^value is not valid JSON$"):
+            provenance.parse_chain("not json at all")
+
+    def test_none_raises_not_valid_json(self):
+        with pytest.raises(ValueError, match="^value is not valid JSON$"):
+            provenance.parse_chain(None)
+
+    def test_json_object_raises_not_array(self):
+        with pytest.raises(ValueError, match="^value is not a JSON array$"):
+            provenance.parse_chain(json.dumps({"skill": "x"}))
+
+    def test_json_scalar_raises_not_array(self):
+        with pytest.raises(ValueError, match="^value is not a JSON array$"):
+            provenance.parse_chain("42")
+
+
+class TestCoerceChain:
+    def test_valid_array_passes_through(self, capsys):
+        chain = [entry()]
+        assert provenance.coerce_chain(json.dumps(chain), "a.zarr") == chain
+        assert capsys.readouterr().err == ""
+
+    def test_empty_array_passes_through(self, capsys):
+        assert provenance.coerce_chain("[]", "a.zarr") == []
+        assert capsys.readouterr().err == ""
+
+    def test_imperfect_entries_pass_through(self):
+        # Coercion is array-level only: entries missing keys are not touched.
+        chain = [{"unexpected": True}]
+        assert provenance.coerce_chain(json.dumps(chain), "a.zarr") == chain
+
+    def test_non_json_warns_and_returns_none(self, capsys):
+        label = "plot.png (weather_skills_history_a)"
+        assert provenance.coerce_chain("not json at all", label) is None
+        assert capsys.readouterr().err == (
+            "ignoring malformed weather_skills_history on plot.png "
+            "(weather_skills_history_a); run `provenance --check` for details\n"
+        )
+
+    def test_json_object_warns_and_returns_none(self, capsys):
+        assert provenance.coerce_chain(json.dumps({"skill": "x"}), "a.zarr") is None
+        err = capsys.readouterr().err
+        assert err == (
+            "ignoring malformed weather_skills_history on a.zarr; "
+            "run `provenance --check` for details\n"
+        )
+
+    def test_json_scalar_warns_and_returns_none(self, capsys):
+        assert provenance.coerce_chain("42", "a.zarr") is None
+        assert "provenance --check" in capsys.readouterr().err
+
+
+class TestValidateChain:
+    def test_valid_chain(self):
+        violations, notes = provenance.validate_chain([entry(input=None), entry()], "h")
+        assert violations == []
+        assert notes == []
+
+    def test_non_list_chain(self):
+        violations, notes = provenance.validate_chain({"skill": "x"}, "h")
+        assert violations == ["h: value is not a JSON array"]
+        assert notes == []
+
+    def test_non_dict_entry(self):
+        violations, _ = provenance.validate_chain(["nope"], "h")
+        assert violations == ["h[0]: entry is not an object"]
+
+    def test_missing_required_keys(self):
+        violations, _ = provenance.validate_chain([{}], "h")
+        assert violations == [
+            "h[0]: missing required key 'skill'",
+            "h[0]: missing required key 'version'",
+            "h[0]: missing required key 'args'",
+            "h[0]: missing required key 'input'",
+        ]
+
+    def test_mistyped_fields(self):
+        bad = {"skill": 1, "version": 2, "args": [], "input": 3}
+        violations, _ = provenance.validate_chain([bad], "h")
+        assert violations == [
+            "h[0].skill: must be a string",
+            "h[0].version: must be a string",
+            "h[0].args: must be an object",
+            "h[0].input: must be null, an object, or an array of objects",
+        ]
+
+    def test_empty_skill_string(self):
+        violations, _ = provenance.validate_chain([entry(skill="")], "h")
+        assert violations == ["h[0].skill: must be a non-empty string"]
+
+    def test_unknown_entry_key_is_note(self):
+        violations, notes = provenance.validate_chain([dict(entry(), extra=1)], "h")
+        assert violations == []
+        assert notes == ["h[0]: unknown key 'extra'"]
+
+    def test_violation_location_uses_entry_index(self):
+        violations, _ = provenance.validate_chain([entry(), entry(version=1)], "h")
+        assert violations == ["h[1].version: must be a string"]
+
+    def test_input_dict_missing_keys(self):
+        violations, _ = provenance.validate_chain([entry(input={})], "h")
+        assert violations == [
+            "h[0].input: missing required key 'basename'",
+            "h[0].input: missing required key 'hash'",
+        ]
+
+    def test_input_dict_mistyped_values(self):
+        violations, _ = provenance.validate_chain([entry(input={"basename": 1, "hash": 2})], "h")
+        assert violations == [
+            "h[0].input.basename: must be a string",
+            "h[0].input.hash: must be a string",
+        ]
+
+    def test_input_list_items_located(self):
+        e = entry(input=[{"basename": "a.zarr", "hash": "x"}, "bad"])
+        violations, _ = provenance.validate_chain([e], "h")
+        assert violations == ["h[0].input[1]: input entry is not an object"]
+
+    def test_input_item_unknown_key_is_note(self):
+        e = entry(input=[{"basename": "a.zarr", "hash": "x", "note": 1}])
+        violations, notes = provenance.validate_chain([e], "h")
+        assert violations == []
+        assert notes == ["h[0].input[0]: unknown key 'note'"]
+
+    def test_multi_input_with_histories_is_valid(self):
+        e = entry(
+            input=[
+                {"basename": "a.zarr", "hash": "ha", "history": []},
+                {"basename": "b.zarr", "hash": "hb", "history": [entry(input=None)]},
+            ]
+        )
+        violations, notes = provenance.validate_chain([e], "h")
+        assert violations == []
+        assert notes == []
+
+    def test_nested_history_recursion(self):
+        nested = [{"skill": "", "version": "0.1.0", "args": {}, "input": None}]
+        e = entry(input=[{"basename": "a.zarr", "hash": "x", "history": nested}])
+        violations, _ = provenance.validate_chain([e], "h")
+        assert violations == ["h[0].input[0].history[0].skill: must be a non-empty string"]
+
+    def test_nested_history_non_array(self):
+        e = entry(input=[{"basename": "a.zarr", "hash": "x", "history": "bad"}])
+        violations, _ = provenance.validate_chain([e], "h")
+        assert violations == ["h[0].input[0].history: value is not a JSON array"]
+
+
 class TestEntryConstruction:
     def test_input_ref_with_hash(self, tmp_path):
         store = write_store(tmp_path / "a.zarr")
