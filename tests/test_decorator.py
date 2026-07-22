@@ -1042,6 +1042,37 @@ class TestEmptyStringValues:
         assert "N/W/S/E" in capsys.readouterr().err
         assert calls == []
 
+    def test_malformed_bbox_exits_before_latest_discovery(self, tmp_path, capsys):
+        resolver_calls = []
+
+        def resolver(args):
+            resolver_calls.append(1)
+            return date(2026, 6, 30)
+
+        fetch = self.make_fetcher(
+            [],
+            bbox="optional",
+            start_time=True,
+            end_time=True,
+            latest_resolver=resolver,
+        )
+        with pytest.raises(SystemExit) as exc:
+            fetch(
+                [
+                    "--bbox",
+                    "1/2/3",
+                    "--start",
+                    "latest-1w",
+                    "--end",
+                    "latest",
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                ]
+            )
+        assert exc.value.code == 2
+        assert "N/W/S/E" in capsys.readouterr().err
+        assert resolver_calls == []
+
 
 class TestUnprefixedErrors:
     def make_skill(self, exc):

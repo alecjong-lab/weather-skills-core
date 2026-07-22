@@ -738,9 +738,19 @@ def weather_skill(
         if zarr_output:
             _overlap_guard(paths, out, args)
 
-        # Resolve dates and bbox before any provenance or network work: a
+        # Resolve bbox and dates before any provenance or network work: a
         # malformed value must exit 2 without side effects, and the recorded
         # args carry resolved absolute dates, never relative tokens.
+        params = {}
+        resolved_dates = {}
+        # "Given" means present on the command line (not None): an explicit
+        # empty-string value is a malformed token rejected by the parsers
+        # below with exit 2, never a silently omitted flag.
+        # bbox parses first: a malformed bbox exits before date resolution
+        # can trigger any `latest` network discovery.
+        if bbox_cfg is not None:
+            params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox is not None else None
+
         latest_fn = None
         if latest_resolver is not None:
 
@@ -749,11 +759,6 @@ def weather_skill(
                     latest_resolver, args, wants_context=resolver_wants_ctx, context=context
                 )
 
-        params = {}
-        resolved_dates = {}
-        # "Given" means present on the command line (not None): an explicit
-        # empty-string value is a malformed token rejected by the parsers
-        # below with exit 2, never a silently omitted flag.
         if start_cfg is not None:
             if args.start is not None and args.end is not None:
                 start_d, end_d, log_line = _dates.resolve_window(args.start, args.end, latest_fn)
@@ -780,8 +785,6 @@ def weather_skill(
                 resolved_dates["date"] = date_d.isoformat()
             else:
                 params["date"] = None
-        if bbox_cfg is not None:
-            params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox is not None else None
         if variable_cfg is not None:
             params["variable"] = args.variable
         if workers_cfg is not None:
