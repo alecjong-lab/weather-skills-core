@@ -753,11 +753,16 @@ def weather_skill(
 
         latest_fn = None
         if latest_resolver is not None:
+            latest_cache = {}
 
             def latest_fn():
-                return _call_hook(
-                    latest_resolver, args, wants_context=resolver_wants_ctx, context=context
-                )
+                # Memoized for the whole run, so a declaration with both a
+                # window and a date discovers `latest` at most once.
+                if "value" not in latest_cache:
+                    latest_cache["value"] = _call_hook(
+                        latest_resolver, args, wants_context=resolver_wants_ctx, context=context
+                    )
+                return latest_cache["value"]
 
         if start_cfg is not None:
             if args.start is not None and args.end is not None:

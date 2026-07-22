@@ -861,6 +861,33 @@ class TestFetcherMode:
         assert args["start"] == "2026-06-10"
         assert args["end"] == "2026-06-30"
 
+    def test_resolver_runs_once_for_window_and_date(self, tmp_path):
+        calls = []
+        resolver_calls = []
+
+        def resolver(args):
+            resolver_calls.append(1)
+            return date(2026, 6, 30)
+
+        fetch = self.make_fetcher(
+            calls, start_time=True, end_time=True, date=True, latest_resolver=resolver
+        )
+        fetch(
+            [
+                "--start",
+                "latest-1w",
+                "--end",
+                "latest",
+                "--date",
+                "latest",
+                "-o",
+                str(tmp_path / "o.zarr"),
+            ]
+        )
+        assert resolver_calls == [1]
+        assert calls[0]["end_time"] == date(2026, 6, 30)
+        assert calls[0]["date"] == date(2026, 6, 30)
+
     def test_resolver_not_called_for_absolute_dates(self, tmp_path):
         resolver_calls = []
         fetch = self.make_fetcher(
