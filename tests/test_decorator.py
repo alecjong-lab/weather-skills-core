@@ -173,6 +173,20 @@ class TestParserConstruction:
                 lambda a, b: None
             )
 
+    def test_unknown_input_type_is_declaration_error(self):
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill("x", "0.1.0", input_type="grided", output_type="gridded")(
+                lambda ds: None
+            )
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill("x", "0.1.0", input_type="gridded|forecst", output_type="gridded")(
+                lambda ds: None
+            )
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill("x", "0.1.0", input_type=["gridded", "statoin"], output_type="gridded")(
+                lambda a, b: None
+            )
+
 
 class TestToggleDictForm:
     def test_variable_help_required_and_choices(self, capsys):

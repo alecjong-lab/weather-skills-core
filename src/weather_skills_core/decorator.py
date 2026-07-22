@@ -558,6 +558,15 @@ def weather_skill(
       stderr lines are fixed.
     """
     input_types = _normalize_input_types(input_type)
+    for declared in input_types:
+        # An input may declare alternatives with "|" (e.g. "gridded|forecast");
+        # every alternative must be a known envelope type, checked at import.
+        unknown = [t for t in (a.strip() for a in declared.split("|")) if t not in _envelope.TYPES]
+        if unknown:
+            raise ValueError(
+                f"unknown envelope type(s) {unknown} in input_type {declared!r}; "
+                f"valid types: {list(_envelope.TYPES)}"
+            )
     if variadic_input and len(input_types) != 1:
         raise ValueError("variadic_input requires exactly one declared input type")
     if input_names is not None and len(input_names) != len(input_types):
