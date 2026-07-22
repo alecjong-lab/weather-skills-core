@@ -92,20 +92,38 @@ Declaration surface (all keyword-only after `name`, `version`):
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
   receives one list of datasets).
-- `output_type` — `None`, a zarr envelope type, `"same"`, or `"png"`.
-  `"same"` declares a shape-preserving transform: the output is whatever
-  envelope type the input carries. Use it (instead of hard-coding one zarr
-  type) when `input_type` admits several shapes (`"gridded|forecast"`,
-  `"any"`) and the skill preserves whichever came in. It requires at least
-  one declared zarr input and writes through the zarr path exactly like an
-  explicit zarr type.
+- `output_type` — `None`, a zarr envelope type, a tuple/set of zarr envelope
+  types (a union), `"same"`, or `"png"`. `"same"` declares a shape-preserving
+  transform: the output is whatever envelope type the input carries. Use it
+  (instead of hard-coding one zarr type) when `input_type` admits several
+  shapes (`"gridded|forecast"`, `"any"`) and the skill preserves whichever
+  came in. It requires at least one declared zarr input and writes through
+  the zarr path exactly like an explicit zarr type. A union (e.g.
+  `("gridded", "forecast")`, for a fetcher whose source decides the shape)
+  VALIDATES rather than selects: the returned dataset's detected shape must
+  be one of the members, checked before the write (a mismatch exits 1); the
+  declaration never coerces the output toward any member. A single-type
+  declaration stays unchecked.
 - Standard flags, enabled by toggles and passed as keyword arguments:
   `start_time`/`end_time` (`--start`/`--end`), `date` (`--date`), `bbox`
   (`"required"` or `"optional"`; the function receives a parsed
   `(N, W, S, E)` tuple), `variable` (`"single"` or `"repeat"`), `workers`
-  (pass the default int), `title`, `dims`, `time_dim`. Standard toggles
-  carry fixed, decorator-owned help text; a per-flag help string can only
-  be set on `extra_args` entries (the dict spec's `help` key).
+  (pass the default int), `title`, `dims`, `time_dim`.
+- Toggle dict form: `start_time`/`end_time`/`date`, `bbox`, `variable`, and
+  `workers` also accept a dict overriding the flag's argparse surface —
+  `help` replaces the decorator-owned help text, `required` overrides
+  requiredness (`--start`/`--end`/`--date` default to required; with
+  `"required": False` an omitted value reaches the function as `None` and no
+  resolved date is recorded), and `choices` constrains the accepted values.
+  The string/int forms become the dict's `mode`/`default` key —
+  `bbox={"mode": "optional", ...}`, `variable={"mode": "repeat", ...}`,
+  `workers={"default": 4, ...}` — and `date` additionally accepts `context`:
+  the parenthetical label on the resolved-date stderr line (default
+  `"single date"`; e.g. `date={"context": "single forecast init date"}`
+  logs `resolved "latest" -> 2026-07-14 (single forecast init date)`).
+  Prefer a dict-form standard toggle over redeclaring the same flag under
+  `extra_args`: the toggle keeps the date grammar, the bbox parse/argv
+  rewrite, and the resolved-provenance behavior.
 - `extra_args` — dest name to a bare type (`int`; `bool` makes a store-true
   flag), a constraint set (`{int, range(0, 2)}` derives `choices`), or an
   argparse-keyword dict (supports `positional`, `flag`, `aliases`, `repeat`,
@@ -121,7 +139,15 @@ Declaration surface (all keyword-only after `name`, `version`):
 - Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
   `normalize_args`, `exclude_args`, `reference_args`, `history_labels`,
-  `write_encoding`, `append_dim`, `savefig_kwargs`, `cache_hit_label`.
+  `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`,
+  `cache_hit_label`.
+- `post_write` — `callable(path)` run after the artifact is written (zarr,
+  streaming, or PNG; requires an artifact `output_type`), receiving the
+  output path. Use it for read-back verification of the written store (a
+  calendar-coercion check, a CF decode check on the bytes on disk). Raise a
+  `SkillError` (`DataError`/`UsageError`) to fail the run with the usual
+  exit codes; the hook runs before the `Wrote:` line, so a failed run never
+  claims success, and a cache hit skips it (nothing was written).
 
 ### Mutually exclusive groups
 
@@ -152,6 +178,75 @@ Members must be non-positional `extra_args` entries that do not set their own
 one group, and a group needs at least two members. Declare groups here —
 never assemble them by reaching into `wrapper.parser._actions` after
 decoration.
+
+### The run context
+
+Hooks and the wrapped function often need to share run-scoped values: a
+lazily opened remote store used by both the `latest` resolver and the body, a
+requested-variable list the completeness probe checks, a fetch-discovered
+calendar the post-write hook verifies. The run context is the supported
+channel for all of it — never module-level globals (a module-scope `_STATE`
+dict leaks state across calls in the same process and hides the data flow).
+
+Opt in by naming a `context` parameter on any hook (`latest_resolver`,
+`validate_args`, `normalize_args`, `completeness_probe`, `write_encoding`,
+`post_write`) or on the function itself; the decorator then also passes
+`context=`, a `RunContext` carrying:
+
+- `args` — the parsed argparse namespace;
+- `input_paths` / `output_path` — the CLI paths as `pathlib.Path`;
+- `start_time` / `end_time` / `date` — the resolved absolute dates (`None`
+  before resolution or when the toggle is off);
+- `state` — a mutable dict reserved for the skill, empty at the start of
+  every run and shared across the hooks and the function within that run.
+
+The opt-in is the literal parameter name: a `**kwargs` catch-all does not opt
+in, and callables without the parameter keep their plain call shapes. An
+`extra_args` dest may not be named `context` when the function opts in.
+
+```python
+def _open_remote(context):
+    """Open the remote store at most once per run, memoized in the context."""
+    if "ds" not in context.state:
+        import xarray as xr
+
+        context.state["ds"] = xr.open_zarr(_STORE_URL, chunks=None)
+    return context.state["ds"]
+
+
+def _latest(args, context):
+    """Newest date with available data, from the opened remote store."""
+    ds = _open_remote(context)
+    ...
+    return newest_date  # a datetime.date
+
+
+def _remember_request(args, context):
+    """Stash the requested variable pre-cache-check for the completeness probe."""
+    context.state["req_variable"] = args.variable
+
+
+def _store_is_complete(out, context):
+    """Corner-read probe: True when the requested variable reads back."""
+    import xarray as xr
+
+    variable = context.state["req_variable"]
+    ...
+
+
+@weather_skill(
+    "my-fetch", _SKILL_VERSION,
+    output_type="gridded", source="my-source",
+    start_time=True, end_time=True, variable="single",
+    latest_resolver=_latest,
+    validate_args=_remember_request,
+    completeness_probe=_store_is_complete,
+)
+def fetch(start_time, end_time, variable, context):
+    """Fetch and write a weather-skills envelope Zarr."""
+    ds = _open_remote(context)
+    ...
+```
 
 The function receives the opened input dataset(s) positionally, then the
 resolved parameters as keyword arguments. Raise
@@ -345,6 +440,17 @@ hit it returns without calling you or touching the store. What you control:
   a cheap corner-element read, not a metadata check.
 - `validate_args` runs before the cache check — an invalid argument must
   never report a cache hit.
+- `EntryOverride` and the cache: the entry is the cache key and is computed
+  BEFORE the function runs, so a store stamped with overridden args never
+  matches the pre-override entry a rerun builds — every rerun recomputes. An
+  entry carrying fetch-discovered values (a resolved grid label, a catalog
+  data version) must therefore have those values resolved BEFORE the cache
+  check for reruns to hit: resolve them in `validate_args` and write the
+  resolved value back onto the namespace (the pattern the relative-date
+  grammar itself uses), so the normal entry includes them on both the first
+  run and the rerun. Reserve `EntryOverride` for values that only exist
+  after the work (an effective end discovered mid-fetch), accepting that
+  reruns miss.
 
 Everything else — chain append on the first input's trunk, per-branch
 histories for multi-input entries, the `weather_skills_source` stamp, PNG
@@ -473,7 +579,10 @@ Do not re-implement these in a skill body:
   PNG metadata.
 - Writing: encoding clear (set controlled write encodings via
   `write_encoding`, which runs after the clear), `consolidated=True`,
-  streaming first-write/append ordering, partial-store rollback on failure.
+  streaming first-write/append ordering, partial-store rollback on failure,
+  and the `post_write` invocation (after the write, before the `Wrote:`
+  line) — verify the written artifact there, never by re-opening the store
+  from `__main__`.
 
 ## Decorator-owned stderr lines
 
@@ -570,9 +679,15 @@ Before calling a skill done, confirm:
       failures classified; required env declared in frontmatter metadata.
 - [ ] `write_encoding` sets any controlled time units/calendar and
       `_FillValue`; nothing else touches `.encoding`.
+- [ ] Run-scoped values shared between hooks and the body go through the run
+      context's `state`, never module-level globals.
+- [ ] Written-store verification lives in `post_write`, not in `__main__`
+      after the decorated call.
 - [ ] Cache declaration is deliberate: `cache`, `hash_input`,
       `normalize_args`, `exclude_args`, `reference_args`,
-      `completeness_probe` each considered.
+      `completeness_probe` each considered; fetch-discovered entry values are
+      resolved before the cache check, with `EntryOverride` reserved for
+      values that only exist after the work.
 - [ ] `_SKILL_VERSION` untouched by hand; PEP 723 header carries the core git
       dependency; `<name>.py.lock` present.
 - [ ] No tests in the skills repo; new behavior is covered in
