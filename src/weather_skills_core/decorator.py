@@ -1115,9 +1115,7 @@ def weather_skill(
                 _provenance.multi_input_ref(paths, histories),
                 reference_inputs,
             )
-            if cache and _provenance.cache_hit(
-                out, entry, upstream, completeness_probe=probe
-            ):
+            if cache and _provenance.cache_hit(out, entry, upstream, completeness_probe=probe):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,

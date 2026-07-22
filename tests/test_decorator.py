@@ -276,9 +276,7 @@ class TestParserConstruction:
 
     def test_unknown_input_type_is_declaration_error(self):
         with pytest.raises(ValueError, match="unknown envelope type"):
-            weather_skill("x", "0.1.0", input_type="grided", output_type="gridded")(
-                lambda ds: None
-            )
+            weather_skill("x", "0.1.0", input_type="grided", output_type="gridded")(lambda ds: None)
         with pytest.raises(ValueError, match="unknown envelope type"):
             weather_skill("x", "0.1.0", input_type="gridded|forecst", output_type="gridded")(
                 lambda ds: None

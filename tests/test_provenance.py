@@ -519,9 +519,7 @@ class TestCacheHitChained:
     def test_completeness_probe_rejects_hit(self, tmp_path, capsys):
         e = entry()
         out = write_store(tmp_path / "out.zarr", self.upstream() + [e])
-        assert not provenance.cache_hit(
-            out, e, self.upstream(), completeness_probe=lambda p: False
-        )
+        assert not provenance.cache_hit(out, e, self.upstream(), completeness_probe=lambda p: False)
         err = capsys.readouterr().err
         assert "incomplete" in err
         assert "recomputing" in err
