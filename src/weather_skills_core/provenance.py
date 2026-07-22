@@ -255,7 +255,11 @@ def build_entry(skill: str, version: str, args: dict, input, reference_inputs=No
 
 
 def _chained_input_match(last_input, entry_input, *, compare_hash: bool) -> bool:
-    """Compare the recorded ``input`` of the output's last entry to the candidate's."""
+    """Compare the recorded ``input`` of the output's last entry to the candidate's.
+
+    A recorded input of the wrong shape (not the dict or list the entry
+    schema prescribes) compares as a mismatch, never a traceback.
+    """
     if isinstance(entry_input, list):
         # Multi-input: per-item basename + hash + history, in order.
         if not isinstance(last_input, list) or len(last_input) != len(entry_input):
@@ -267,6 +271,8 @@ def _chained_input_match(last_input, entry_input, *, compare_hash: bool) -> bool
             and li.get("history") == ei["history"]
             for li, ei in zip(last_input, entry_input, strict=True)
         )
+    if last_input is not None and not isinstance(last_input, dict):
+        return False
     last_input = last_input or {}
     entry_input = entry_input or {}
     if last_input.get("basename") != entry_input.get("basename"):
@@ -324,6 +330,10 @@ def cache_hit(
         if not history:
             return False
         existing = history[0]
+        # A malformed chain entry (anything but an object) is a miss, never a
+        # traceback.
+        if not isinstance(existing, dict):
+            return False
         matches = (
             existing.get("skill") == entry["skill"]
             and existing.get("version") == entry["version"]
@@ -340,6 +350,10 @@ def cache_hit(
     if history[:-1] != upstream:
         return False
     last = history[-1]
+    # A malformed tail entry (anything but an object) is a miss, never a
+    # traceback.
+    if not isinstance(last, dict):
+        return False
     matches = (
         last.get("skill") == entry["skill"]
         and last.get("version") == entry["version"]

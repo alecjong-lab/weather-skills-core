@@ -384,6 +384,10 @@ class TestCacheHitFetcher:
         out = write_store(tmp_path / "out.zarr", [e, entry(skill="clip-region")])
         assert provenance.cache_hit(out, e, fetcher=True)
 
+    def test_non_dict_first_entry_is_miss(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", ["junk"])
+        assert not provenance.cache_hit(out, entry(input=None), fetcher=True)
+
     def test_completeness_probe_rejects_hit(self, tmp_path, capsys):
         e = entry(input=None)
         out = write_store(tmp_path / "out.zarr", [e])
@@ -448,6 +452,29 @@ class TestCacheHitChained:
         out = write_store(tmp_path / "out.zarr", self.upstream() + [e])
         changed = entry(input={"basename": "renamed.zarr"})
         assert not provenance.cache_hit(out, changed, self.upstream(), compare_hash=False)
+
+    def test_non_dict_tail_entry_is_miss(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", self.upstream() + ["junk"])
+        assert not provenance.cache_hit(out, entry(), self.upstream())
+
+    def test_non_dict_recorded_input_is_miss(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", self.upstream() + [entry(input="junk")])
+        assert not provenance.cache_hit(out, entry(), self.upstream())
+
+    def test_non_list_recorded_input_against_multi_entry_is_miss(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", [entry(input="junk")])
+        changed = entry(input=[{"basename": "a.zarr", "hash": "ha", "history": []}])
+        assert not provenance.cache_hit(out, changed, [])
+
+    def test_non_dict_item_in_recorded_input_list_is_miss(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", [entry(input=["junk"])])
+        changed = entry(input=[{"basename": "a.zarr", "hash": "ha", "history": []}])
+        assert not provenance.cache_hit(out, changed, [])
+
+    def test_wrong_shaped_basename_is_miss(self, tmp_path):
+        recorded = entry(input={"basename": ["in.zarr"], "hash": "abc"})
+        out = write_store(tmp_path / "out.zarr", self.upstream() + [recorded])
+        assert not provenance.cache_hit(out, entry(), self.upstream())
 
     def test_multi_input_hit(self, tmp_path):
         inputs = [
