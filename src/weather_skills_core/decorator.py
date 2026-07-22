@@ -410,6 +410,7 @@ def weather_skill(
     input_type=None,
     output_type=None,
     input_names=None,
+    input_help=None,
     variadic_input=False,
     input_paths=False,
     start_time=False,
@@ -456,6 +457,11 @@ def weather_skill(
       ``["forecast", "mclimate"]``), or ``variadic_input=True`` accepts two or
       more ``--input`` repeats of a single declared type (the function then
       receives one list of datasets).
+    - ``input_help`` -- help text for the input flag(s). With ``input_names``,
+      a sequence giving one help string per named flag (a ``None`` entry
+      leaves that flag without help). Otherwise a single string shown on the
+      ``--input``/``-i`` flag, replacing the decorator's default help in the
+      variadic and fixed-multi cases. Requires a declared ``input_type``.
     - ``input_paths`` -- with ``True``, the function also receives an
       ``input_paths`` keyword argument: the CLI-given input path(s) as a list
       of :class:`~pathlib.Path`, in input order (declaration order for
@@ -571,6 +577,19 @@ def weather_skill(
         raise ValueError("variadic_input requires exactly one declared input type")
     if input_names is not None and len(input_names) != len(input_types):
         raise ValueError("input_names must declare one flag per declared input type")
+    if input_help is not None:
+        if not input_types:
+            raise ValueError("input_help requires a declared input_type")
+        if input_names is not None:
+            if isinstance(input_help, str) or len(list(input_help)) != len(input_names):
+                raise ValueError(
+                    "with input_names, input_help must give one help string per input flag"
+                )
+            input_help = list(input_help)
+        elif not isinstance(input_help, str):
+            raise ValueError(
+                "without input_names, input_help is a single help string for the --input flag"
+            )
     if input_paths and not input_types:
         raise ValueError("input_paths=True requires a declared input_type")
     output_union = None
@@ -688,25 +707,36 @@ def weather_skill(
             epilog=f"skill version: {version}",
         )
         if input_names:
-            for flag_name in input_names:
-                parser.add_argument(f"--{flag_name}", required=True)
+            helps = input_help if input_help is not None else [None] * len(input_names)
+            for flag_name, help_text in zip(input_names, helps, strict=True):
+                kwargs = {"required": True}
+                if help_text is not None:
+                    kwargs["help"] = help_text
+                parser.add_argument(f"--{flag_name}", **kwargs)
         elif variadic_input:
             parser.add_argument(
                 "--input",
                 "-i",
                 action="append",
                 required=True,
-                help="Input Zarr (repeat the flag for each input; need at least 2)",
+                help=input_help
+                if input_help is not None
+                else "Input Zarr (repeat the flag for each input; need at least 2)",
             )
         elif len(input_types) == 1:
-            parser.add_argument("--input", "-i", required=True)
+            kwargs = {"required": True}
+            if input_help is not None:
+                kwargs["help"] = input_help
+            parser.add_argument("--input", "-i", **kwargs)
         elif len(input_types) > 1:
             parser.add_argument(
                 "--input",
                 "-i",
                 action="append",
                 required=True,
-                help=f"Input Zarr; pass exactly {len(input_types)} times, in order",
+                help=input_help
+                if input_help is not None
+                else f"Input Zarr; pass exactly {len(input_types)} times, in order",
             )
         if output_type is not None:
             parser.add_argument("--output", "-o", required=True)

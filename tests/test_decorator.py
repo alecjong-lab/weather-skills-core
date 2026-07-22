@@ -157,6 +157,107 @@ class TestParserConstruction:
         args = resolve_region.parser.parse_args(["KEN"])
         assert args.code == "KEN"
 
+    def test_input_help_on_single_input_flag(self, capsys):
+        skill = make_identity_skill([], input_help="Gridded Zarr to copy.")
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        assert "Gridded Zarr to copy." in capsys.readouterr().out
+
+    def test_input_help_on_repeated_input_flag(self, capsys):
+        @weather_skill(
+            "difference",
+            "0.1.0",
+            input_type=["any", "any"],
+            output_type="gridded",
+            input_help="Input Zarr; pass exactly twice, minuend then subtrahend.",
+        )
+        def difference(ds_a, ds_b):
+            """A - B."""
+
+        with pytest.raises(SystemExit):
+            difference(["--help"])
+        assert "minuend" in capsys.readouterr().out
+
+    def test_input_help_on_variadic_input_flag(self, capsys):
+        @weather_skill(
+            "concat",
+            "0.1.0",
+            input_type="any",
+            output_type="gridded",
+            variadic_input=True,
+            input_help="Input Zarr; repeat in concatenation order.",
+        )
+        def concat(datasets):
+            """Concatenate."""
+
+        with pytest.raises(SystemExit):
+            concat(["--help"])
+        assert "concatenation order" in capsys.readouterr().out
+
+    def test_input_help_on_named_input_flags(self, capsys):
+        @weather_skill(
+            "plot-mediogram",
+            "0.1.0",
+            input_type=["any", "any"],
+            output_type="png",
+            input_names=["forecast", "mclimate"],
+            input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."],
+        )
+        def plot_mediogram(forecast_ds, mclimate_ds):
+            """Mediogram."""
+
+        with pytest.raises(SystemExit):
+            plot_mediogram(["--help"])
+        out = capsys.readouterr().out
+        assert "Forecast ensemble Zarr." in out
+        assert "M-climate ensemble Zarr." in out
+
+    def test_input_help_none_entry_skips_one_flag(self, capsys):
+        @weather_skill(
+            "plot-mediogram",
+            "0.1.0",
+            input_type=["any", "any"],
+            output_type="png",
+            input_names=["forecast", "mclimate"],
+            input_help=[None, "M-climate ensemble Zarr."],
+        )
+        def plot_mediogram(forecast_ds, mclimate_ds):
+            """Mediogram."""
+
+        with pytest.raises(SystemExit):
+            plot_mediogram(["--help"])
+        assert "M-climate ensemble Zarr." in capsys.readouterr().out
+
+    def test_input_help_declaration_errors(self):
+        with pytest.raises(ValueError, match="input_help requires"):
+            weather_skill("x", "0.1.0", output_type="gridded", input_help="h")(lambda: None)
+        with pytest.raises(ValueError, match="one help string per input flag"):
+            weather_skill(
+                "x",
+                "0.1.0",
+                input_type=["any", "any"],
+                output_type="png",
+                input_names=["a", "b"],
+                input_help="one string for two flags",
+            )(lambda a, b: None)
+        with pytest.raises(ValueError, match="one help string per input flag"):
+            weather_skill(
+                "x",
+                "0.1.0",
+                input_type=["any", "any"],
+                output_type="png",
+                input_names=["a", "b"],
+                input_help=["only one"],
+            )(lambda a, b: None)
+        with pytest.raises(ValueError, match="single help string"):
+            weather_skill(
+                "x",
+                "0.1.0",
+                input_type="any",
+                output_type="gridded",
+                input_help=["list", "form"],
+            )(lambda ds: None)
+
     def test_missing_required_input_exits_2(self):
         skill = make_identity_skill([])
         with pytest.raises(SystemExit) as exc:

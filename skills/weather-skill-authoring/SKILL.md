@@ -92,6 +92,11 @@ Declaration surface (all keyword-only after `name`, `version`):
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
   receives one list of datasets).
+- `input_help` — help text for the input flag(s). With `input_names`, a list
+  giving one help string per named flag
+  (`input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."]`);
+  otherwise a single string shown on `--input`/`-i`, replacing the
+  decorator's default help in the repeated-input cases.
 - `output_type` — `None`, a zarr envelope type, a tuple/set of zarr envelope
   types (a union), `"same"`, or `"png"`. `"same"` declares a shape-preserving
   transform: the output is whatever envelope type the input carries. Use it
