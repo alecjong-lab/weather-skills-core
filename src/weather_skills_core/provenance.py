@@ -198,8 +198,10 @@ def load_history(zarr_path: Path) -> list:
 
         with xr.open_zarr(zarr_path, consolidated=False) as ds:
             raw = ds.attrs.get(HISTORY_ATTR)
-    except (FileNotFoundError, KeyError, ValueError):
-        # A not-yet-existing or unreadable output during a cache check is a miss.
+    except (OSError, KeyError, ValueError):
+        # A not-yet-existing or unreadable output during a cache check is a
+        # miss; OSError covers missing stores and filesystem-level failures
+        # such as PermissionError alike.
         return []
     if not raw:
         return []

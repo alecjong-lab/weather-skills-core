@@ -66,6 +66,28 @@ class TestLoadHistory:
         ds.to_zarr(path, mode="w", consolidated=True)
         assert provenance.load_history(path) == []
 
+    def test_permission_error_is_miss(self, tmp_path, monkeypatch):
+        import xarray as xr
+
+        store = write_store(tmp_path / "a.zarr", [entry()])
+
+        def denied(*args, **kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(xr, "open_zarr", denied)
+        assert provenance.load_history(store) == []
+
+    def test_os_error_is_miss(self, tmp_path, monkeypatch):
+        import xarray as xr
+
+        store = write_store(tmp_path / "a.zarr", [entry()])
+
+        def flaky(*args, **kwargs):
+            raise OSError("I/O error")
+
+        monkeypatch.setattr(xr, "open_zarr", flaky)
+        assert provenance.load_history(store) == []
+
     def test_json_object_is_malformed(self, tmp_path, capsys):
         store = write_store(tmp_path / "a.zarr", raw=json.dumps({"skill": "x"}))
         assert provenance.load_history(store) == []
