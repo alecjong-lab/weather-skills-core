@@ -29,10 +29,12 @@ occur before any network work; data-availability and hard failures exit 1
 """
 
 import argparse
+import datetime
 import functools
+import inspect
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from weather_skills_core import dates as _dates
@@ -57,6 +59,59 @@ _BBOX_OPTIONAL_HELP = "Spatial subset N/W/S/E decimal degrees. Omit for the full
 _ZARR_OUTPUT_TYPES = (_envelope.GRIDDED, _envelope.FORECAST, _envelope.STATION)
 PNG = "png"
 SAME = "same"
+
+
+@dataclass
+class RunContext:
+    """Run-scoped context shared by the decorator's hooks and the wrapped function.
+
+    Created once per invocation and passed by keyword (``context=``) to every
+    declaration hook whose signature names a ``context`` parameter --
+    ``latest_resolver``, ``validate_args``, ``normalize_args``,
+    ``completeness_probe``, and ``write_encoding`` -- and to the wrapped
+    function itself when its signature names one. Callables without the
+    parameter keep their plain call shapes.
+
+    Fields fill in as the run proceeds: ``args`` (the parsed argparse
+    namespace) and ``output_path`` exist from the start; ``input_paths``
+    holds the CLI-given input paths once collected (before the inputs are
+    opened); ``start_time``/``end_time``/``date`` hold the resolved absolute
+    dates once the date grammar has run, and are ``None`` before that or when
+    the toggle is off.
+
+    ``state`` is a mutable scratch dict reserved for the skill: hooks and the
+    function share it within one run (memoize an opened remote store, stash a
+    value the write-encoding hook needs) and it starts empty on every run.
+    Use it instead of module-level globals for run-scoped side channels.
+    """
+
+    args: argparse.Namespace
+    output_path: Path | None = None
+    input_paths: list = field(default_factory=list)
+    start_time: datetime.date | None = None
+    end_time: datetime.date | None = None
+    date: datetime.date | None = None
+    state: dict = field(default_factory=dict)
+
+
+def _wants_context(fn) -> bool:
+    """True when a callable's signature names a ``context`` parameter.
+
+    The opt-in is the literal parameter name: a ``**kwargs`` catch-all does
+    not opt in (a function receiving its CLI parameters as ``**params`` must
+    not silently gain a ``context`` key).
+    """
+    try:
+        return "context" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _call_hook(hook, *hook_args, wants_context, context):
+    """Invoke a declaration hook, passing the run context only when it opts in."""
+    if wants_context:
+        return hook(*hook_args, context=context)
+    return hook(*hook_args)
 
 
 @dataclass
@@ -356,6 +411,13 @@ def weather_skill(
       misses; ``exclude_args`` drops further dests from the entry args;
       ``write_encoding(ds)`` sets controlled write encodings after the
       encoding clear.
+    - run context: every hook above (plus ``latest_resolver`` and
+      ``completeness_probe``) and the wrapped function itself opt into the
+      run context by naming a ``context`` parameter; the decorator then also
+      passes ``context=`` -- a :class:`RunContext` carrying the parsed args
+      namespace, the resolved dates, the input/output paths, and a run-scoped
+      ``state`` scratch dict shared across the hooks and the function.
+      Callables without the parameter keep their plain call shapes.
     - PNG: ``history_labels`` gives the per-input suffix for the embedded
       history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
       the ``savefig`` call (default ``{"dpi": 150}``).
@@ -402,7 +464,20 @@ def weather_skill(
     group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, extra_args)
     hit_label = cache_hit_label if cache_hit_label is not None else name
 
+    # Per-hook run-context opt-in, resolved once at declaration time.
+    resolver_wants_ctx = latest_resolver is not None and _wants_context(latest_resolver)
+    validate_wants_ctx = validate_args is not None and _wants_context(validate_args)
+    normalize_wants_ctx = normalize_args is not None and _wants_context(normalize_args)
+    probe_wants_ctx = completeness_probe is not None and _wants_context(completeness_probe)
+    encoding_wants_ctx = write_encoding is not None and _wants_context(write_encoding)
+
     def decorate(fn):
+        fn_wants_ctx = _wants_context(fn)
+        if fn_wants_ctx and "context" in (extra_args or {}):
+            raise ValueError(
+                "extra_args may not use the dest 'context' when the wrapped function "
+                "declares a context parameter (the run context would clobber it)"
+            )
         parser = _build_parser(fn)
 
         @functools.wraps(fn)
@@ -412,7 +487,7 @@ def weather_skill(
                 args_list = rewrite_bbox_argv(args_list)
             args = parser.parse_args(args_list)
             try:
-                _execute(fn, args)
+                _execute(fn, args, fn_wants_ctx)
             except SkillError as exc:
                 message = f"Error: {exc}" if exc.prefix else str(exc)
                 print(message, file=sys.stderr)
@@ -488,25 +563,37 @@ def weather_skill(
             _add_extra_argument(target, dest, spec)
         return parser
 
-    def _execute(fn, args):
+    def _execute(fn, args, fn_wants_ctx):
+        context = RunContext(
+            args=args,
+            output_path=Path(args.output) if output_type is not None else None,
+        )
         if workers is not None and args.workers < 1:
             raise UsageError("--workers must be >= 1.")
         if validate_args is not None:
-            validate_args(args)
+            _call_hook(validate_args, args, wants_context=validate_wants_ctx, context=context)
 
         paths = _input_paths(args)
+        context.input_paths = list(paths)
         for p in paths:
             if not p.exists():
                 raise UsageError(f"{p} not found.")
 
-        out = Path(args.output) if output_type is not None else None
+        out = context.output_path
         if zarr_output:
             _overlap_guard(paths, out, args)
 
         # Resolve dates and bbox before any provenance or network work: a
         # malformed value must exit 2 without side effects, and the recorded
         # args carry resolved absolute dates, never relative tokens.
-        latest_fn = (lambda: latest_resolver(args)) if latest_resolver is not None else None
+        latest_fn = None
+        if latest_resolver is not None:
+
+            def latest_fn():
+                return _call_hook(
+                    latest_resolver, args, wants_context=resolver_wants_ctx, context=context
+                )
+
         params = {}
         resolved_dates = {}
         if start_time and end_time:
@@ -514,6 +601,7 @@ def weather_skill(
             if log_line is not None:
                 print(log_line, file=sys.stderr)
             params["start_time"], params["end_time"] = start_d, end_d
+            context.start_time, context.end_time = start_d, end_d
             resolved_dates["start"] = start_d.isoformat()
             resolved_dates["end"] = end_d.isoformat()
         if date:
@@ -521,6 +609,7 @@ def weather_skill(
             if log_line is not None:
                 print(log_line, file=sys.stderr)
             params["date"] = date_d
+            context.date = date_d
             resolved_dates["date"] = date_d.isoformat()
         if bbox is not None:
             params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox else None
@@ -538,17 +627,19 @@ def weather_skill(
             params[dest] = getattr(args, dest)
         if input_paths:
             params["input_paths"] = list(paths)
+        if fn_wants_ctx:
+            params["context"] = context
 
         if output_type is None:
             fn(**params)
             return
 
-        entry_args = _entry_args(args, resolved_dates)
+        entry_args = _entry_args(args, resolved_dates, context)
 
         if output_type == PNG:
             _run_png(fn, args, paths, out, entry_args, params)
             return
-        _run_zarr(fn, args, paths, out, entry_args, params)
+        _run_zarr(fn, args, paths, out, entry_args, params, context)
 
     def _input_paths(args):
         if input_names:
@@ -583,7 +674,7 @@ def weather_skill(
                     "distinct output path."
                 )
 
-    def _entry_args(args, resolved_dates):
+    def _entry_args(args, resolved_dates, context):
         path_dests = set(input_dests) | {"output"}
         raw = {k: v for k, v in vars(args).items() if k not in path_dests}
         raw.update(resolved_dates)
@@ -591,7 +682,9 @@ def weather_skill(
         for dest in exclude_args:
             raw.pop(dest, None)
         if normalize_args is not None:
-            raw = normalize_args(raw)
+            raw = _call_hook(
+                normalize_args, raw, wants_context=normalize_wants_ctx, context=context
+            )
         return raw
 
     def _open_inputs(paths, args):
@@ -679,17 +772,23 @@ def weather_skill(
             plt.close(fig)
         print(_wrote_line(args.output, "", summary), file=sys.stderr)
 
-    def _run_zarr(fn, args, paths, out, entry_args, params):
+    def _run_zarr(fn, args, paths, out, entry_args, params, context):
         # The provenance entry is computed BEFORE the function runs: the entry
         # is the cache key, and a hit returns without calling the function or
         # touching the store.
+        probe = None
+        if completeness_probe is not None:
+
+            def probe(candidate):
+                return _call_hook(
+                    completeness_probe, candidate, wants_context=probe_wants_ctx, context=context
+                )
+
         reference_inputs = _reference_inputs(args)
         if not paths:
             upstream = []
             entry = _provenance.build_entry(name, version, entry_args, None, reference_inputs)
-            if cache and _provenance.cache_hit(
-                out, entry, fetcher=True, completeness_probe=completeness_probe
-            ):
+            if cache and _provenance.cache_hit(out, entry, fetcher=True, completeness_probe=probe):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,
@@ -748,7 +847,7 @@ def weather_skill(
         result = _call(fn, datasets, params)
 
         if streaming:
-            _write_streaming(result, out, upstream, entry, args)
+            _write_streaming(result, out, upstream, entry, args, context)
             return
 
         result, override, summary = _split_extras(result)
@@ -760,14 +859,14 @@ def weather_skill(
             result.attrs = {**datasets[0].attrs, **result.attrs}
         _provenance.stamp_zarr(result, upstream + [entry], source=source)
         if write_encoding is not None:
-            write_encoding(result)
+            _call_hook(write_encoding, result, wants_context=encoding_wants_ctx, context=context)
         if out.exists():
             shutil.rmtree(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         result.to_zarr(out, mode="w", consolidated=True)
         print(_wrote_line(args.output, f"{dict(result.sizes)}", summary), file=sys.stderr)
 
-    def _write_streaming(gen, out, upstream, entry, args):
+    def _write_streaming(gen, out, upstream, entry, args, context):
         # First write is mode="w"; later periods append along append_dim.
         # Provenance is re-stamped on every append because a to_zarr append
         # rewrites the root group attrs from the appended dataset. The
@@ -790,7 +889,9 @@ def weather_skill(
                 piece = item
                 _provenance.stamp_zarr(piece, upstream + [entry], source=source)
                 if write_encoding is not None:
-                    write_encoding(piece)
+                    _call_hook(
+                        write_encoding, piece, wants_context=encoding_wants_ctx, context=context
+                    )
                 if not store_created:
                     if out.exists():
                         shutil.rmtree(out)

@@ -7,7 +7,14 @@ import pytest
 import xarray as xr
 from conftest import make_gridded
 
-from weather_skills_core import DataError, EntryOverride, UsageError, WroteSummary, weather_skill
+from weather_skills_core import (
+    DataError,
+    EntryOverride,
+    RunContext,
+    UsageError,
+    WroteSummary,
+    weather_skill,
+)
 from weather_skills_core.decorator import rewrite_bbox_argv
 
 
@@ -1354,6 +1361,184 @@ class TestInputPaths:
     def test_requires_declared_input_type(self):
         with pytest.raises(ValueError, match="input_paths"):
             weather_skill("x", "0.1.0", output_type="gridded", input_paths=True)(lambda: None)
+
+
+class TestRunContext:
+    def test_function_opt_in_receives_context(self, tmp_path, gridded_store):
+        seen = {}
+
+        @weather_skill(
+            "ctx",
+            "0.1.0",
+            input_type="any",
+            output_type="gridded",
+            start_time=True,
+            end_time=True,
+        )
+        def skill(ds, start_time, end_time, context):
+            """Ctx."""
+            seen["context"] = context
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        skill(
+            [
+                "-i",
+                str(gridded_store),
+                "-o",
+                str(out),
+                "--start",
+                "2026-01-01",
+                "--end",
+                "2026-01-05",
+            ]
+        )
+        ctx = seen["context"]
+        assert isinstance(ctx, RunContext)
+        assert ctx.args.start == "2026-01-01"
+        assert ctx.input_paths == [gridded_store]
+        assert ctx.output_path == out
+        assert ctx.start_time == date(2026, 1, 1)
+        assert ctx.end_time == date(2026, 1, 5)
+        assert ctx.date is None
+        assert ctx.state == {}
+
+    def test_date_toggle_fills_context_date(self, tmp_path):
+        seen = {}
+
+        @weather_skill("f", "0.1.0", output_type="gridded", date=True)
+        def fetch(date, context):
+            """Fetch one init."""
+            seen["context"] = context
+            return make_gridded()
+
+        fetch(["--date", "2026-02-03", "-o", str(tmp_path / "o.zarr")])
+        assert seen["context"].date == date(2026, 2, 3)
+        assert seen["context"].start_time is None
+
+    def test_kwargs_function_does_not_receive_context(self, tmp_path, gridded_store):
+        # A **params catch-all is not an opt-in; only a named context param is.
+        calls = []
+        skill = make_identity_skill(calls)
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert "context" not in calls[0]
+
+    def test_context_never_enters_recorded_args(self, tmp_path, gridded_store):
+        @weather_skill("ctx", "0.1.0", input_type="any", output_type="gridded")
+        def skill(ds, context):
+            """Ctx."""
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert "context" not in history_of(out)[-1]["args"]
+
+    def test_hooks_share_state_with_function(self, tmp_path):
+        events = []
+
+        def validate(args, context):
+            context.state["token"] = "abc"
+            events.append("validate")
+
+        def probe(path, context):
+            events.append(("probe", context.state["token"]))
+            return False
+
+        def encode(ds, context):
+            events.append(("encode", context.state["token"], context.state["body"]))
+
+        @weather_skill(
+            "f",
+            "0.1.0",
+            output_type="gridded",
+            source="toy",
+            validate_args=validate,
+            completeness_probe=probe,
+            write_encoding=encode,
+        )
+        def fetch(context):
+            """Fetch."""
+            context.state["body"] = "ran"
+            return make_gridded()
+
+        out = tmp_path / "o.zarr"
+        fetch(["-o", str(out)])
+        assert events == ["validate", ("encode", "abc", "ran")]
+        events.clear()
+        # Second run: the probe rejects the hit and sees the fresh run's state.
+        fetch(["-o", str(out)])
+        assert events == ["validate", ("probe", "abc"), ("encode", "abc", "ran")]
+
+    def test_state_is_fresh_per_run(self, tmp_path, gridded_store):
+        seen = []
+
+        def validate(args, context):
+            seen.append(dict(context.state))
+            context.state["x"] = 1
+
+        skill = make_identity_skill([], validate_args=validate)
+        argv = ["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")]
+        skill(argv)
+        skill(argv)
+        assert seen == [{}, {}]
+
+    def test_latest_resolver_opt_in(self, tmp_path):
+        def resolver(args, context):
+            context.state["resolved"] = context.state.get("resolved", 0) + 1
+            return date(2026, 6, 30)
+
+        seen = {}
+
+        @weather_skill(
+            "f",
+            "0.1.0",
+            output_type="gridded",
+            start_time=True,
+            end_time=True,
+            latest_resolver=resolver,
+        )
+        def fetch(start_time, end_time, context):
+            """Fetch."""
+            seen["resolved"] = context.state["resolved"]
+            return make_gridded()
+
+        fetch(["--start", "latest-1w", "--end", "latest", "-o", str(tmp_path / "o.zarr")])
+        assert seen["resolved"] == 1
+
+    def test_normalize_args_opt_in(self, tmp_path, gridded_store):
+        def validate(args, context):
+            context.state["marker"] = "resolved-in-validate"
+
+        def normalize(raw, context):
+            raw["marker"] = context.state["marker"]
+            return raw
+
+        skill = make_identity_skill([], validate_args=validate, normalize_args=normalize)
+        out = tmp_path / "o.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert history_of(out)[-1]["args"]["marker"] == "resolved-in-validate"
+
+    def test_hooks_without_context_param_keep_plain_shapes(self, tmp_path, gridded_store):
+        # A one-positional-arg hook (no context param) is called exactly as before.
+        validated = []
+        skill = make_identity_skill([], validate_args=validated.append)
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert len(validated) == 1
+        assert validated[0].output == str(tmp_path / "o.zarr")
+
+    def test_context_dest_collision_is_declaration_error(self):
+        with pytest.raises(ValueError, match="context"):
+
+            @weather_skill("x", "0.1.0", output_type="gridded", extra_args={"context": str})
+            def f(context):
+                """F."""
+
+    def test_extra_arg_named_context_without_opt_in(self, tmp_path, gridded_store):
+        # Without a named context param, an extra arg dest "context" is untouched.
+        calls = []
+        skill = make_identity_skill(calls, extra_args={"context": str})
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--context", "v"])
+        assert calls[0]["context"] == "v"
 
 
 class TestFunctionParams:
