@@ -446,3 +446,33 @@ class TestCacheHitChained:
         e = entry()
         out = write_store(tmp_path / "out.zarr", [e])
         assert provenance.cache_hit(out, e, [])
+
+    def test_completeness_probe_rejects_hit(self, tmp_path, capsys):
+        e = entry()
+        out = write_store(tmp_path / "out.zarr", self.upstream() + [e])
+        assert not provenance.cache_hit(
+            out, e, self.upstream(), completeness_probe=lambda p: False
+        )
+        err = capsys.readouterr().err
+        assert "incomplete" in err
+        assert "recomputing" in err
+
+    def test_completeness_probe_accepts_hit(self, tmp_path):
+        e = entry()
+        out = write_store(tmp_path / "out.zarr", self.upstream() + [e])
+        probed = []
+        assert provenance.cache_hit(
+            out, e, self.upstream(), completeness_probe=lambda p: probed.append(p) or True
+        )
+        assert probed == [out]
+
+    def test_probe_not_called_when_entry_mismatches(self, tmp_path):
+        out = write_store(tmp_path / "out.zarr", self.upstream() + [entry()])
+        probed = []
+        provenance.cache_hit(
+            out,
+            entry(version="9.9.9"),
+            self.upstream(),
+            completeness_probe=lambda p: probed.append(p) or True,
+        )
+        assert probed == []

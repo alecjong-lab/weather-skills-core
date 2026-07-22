@@ -515,6 +515,51 @@ class TestCacheShortCircuit:
         skill(["-i", str(gridded_store), "-o", str(out), "--verbose"])
         assert len(calls) == 1
 
+    def test_completeness_probe_rejects_transform_hit(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(calls, completeness_probe=lambda p: False)
+        out = tmp_path / "out.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        skill(argv)
+        skill(argv)
+        assert len(calls) == 2
+
+    def test_completeness_probe_accepts_transform_hit(self, tmp_path, gridded_store):
+        calls = []
+        probed = []
+        skill = make_identity_skill(calls, completeness_probe=lambda p: probed.append(p) or True)
+        out = tmp_path / "out.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        skill(argv)
+        skill(argv)
+        assert len(calls) == 1
+        # The probe ran on the output store, only for the second run's check.
+        assert probed == [out]
+
+    def test_completeness_probe_on_multi_input_check(self, tmp_path):
+        a = tmp_path / "a.zarr"
+        b = tmp_path / "b.zarr"
+        make_gridded(fill=1.0).to_zarr(a, mode="w", consolidated=True)
+        make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
+        calls = []
+
+        @weather_skill(
+            "difference",
+            "0.1.0",
+            input_type=["any", "any"],
+            output_type="gridded",
+            completeness_probe=lambda p: False,
+        )
+        def difference(ds_a, ds_b):
+            """A - B."""
+            calls.append(1)
+            return ds_a.copy()
+
+        argv = ["-i", str(a), "-i", str(b), "-o", str(tmp_path / "out.zarr")]
+        difference(argv)
+        difference(argv)
+        assert len(calls) == 2
+
     def test_chain_appends_on_upstream(self, tmp_path, gridded_store):
         first = make_identity_skill([])
         second = make_identity_skill([])

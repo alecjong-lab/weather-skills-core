@@ -505,7 +505,9 @@ def weather_skill(
       cheaper than a meaningful cache key); ``hash_input`` compares the
       input's content hash in the cache key (``False`` defers the expensive
       hash until after a cheap check); ``completeness_probe`` (``callable(Path) -> bool``) verifies a
-      candidate fetcher hit actually reads back; ``reference_args`` names
+      candidate cache hit actually reads back -- it receives the output store's
+      path and applies to fetcher and chained (transform) checks alike;
+      ``reference_args`` names
       arg dests holding secondary reference-store paths, content-hashed into
       the entry's ``reference_inputs``.
     - hooks: ``validate_args(args)`` for pre-cache argument validation (raise
@@ -978,7 +980,9 @@ def weather_skill(
                 _provenance.input_ref(paths[0], include_hash=hash_input),
                 reference_inputs,
             )
-            if cache and _provenance.cache_hit(out, entry, upstream, compare_hash=hash_input):
+            if cache and _provenance.cache_hit(
+                out, entry, upstream, compare_hash=hash_input, completeness_probe=probe
+            ):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,
@@ -1004,7 +1008,9 @@ def weather_skill(
                 _provenance.multi_input_ref(paths, histories),
                 reference_inputs,
             )
-            if cache and _provenance.cache_hit(out, entry, upstream):
+            if cache and _provenance.cache_hit(
+                out, entry, upstream, completeness_probe=probe
+            ):
                 print(
                     f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
                     file=sys.stderr,

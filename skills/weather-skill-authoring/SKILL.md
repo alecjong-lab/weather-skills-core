@@ -437,8 +437,10 @@ hit it returns without calling you or touching the store. What you control:
 - `reference_args` names arg dests holding secondary reference stores
   (a reference grid, a distribution reference); their content hashes enter
   the cache key as `reference_inputs`.
-- `completeness_probe` guards fetcher hits against a truncated prior store:
-  a cheap corner-element read, not a metadata check.
+- `completeness_probe` guards cache hits — fetcher and transform alike —
+  against a truncated prior store: the probe receives the output store's
+  path and is invoked only after the entry matches, so make it a cheap
+  corner-element read of the output, not a metadata check.
 - `validate_args` runs before the cache check — an invalid argument must
   never report a cache hit.
 - `EntryOverride` and the cache: the entry is the cache key and is computed

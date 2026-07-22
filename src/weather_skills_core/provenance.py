@@ -289,10 +289,7 @@ def cache_hit(
 
     - ``fetcher=True``: the candidate entry is the chain's FIRST entry
       (``history[0]``); ``skill``/``version``/``args``/``input`` are compared
-      wholesale. ``completeness_probe``, when given, is a
-      ``callable(Path) -> bool`` invoked only after the entry matches; a False
-      result rejects the hit (a partial prior write can leave a matching
-      history attr over truncated arrays) and prints a stderr note.
+      wholesale.
     - chained (default): the candidate entry is the chain's LAST entry on top
       of ``upstream`` (the input's chain); the output chain must be exactly
       ``upstream + [entry]``. The recorded input is compared by basename (and
@@ -300,10 +297,26 @@ def cache_hit(
       expensive hash until after this check). ``reference_inputs`` is always
       compared, so an in-place change to a secondary reference forces a
       recompute; entries without references compare equal on absence.
+
+    ``completeness_probe``, honored in both positions, is a
+    ``callable(Path) -> bool`` invoked on ``out`` only after the entry
+    matches; a False result rejects the hit (a partial prior write can leave
+    a matching history attr over truncated arrays) and prints a stderr note.
     """
     out = Path(out)
     if not out.exists():
         return False
+
+    def probe_rejects(action):
+        if completeness_probe is not None and not completeness_probe(out):
+            print(
+                f"Note: {out} matches the request but is an incomplete/unreadable "
+                f"store (likely a prior interrupted write); {action}.",
+                file=sys.stderr,
+            )
+            return True
+        return False
+
     history = load_history(out)
     if fetcher:
         if not history:
@@ -317,14 +330,7 @@ def cache_hit(
         )
         if not matches:
             return False
-        if completeness_probe is not None and not completeness_probe(out):
-            print(
-                f"Note: {out} matches the request but is an incomplete/unreadable "
-                "store (likely a prior interrupted write); re-fetching.",
-                file=sys.stderr,
-            )
-            return False
-        return True
+        return not probe_rejects("re-fetching")
 
     upstream = upstream or []
     if len(history) != len(upstream) + 1:
@@ -332,13 +338,16 @@ def cache_hit(
     if history[:-1] != upstream:
         return False
     last = history[-1]
-    return (
+    matches = (
         last.get("skill") == entry["skill"]
         and last.get("version") == entry["version"]
         and last.get("args") == entry["args"]
         and _chained_input_match(last.get("input"), entry.get("input"), compare_hash=compare_hash)
         and last.get("reference_inputs") == entry.get("reference_inputs")
     )
+    if not matches:
+        return False
+    return not probe_rejects("recomputing")
 
 
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
