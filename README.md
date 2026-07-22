@@ -9,7 +9,8 @@ and output writing (Zarr, streaming Zarr appends, or PNG figures).
 A skill declares its surface and keeps only its domain logic:
 
 ```python
-@weather_skill(input_type="forecast, station", output_type="forecast",
+@weather_skill("my-fancy-skill", "0.1.0",
+               input_type="forecast, station", output_type="forecast",
                start_time=True, end_time=True,
                extra_args={"corr_coefficient": int,
                            "interpolation_factor": {int, range(0, 2)}})
