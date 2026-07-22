@@ -197,19 +197,22 @@ def _shape_detail(ds, allowed) -> str:
 def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = None):
     """Subset a gridded dataset to an ``N/W/S/E`` bbox.
 
-    Unifies the audited fetcher/transform behaviors:
+    Subsetting rules:
 
     - a longitude axis on 0..360 is wrapped onto [-180, 180] and sorted
       ascending before the selection, so negative west/east values select
       correctly;
     - the latitude slice follows the axis's own monotonic order (ascending or
       descending), so the same bbox works regardless of orientation; a
-      single-row latitude axis is passed through unsliced; a non-monotonic
-      axis raises :class:`UsageError`;
+      single-row latitude axis is passed through unsliced; an empty or
+      non-monotonic axis raises :class:`UsageError`;
+    - the longitude axis is guarded the same way: empty or non-monotonic
+      raises :class:`UsageError`;
     - a bbox with ``west <= east`` selects the contiguous span, sliced in the
       longitude axis's own order; ``west > east`` crosses the antimeridian and
-      selects the union ``lon >= west OR lon <= east``, dropping the interior
-      band while preserving the native ascending longitude order;
+      selects the union ``lon >= west OR lon <= east`` by concatenating the
+      two wing slices in the axis's native order, dropping the interior band
+      while preserving each variable's dtype;
     - an empty result is a data error (:class:`DataError`, exit 1).
 
     ``bbox`` is an ``N/W/S/E`` string or a ``(north, west, south, east)``
@@ -229,6 +232,22 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
     lon_vals = np.asarray(ds[lon_dim].values)
     if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
         ds = ds.assign_coords({lon_dim: ((ds[lon_dim] + 180) % 360 - 180)}).sortby(lon_dim)
+        lon_vals = np.asarray(ds[lon_dim].values)
+    if lon_vals.size == 0:
+        raise UsageError("lon axis has length 0; cannot subset.")
+    if lon_vals.size == 1:
+        lon_ascending = True
+    else:
+        lon_diffs = np.diff(lon_vals)
+        if (lon_diffs > 0).all():
+            lon_ascending = True
+        elif (lon_diffs < 0).all():
+            lon_ascending = False
+        else:
+            raise UsageError(
+                "lon axis is non-monotonic; cannot infer slice orientation. "
+                "Re-sort the input or pre-process before subsetting."
+            )
 
     lat_vals = np.asarray(ds[lat_dim].values)
     if lat_vals.size == 0:
@@ -251,14 +270,28 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
 
     if west <= east:
         # Contiguous longitude span. Slice in the axis's own monotonic order.
-        lon = np.asarray(ds[lon_dim].values)
-        lon_slice = slice(west, east) if lon.size < 2 or lon[0] < lon[-1] else slice(east, west)
+        lon_slice = slice(west, east) if lon_ascending else slice(east, west)
         ds = ds.sel({lon_dim: lon_slice})
     else:
         # Antimeridian crossing (west > east): the span runs west .. +180 and
-        # -180 .. east. Select the union with a boolean mask and drop the
-        # interior band, keeping the native ascending longitude order.
-        ds = ds.where((ds[lon_dim] >= west) | (ds[lon_dim] <= east), drop=True)
+        # -180 .. east. Select each wing with a label slice and concatenate
+        # in the axis's native order; unlike a where(..., drop=True) mask
+        # this never materializes a full-grid mask and keeps integer
+        # variables integer (masking promotes them to float).
+        import xarray as xr
+
+        if lon_ascending:
+            wings = [ds.sel({lon_dim: slice(None, east)}), ds.sel({lon_dim: slice(west, None)})]
+        else:
+            wings = [ds.sel({lon_dim: slice(None, west)}), ds.sel({lon_dim: slice(east, None)})]
+        ds = xr.concat(
+            wings,
+            dim=lon_dim,
+            data_vars="minimal",
+            coords="minimal",
+            compat="override",
+            join="exact",
+        )
 
     if ds.sizes.get(lat_dim, 0) == 0 or ds.sizes.get(lon_dim, 0) == 0:
         bbox_str = f"{north}/{west}/{south}/{east}"

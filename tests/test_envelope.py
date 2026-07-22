@@ -181,8 +181,46 @@ class TestBboxSubset:
 
     def test_non_monotonic_latitude_rejected(self):
         ds = make_gridded(lats=(1.0, 3.0, 2.0))
-        with pytest.raises(UsageError, match="non-monotonic"):
+        with pytest.raises(UsageError, match="lat axis is non-monotonic"):
             envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+
+    def test_non_monotonic_longitude_rejected(self):
+        ds = make_gridded(lons=(10.0, 12.0, 11.0, 13.0))
+        with pytest.raises(UsageError, match="lon axis is non-monotonic"):
+            envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+
+    def test_empty_longitude_axis_rejected(self):
+        ds = make_gridded(lons=())
+        with pytest.raises(UsageError, match="lon axis has length 0"):
+            envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+
+    def test_descending_longitude_contiguous_span(self):
+        ds = make_gridded(lons=(13.0, 12.0, 11.0, 10.0))
+        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
+        assert list(sub["longitude"].values) == [12.0, 11.0]
+
+    def test_antimeridian_preserves_integer_dtype(self):
+        ds = make_gridded(lons=(-179.0, -100.0, 0.0, 100.0, 179.0))
+        ds["count"] = (
+            ("time", "latitude", "longitude"),
+            np.ones((2, 3, 5), dtype=np.int32),
+        )
+        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        assert sub["count"].dtype == np.int32
+        assert list(sub["longitude"].values) == [-179.0, 179.0]
+
+    def test_antimeridian_descending_longitude_keeps_native_order(self):
+        ds = make_gridded(lons=(179.0, 100.0, 0.0, -100.0, -179.0))
+        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        assert list(sub["longitude"].values) == [179.0, -179.0]
+
+    def test_antimeridian_leaves_non_longitude_variables_alone(self):
+        ds = make_gridded(lons=(-179.0, 0.0, 179.0))
+        ds["tavg"] = (("time",), np.array([5, 6], dtype=np.int16))
+        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        assert sub["tavg"].dims == ("time",)
+        assert sub["tavg"].dtype == np.int16
+        assert list(sub["tavg"].values) == [5, 6]
 
     def test_empty_result_is_data_error(self):
         ds = make_gridded()
