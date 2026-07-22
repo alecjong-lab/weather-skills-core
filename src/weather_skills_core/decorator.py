@@ -252,6 +252,77 @@ def _add_extra_argument(parser, dest, spec):
     parser.add_argument(flag_name, dest=dest, **kwargs)
 
 
+def _normalize_date_toggle(name, value, *, extra_keys=()):
+    """Normalize a ``start_time``/``end_time``/``date`` toggle to None or a config dict.
+
+    ``True`` enables the flag with the decorator-owned help text and
+    ``required=True``. A dict enables it with overrides: ``help``,
+    ``required`` (default True), and ``choices`` -- plus, for ``date`` only,
+    ``context`` (the resolved-date log line's parenthetical label).
+    """
+    if value is None or value is False:
+        return None
+    if value is True:
+        return {}
+    if isinstance(value, dict):
+        allowed = {"help", "required", "choices", *extra_keys}
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"{name} toggle has unknown keys {sorted(unknown)}")
+        return dict(value)
+    raise ValueError(f"{name} must be a bool or a dict, not {value!r}")
+
+
+def _normalize_mode_toggle(name, value, modes, *, extra_keys=()):
+    """Normalize a ``bbox``/``variable`` toggle to None or a config dict.
+
+    A bare mode string becomes ``{"mode": <string>}``; a dict must carry a
+    ``mode`` key from ``modes`` and may add ``help``/``choices`` (plus any
+    ``extra_keys``, e.g. ``required`` for ``variable``).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = {"mode": value}
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"{name} must be one of {modes} or a dict with a 'mode' key, not {value!r}"
+        )
+    allowed = {"mode", "help", "choices", *extra_keys}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"{name} toggle has unknown keys {sorted(unknown)}")
+    if value.get("mode") not in modes:
+        raise ValueError(f"{name} mode must be one of {modes}, not {value.get('mode')!r}")
+    return dict(value)
+
+
+def _normalize_workers_toggle(value):
+    """Normalize the ``workers`` toggle to None or a config dict.
+
+    A bare int becomes ``{"default": <int>}``; a dict may carry ``default``,
+    ``help``, ``required``, and ``choices``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return {"default": value}
+    if isinstance(value, dict):
+        unknown = set(value) - {"default", "help", "required", "choices"}
+        if unknown:
+            raise ValueError(f"workers toggle has unknown keys {sorted(unknown)}")
+        return dict(value)
+    raise ValueError(f"workers must be an int default or a dict, not {value!r}")
+
+
+def _date_toggle_kwargs(cfg, default_help):
+    """argparse keywords for a standard date toggle from its normalized config."""
+    kwargs = {"required": cfg.get("required", True), "help": cfg.get("help", default_help)}
+    if "choices" in cfg:
+        kwargs["choices"] = cfg["choices"]
+    return kwargs
+
+
 def _normalize_mutex_groups(mutex_groups, extra_args):
     """Validate a ``mutex_groups`` declaration against ``extra_args``.
 
@@ -383,6 +454,18 @@ def weather_skill(
       typed inputs are validated against the overridden dim names instead of
       relying on CF/heuristic detection (see
       :func:`weather_skills_core.envelope.validate_input`).
+    - toggle dict form: ``start_time``/``end_time``/``date``, ``bbox``,
+      ``variable``, and ``workers`` also accept a dict overriding the flag's
+      argparse surface -- ``help`` replaces the decorator-owned help text,
+      ``required`` overrides requiredness (``--start``/``--end``/``--date``
+      default to required; with ``"required": False`` an omitted value is
+      passed to the function as ``None`` and no resolved date is recorded),
+      and ``choices`` constrains the accepted values. The string/int forms
+      become the dict's ``mode``/``default`` key -- ``bbox={"mode":
+      "optional", ...}``, ``variable={"mode": "repeat", ...}``,
+      ``workers={"default": 4, ...}`` -- and ``date`` additionally accepts
+      ``context``: the parenthetical label on the resolved-date stderr line
+      (default ``"single date"``, e.g. ``"single forecast init date"``).
     - ``extra_args`` -- mapping of dest name to a bare type, a constraint set
       (``{int, range(0, 2)}``), or an argparse-keyword dict.
     - ``mutex_groups`` -- mapping of group name to either a sequence of
@@ -455,12 +538,18 @@ def weather_skill(
         raise ValueError("no-artifact skills do not declare input_type")
     if post_write is not None and output_type is None:
         raise ValueError("post_write requires an artifact-writing output_type")
-    if bbox not in (None, "optional", "required"):
-        raise ValueError(f"bbox must be None, 'optional', or 'required', not {bbox!r}")
-    if variable not in (None, "single", "repeat"):
-        raise ValueError(f"variable must be None, 'single', or 'repeat', not {variable!r}")
-    if start_time != end_time:
+    start_cfg = _normalize_date_toggle("start_time", start_time)
+    end_cfg = _normalize_date_toggle("end_time", end_time)
+    date_cfg = _normalize_date_toggle("date", date, extra_keys=("context",))
+    bbox_cfg = _normalize_mode_toggle("bbox", bbox, ("optional", "required"))
+    variable_cfg = _normalize_mode_toggle(
+        "variable", variable, ("single", "repeat"), extra_keys=("required",)
+    )
+    workers_cfg = _normalize_workers_toggle(workers)
+    if (start_cfg is None) != (end_cfg is None):
         raise ValueError("start_time and end_time must be enabled together")
+    if start_cfg is not None and start_cfg.get("required", True) != end_cfg.get("required", True):
+        raise ValueError("start_time and end_time must agree on required")
     png_labels = history_labels if history_labels is not None else input_names
     if output_type == PNG and len(input_types) > 1:
         if png_labels is None or len(png_labels) != len(input_types):
@@ -492,7 +581,7 @@ def weather_skill(
         @functools.wraps(fn)
         def wrapper(argv=None):
             args_list = list(sys.argv[1:]) if argv is None else list(argv)
-            if bbox is not None:
+            if bbox_cfg is not None:
                 args_list = rewrite_bbox_argv(args_list)
             args = parser.parse_args(args_list)
             try:
@@ -533,27 +622,45 @@ def weather_skill(
             )
         if output_type is not None:
             parser.add_argument("--output", "-o", required=True)
-        if start_time:
-            parser.add_argument("--start", required=True, help=_START_HELP)
-        if end_time:
-            parser.add_argument("--end", required=True, help=_END_HELP)
-        if date:
-            parser.add_argument("--date", required=True, help=_DATE_HELP)
-        if bbox == "required":
-            parser.add_argument("--bbox", required=True, help=_BBOX_REQUIRED_HELP)
-        elif bbox == "optional":
-            parser.add_argument("--bbox", help=_BBOX_OPTIONAL_HELP)
-        if variable == "single":
-            parser.add_argument("--variable", "-v")
-        elif variable == "repeat":
-            parser.add_argument("--variable", "-v", action="append", default=None)
-        if workers is not None:
-            parser.add_argument(
-                "--workers",
-                type=int,
-                default=workers,
-                help=f"Max concurrent fetch threads (default {workers}).",
-            )
+        if start_cfg is not None:
+            parser.add_argument("--start", **_date_toggle_kwargs(start_cfg, _START_HELP))
+        if end_cfg is not None:
+            parser.add_argument("--end", **_date_toggle_kwargs(end_cfg, _END_HELP))
+        if date_cfg is not None:
+            parser.add_argument("--date", **_date_toggle_kwargs(date_cfg, _DATE_HELP))
+        if bbox_cfg is not None:
+            required = bbox_cfg["mode"] == "required"
+            default_help = _BBOX_REQUIRED_HELP if required else _BBOX_OPTIONAL_HELP
+            kwargs = {"help": bbox_cfg.get("help", default_help)}
+            if required:
+                kwargs["required"] = True
+            if "choices" in bbox_cfg:
+                kwargs["choices"] = bbox_cfg["choices"]
+            parser.add_argument("--bbox", **kwargs)
+        if variable_cfg is not None:
+            kwargs = {}
+            if variable_cfg["mode"] == "repeat":
+                kwargs.update(action="append", default=None)
+            if "help" in variable_cfg:
+                kwargs["help"] = variable_cfg["help"]
+            if variable_cfg.get("required"):
+                kwargs["required"] = True
+            if "choices" in variable_cfg:
+                kwargs["choices"] = variable_cfg["choices"]
+            parser.add_argument("--variable", "-v", **kwargs)
+        if workers_cfg is not None:
+            kwargs = {"type": int}
+            if "default" in workers_cfg:
+                kwargs["default"] = workers_cfg["default"]
+                default_help = f"Max concurrent fetch threads (default {workers_cfg['default']})."
+            else:
+                default_help = "Max concurrent fetch threads."
+            kwargs["help"] = workers_cfg.get("help", default_help)
+            if workers_cfg.get("required"):
+                kwargs["required"] = True
+            if "choices" in workers_cfg:
+                kwargs["choices"] = workers_cfg["choices"]
+            parser.add_argument("--workers", **kwargs)
         if title:
             parser.add_argument("--title", help="Optional figure title.")
         if dims:
@@ -577,7 +684,7 @@ def weather_skill(
             args=args,
             output_path=Path(args.output) if output_type is not None else None,
         )
-        if workers is not None and args.workers < 1:
+        if workers_cfg is not None and args.workers is not None and args.workers < 1:
             raise UsageError("--workers must be >= 1.")
         if validate_args is not None:
             _call_hook(validate_args, args, wants_context=validate_wants_ctx, context=context)
@@ -605,26 +712,37 @@ def weather_skill(
 
         params = {}
         resolved_dates = {}
-        if start_time and end_time:
-            start_d, end_d, log_line = _dates.resolve_window(args.start, args.end, latest_fn)
-            if log_line is not None:
-                print(log_line, file=sys.stderr)
-            params["start_time"], params["end_time"] = start_d, end_d
-            context.start_time, context.end_time = start_d, end_d
-            resolved_dates["start"] = start_d.isoformat()
-            resolved_dates["end"] = end_d.isoformat()
-        if date:
-            date_d, log_line = _dates.resolve_date(args.date, latest_fn)
-            if log_line is not None:
-                print(log_line, file=sys.stderr)
-            params["date"] = date_d
-            context.date = date_d
-            resolved_dates["date"] = date_d.isoformat()
-        if bbox is not None:
+        if start_cfg is not None:
+            if args.start and args.end:
+                start_d, end_d, log_line = _dates.resolve_window(args.start, args.end, latest_fn)
+                if log_line is not None:
+                    print(log_line, file=sys.stderr)
+                params["start_time"], params["end_time"] = start_d, end_d
+                context.start_time, context.end_time = start_d, end_d
+                resolved_dates["start"] = start_d.isoformat()
+                resolved_dates["end"] = end_d.isoformat()
+            elif args.start or args.end:
+                # Reachable only when the toggles declare required=False.
+                raise UsageError("--start and --end must be given together.")
+            else:
+                params["start_time"] = params["end_time"] = None
+        if date_cfg is not None:
+            if args.date:
+                date_d, log_line = _dates.resolve_date(
+                    args.date, latest_fn, context=date_cfg.get("context", "single date")
+                )
+                if log_line is not None:
+                    print(log_line, file=sys.stderr)
+                params["date"] = date_d
+                context.date = date_d
+                resolved_dates["date"] = date_d.isoformat()
+            else:
+                params["date"] = None
+        if bbox_cfg is not None:
             params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox else None
-        if variable is not None:
+        if variable_cfg is not None:
             params["variable"] = args.variable
-        if workers is not None:
+        if workers_cfg is not None:
             params["workers"] = args.workers
         if title:
             params["title"] = args.title

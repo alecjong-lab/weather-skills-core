@@ -135,6 +135,178 @@ class TestParserConstruction:
             )
 
 
+class TestToggleDictForm:
+    def test_variable_help_required_and_choices(self, capsys):
+        skill = make_identity_skill(
+            [],
+            variable={
+                "mode": "single",
+                "help": "CMIP6 variable_id (e.g. tas, pr).",
+                "required": True,
+                "choices": ["tas", "pr"],
+            },
+        )
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        assert "CMIP6 variable_id" in capsys.readouterr().out
+        args = skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "tas"])
+        assert args.variable == "tas"
+        with pytest.raises(SystemExit) as exc:
+            skill.parser.parse_args(["-i", "a", "-o", "b"])
+        assert exc.value.code == 2  # required
+        with pytest.raises(SystemExit) as exc:
+            skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "nope"])
+        assert exc.value.code == 2  # choices
+
+    def test_variable_repeat_mode_in_dict_form(self):
+        skill = make_identity_skill([], variable={"mode": "repeat", "help": "Repeatable."})
+        args = skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "x", "-v", "y"])
+        assert args.variable == ["x", "y"]
+
+    def test_bbox_dict_help_and_optional_mode(self, tmp_path, gridded_store, capsys):
+        calls = []
+        skill = make_identity_skill(calls, bbox={"mode": "optional", "help": "Custom bbox help."})
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        assert "Custom bbox help." in capsys.readouterr().out
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert calls == [{"bbox": None}]
+
+    def test_bbox_dict_required_mode_still_rewrites_argv(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(calls, input_type="any", bbox={"mode": "required"})
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--bbox", "-1/32/-5/42"])
+        assert calls[0]["bbox"] == (-1.0, 32.0, -5.0, 42.0)
+
+    def test_workers_dict_default_help_and_choices(self, capsys):
+        skill = make_identity_skill(
+            [], workers={"default": 2, "help": "Parallel legs.", "choices": [1, 2, 4]}
+        )
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        assert "Parallel legs." in capsys.readouterr().out
+        assert skill.parser.parse_args(["-i", "a", "-o", "b"]).workers == 2
+        with pytest.raises(SystemExit) as exc:
+            skill.parser.parse_args(["-i", "a", "-o", "b", "--workers", "3"])
+        assert exc.value.code == 2
+
+    def test_start_end_dict_help_and_optional(self, tmp_path, gridded_store, capsys):
+        skill = make_identity_skill(
+            [],
+            start_time={"help": "Range start (analysis datasets).", "required": False},
+            end_time={"help": "Range end (analysis datasets).", "required": False},
+        )
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        assert "analysis datasets" in capsys.readouterr().out
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            start_time={"required": False},
+            end_time={"required": False},
+        )
+        out = tmp_path / "o.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert calls == [{"start_time": None, "end_time": None}]
+        # No resolved dates recorded when the optional window is omitted.
+        recorded = history_of(out)[-1]["args"]
+        assert recorded["start"] is None
+        assert recorded["end"] is None
+
+    def test_lone_optional_start_exits_2(self, tmp_path, gridded_store, capsys):
+        skill = make_identity_skill(
+            [],
+            start_time={"required": False},
+            end_time={"required": False},
+        )
+        with pytest.raises(SystemExit) as exc:
+            skill(
+                [
+                    "-i",
+                    str(gridded_store),
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                    "--start",
+                    "2026-01-01",
+                ]
+            )
+        assert exc.value.code == 2
+        assert "given together" in capsys.readouterr().err
+
+    def test_optional_window_still_resolves_when_given(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            start_time={"required": False},
+            end_time={"required": False},
+        )
+        out = tmp_path / "o.zarr"
+        skill(
+            [
+                "-i",
+                str(gridded_store),
+                "-o",
+                str(out),
+                "--start",
+                "2026-01-01",
+                "--end",
+                "2026-01-05",
+            ]
+        )
+        assert calls[0]["start_time"] == date(2026, 1, 1)
+        assert history_of(out)[-1]["args"]["end"] == "2026-01-05"
+
+    def test_date_context_labels_resolution_log(self, tmp_path, capsys):
+        @weather_skill(
+            "f",
+            "0.1.0",
+            output_type="gridded",
+            date={"context": "single forecast init date"},
+        )
+        def fetch(date):
+            """Fetch one init."""
+            return make_gridded()
+
+        fetch(["--date", "now-1d", "-o", str(tmp_path / "o.zarr")])
+        assert "(single forecast init date)" in capsys.readouterr().err
+
+    def test_date_dict_optional_passes_none(self, tmp_path):
+        calls = []
+
+        @weather_skill("f", "0.1.0", output_type="gridded", date={"required": False})
+        def fetch(date):
+            """Fetch."""
+            calls.append(date)
+            return make_gridded()
+
+        out = tmp_path / "o.zarr"
+        fetch(["-o", str(out)])
+        assert calls == [None]
+        assert history_of(out)[0]["args"]["date"] is None
+
+    def test_declaration_errors(self):
+        def declare(**kwargs):
+            return weather_skill("x", "0.1.0", output_type="gridded", **kwargs)(lambda: None)
+
+        with pytest.raises(ValueError, match="unknown keys"):
+            declare(start_time={"metavar": "S"}, end_time=True)
+        with pytest.raises(ValueError, match="unknown keys"):
+            declare(date={"mode": "single"})
+        with pytest.raises(ValueError, match="context"):
+            # `context` is a date-only key; start_time does not accept it.
+            declare(start_time={"context": "x"}, end_time=True)
+        with pytest.raises(ValueError, match="mode must be one of"):
+            declare(bbox={"help": "no mode"})
+        with pytest.raises(ValueError, match="mode must be one of"):
+            declare(variable={"mode": "many"})
+        with pytest.raises(ValueError, match="unknown keys"):
+            declare(workers={"defualt": 4})
+        with pytest.raises(ValueError, match="agree on required"):
+            declare(start_time={"required": False}, end_time=True)
+        with pytest.raises(ValueError, match="together"):
+            declare(start_time={"required": False})
+
+
 class TestMutexGroups:
     def make_select_skill(self, calls, required=True):
         return make_identity_skill(
