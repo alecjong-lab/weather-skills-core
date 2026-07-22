@@ -88,6 +88,45 @@ class TestParserConstruction:
             skill.parser.parse_args(["-i", "a", "-o", "b", "--interpolation-factor", "5"])
         assert exc.value.code == 2
 
+    def test_extra_args_top_level_tuple_is_choices(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(calls, extra_args={"method": ("mean", "std")})
+        args = skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "std"])
+        assert args.method == "std"
+        with pytest.raises(SystemExit) as exc:
+            skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "median"])
+        assert exc.value.code == 2
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--method", "mean"])
+        assert calls == [{"method": "mean"}]
+
+    def test_extra_args_top_level_list_is_choices(self):
+        skill = make_identity_skill([], extra_args={"method": ["mean", "std"]})
+        assert skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "mean"]).method == "mean"
+
+    def test_extra_args_untyped_choice_set_rejected(self):
+        with pytest.raises(ValueError, match="choices without a type"):
+            make_identity_skill([], extra_args={"level": {range(0, 3)}})
+        with pytest.raises(ValueError, match="choices without a type"):
+            make_identity_skill([], extra_args={"method": {("mean", "std")}})
+
+    def test_extra_args_reserved_dest_collisions_rejected(self):
+        with pytest.raises(ValueError, match="collide"):
+            make_identity_skill([], start_time=True, end_time=True, extra_args={"start_time": str})
+        with pytest.raises(ValueError, match="collide"):
+            make_identity_skill([], date=True, extra_args={"date": str})
+        with pytest.raises(ValueError, match="collide"):
+            make_identity_skill([], bbox="optional", extra_args={"bbox": str})
+        with pytest.raises(ValueError, match="collide"):
+            make_identity_skill([], input_paths=True, extra_args={"input_paths": str})
+
+    def test_extra_args_dest_allowed_when_toggle_off(self, tmp_path, gridded_store):
+        # Without the corresponding toggle the name is not resolved by the
+        # decorator, so an extra arg may use it.
+        calls = []
+        skill = make_identity_skill(calls, extra_args={"date": str})
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--date", "x"])
+        assert calls == [{"date": "x"}]
+
     def test_extra_args_bool_flag(self):
         skill = make_identity_skill([], extra_args={"align_day_of_year": bool})
         assert skill.parser.parse_args(["-i", "a", "-o", "b"]).align_day_of_year is False

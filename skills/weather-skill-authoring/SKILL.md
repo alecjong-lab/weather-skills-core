@@ -125,9 +125,13 @@ Declaration surface (all keyword-only after `name`, `version`):
   `extra_args`: the toggle keeps the date grammar, the bbox parse/argv
   rewrite, and the resolved-provenance behavior.
 - `extra_args` — dest name to a bare type (`int`; `bool` makes a store-true
-  flag), a constraint set (`{int, range(0, 2)}` derives `choices`), or an
-  argparse-keyword dict (supports `positional`, `flag`, `aliases`, `repeat`,
-  and any argparse keyword such as `help`).
+  flag), a tuple of literal string choices (`("mean", "std")`), a constraint
+  set combining a type with a value domain (`{int, range(0, 2)}` derives
+  `choices`; the set must name the element type), or an argparse-keyword
+  dict (supports `positional`, `flag`, `aliases`, `repeat`, and any argparse
+  keyword such as `help`). A dest may not reuse a name the decorator
+  resolves and passes itself (`start_time`/`end_time`/`date`/`bbox`/
+  `input_paths`/`context`).
 - `mutex_groups` — named groups of mutually exclusive `extra_args` (see
   below).
 - `input_paths=True` — the function also receives an `input_paths` keyword

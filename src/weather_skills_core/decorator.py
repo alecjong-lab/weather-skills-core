@@ -229,10 +229,11 @@ def _add_extra_argument(parser, dest, spec):
     """Add one ``extra_args`` entry to the parser.
 
     ``spec`` is a bare type (``int``; ``bool`` becomes a store-true flag), a
-    constraint set combining a type with a value domain (``{int, range(0, 2)}``
-    derives ``choices``; a tuple lists choices literally), or a dict of
-    argparse keywords for full control with the extra keys ``positional``,
-    ``flag``, ``aliases``, and ``repeat``.
+    tuple/list of literal string choices, a constraint set combining a type
+    with a value domain (``{int, range(0, 2)}`` derives ``choices``; the set
+    must name the element type alongside any choices), or a dict of argparse
+    keywords for full control with the extra keys ``positional``, ``flag``,
+    ``aliases``, and ``repeat``.
     """
     flag_name = "--" + dest.replace("_", "-")
     if isinstance(spec, dict):
@@ -252,7 +253,11 @@ def _add_extra_argument(parser, dest, spec):
         kwargs["action"] = "store_true"
     elif isinstance(spec, type):
         kwargs["type"] = spec
-    elif isinstance(spec, set | frozenset | tuple | list):
+    elif isinstance(spec, tuple | list):
+        # A top-level tuple/list spec lists the flag's choices literally,
+        # matched against the raw CLI string.
+        kwargs["choices"] = list(spec)
+    elif isinstance(spec, set | frozenset):
         for element in spec:
             if element is bool:
                 kwargs["action"] = "store_true"
@@ -264,6 +269,12 @@ def _add_extra_argument(parser, dest, spec):
                 kwargs["choices"] = list(element)
             else:
                 raise ValueError(f"unsupported constraint {element!r} for extra arg {dest!r}")
+        if "choices" in kwargs and "type" not in kwargs:
+            raise ValueError(
+                f"extra arg {dest!r} constrains choices without a type; the raw CLI "
+                "string would never match a typed choice. Add the element type to the "
+                "constraint set, or declare literal string choices as a top-level tuple."
+            )
     else:
         raise ValueError(f"unsupported extra_args spec {spec!r} for {dest!r}")
     parser.add_argument(flag_name, dest=dest, **kwargs)
@@ -489,8 +500,13 @@ def weather_skill(
       ``workers={"default": 4, ...}`` -- and ``date`` additionally accepts
       ``context``: the parenthetical label on the resolved-date stderr line
       (default ``"single date"``, e.g. ``"single forecast init date"``).
-    - ``extra_args`` -- mapping of dest name to a bare type, a constraint set
-      (``{int, range(0, 2)}``), or an argparse-keyword dict.
+    - ``extra_args`` -- mapping of dest name to a bare type, a tuple/list of
+      literal string choices, a constraint set combining a type with a value
+      domain (``{int, range(0, 2)}``), or an argparse-keyword dict. A dest
+      may not reuse a name the decorator resolves and passes itself
+      (``start_time``/``end_time``/``date``/``bbox``/``input_paths``, and
+      ``context`` when the function opts into the run context): the resolved
+      value would clobber the extra argument's.
     - ``mutex_groups`` -- mapping of group name to either a sequence of
       ``extra_args`` dests (an optional group) or a dict
       ``{"args": (dests...), "required": True}``. Each group becomes a real
@@ -589,6 +605,23 @@ def weather_skill(
         raise ValueError("start_time and end_time must be enabled together")
     if start_cfg is not None and start_cfg.get("required", True) != end_cfg.get("required", True):
         raise ValueError("start_time and end_time must agree on required")
+    # Dests the decorator itself resolves and passes to the function; an
+    # extra_args entry under one of these names would be silently clobbered.
+    reserved_dests = set()
+    if start_cfg is not None:
+        reserved_dests.update(("start_time", "end_time"))
+    if date_cfg is not None:
+        reserved_dests.add("date")
+    if bbox_cfg is not None:
+        reserved_dests.add("bbox")
+    if input_paths:
+        reserved_dests.add("input_paths")
+    collisions = sorted(reserved_dests & set(extra_args or {}))
+    if collisions:
+        raise ValueError(
+            f"extra_args dest(s) {collisions} collide with standard parameter names "
+            "the decorator resolves and passes itself; rename the extra argument(s)"
+        )
     png_labels = history_labels if history_labels is not None else input_names
     if output_type == PNG and len(input_types) > 1:
         if png_labels is None or len(png_labels) != len(input_types):
