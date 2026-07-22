@@ -2190,8 +2190,8 @@ class TestPostWrite:
         assert out.exists()
 
     def test_context_opt_in(self, tmp_path):
-        # The cmip6 pattern: the body stashes a fetch-discovered value; the
-        # post-write hook verifies the written store against it.
+        # The body stashes a fetch-discovered value; the post-write hook
+        # verifies the written store against it.
         seen = {}
 
         def verify(path, context):
@@ -2369,7 +2369,8 @@ class TestRunContext:
         assert history_of(out)[-1]["args"]["marker"] == "resolved-in-validate"
 
     def test_hooks_without_context_param_keep_plain_shapes(self, tmp_path, gridded_store):
-        # A one-positional-arg hook (no context param) is called exactly as before.
+        # A one-positional-arg hook (no context param) is called with the
+        # plain single-argument shape.
         validated = []
         skill = make_identity_skill([], validate_args=validated.append)
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])

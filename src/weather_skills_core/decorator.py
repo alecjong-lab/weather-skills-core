@@ -483,7 +483,7 @@ def weather_skill(
       rather than selects: the returned dataset's detected shape must be a
       member, checked before the write (a mismatch exits 1); the declaration
       never coerces the output toward any member. A single-type declaration
-      stays unchecked, as before.
+      stays unchecked.
     - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
       relative-or-absolute date grammar; resolved dates are passed to the
       function and recorded in provenance), ``bbox`` (``"required"`` or

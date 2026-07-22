@@ -648,11 +648,8 @@ one-line assignment shape so the bump tooling's regex continues to match.
   `cftime`; core's own `cftime` dependency is what covers calendar decoding
   on those reads.
 - Each script has a sibling `<name>.py.lock`, regenerated with
-  `uv lock --script` when the inline dependencies change. Bootstrap window:
-  until the weather-skills-core repo is pushed to the git URL above, `uv
-  lock --script` cannot resolve the core dependency and lock regeneration is
-  impossible — defer the regeneration and record it as a follow-up; never
-  skip it silently or hand-edit a `.py.lock`.
+  `uv lock --script` when the inline dependencies change. Never hand-edit a
+  `.py.lock`.
 
 ## Where tests live
 

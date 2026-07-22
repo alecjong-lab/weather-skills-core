@@ -59,7 +59,7 @@ class TestLoadHistory:
         assert provenance.load_history(store) == chain
 
     def test_rhiza_history_attr_is_not_read(self, tmp_path):
-        # A store carrying only the old rhiza_history attr has no history.
+        # A store carrying only a rhiza_history attr has no history.
         ds = make_gridded()
         ds.attrs["rhiza_history"] = json.dumps([entry()], sort_keys=True)
         path = tmp_path / "a.zarr"
