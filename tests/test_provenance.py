@@ -7,14 +7,13 @@ from conftest import make_gridded
 from weather_skills_core import provenance
 
 
-def write_store(path, history=None, *, legacy=False, raw=None, fill=1.0):
+def write_store(path, history=None, *, raw=None, fill=1.0):
     """Write a tiny gridded store, optionally stamped with a history chain."""
     ds = make_gridded(fill=fill)
     if raw is not None:
         ds.attrs["weather_skills_history"] = raw
     elif history is not None:
-        key = "rhiza_history" if legacy else "weather_skills_history"
-        ds.attrs[key] = json.dumps(history, sort_keys=True)
+        ds.attrs["weather_skills_history"] = json.dumps(history, sort_keys=True)
     ds.to_zarr(path, mode="w", consolidated=True)
     return path
 
@@ -59,10 +58,13 @@ class TestLoadHistory:
         store = write_store(tmp_path / "a.zarr", chain)
         assert provenance.load_history(store) == chain
 
-    def test_legacy_rhiza_history_fallback(self, tmp_path):
-        chain = [entry()]
-        store = write_store(tmp_path / "a.zarr", chain, legacy=True)
-        assert provenance.load_history(store) == chain
+    def test_rhiza_history_attr_is_not_read(self, tmp_path):
+        # A store carrying only the old rhiza_history attr has no history.
+        ds = make_gridded()
+        ds.attrs["rhiza_history"] = json.dumps([entry()], sort_keys=True)
+        path = tmp_path / "a.zarr"
+        ds.to_zarr(path, mode="w", consolidated=True)
+        assert provenance.load_history(path) == []
 
     def test_json_object_is_malformed(self, tmp_path, capsys):
         store = write_store(tmp_path / "a.zarr", raw=json.dumps({"skill": "x"}))
@@ -269,22 +271,6 @@ class TestEntryConstruction:
         assert "hash" in e["reference_inputs"][0]
 
 
-class TestLegacyMigration:
-    def test_legacy_attrs_migrate(self):
-        attrs = {"rhiza_history": "[]", "rhiza_source": "chirps", "rhiza_forecast_init": "x"}
-        provenance.migrate_legacy_attrs(attrs)
-        assert attrs == {
-            "weather_skills_history": "[]",
-            "weather_skills_source": "chirps",
-            "weather_skills_forecast_init": "x",
-        }
-
-    def test_existing_new_name_wins(self):
-        attrs = {"rhiza_history": "old", "weather_skills_history": "new"}
-        provenance.migrate_legacy_attrs(attrs)
-        assert attrs == {"weather_skills_history": "new"}
-
-
 class TestStampZarr:
     def test_stamp_sets_sorted_json_and_clears_encoding(self, tmp_path):
         store = write_store(tmp_path / "a.zarr")
@@ -300,12 +286,13 @@ class TestStampZarr:
         provenance.stamp_zarr(ds, [], source="oisst")
         assert ds.attrs["weather_skills_source"] == "oisst"
 
-    def test_stamp_migrates_legacy(self):
+    def test_stamp_leaves_unrelated_attrs_untouched(self):
+        # rhiza_* attrs are ordinary opaque attrs: no migration, no removal.
         ds = make_gridded()
         ds.attrs["rhiza_source"] = "chirps"
         provenance.stamp_zarr(ds, [])
-        assert "rhiza_source" not in ds.attrs
-        assert ds.attrs["weather_skills_source"] == "chirps"
+        assert ds.attrs["rhiza_source"] == "chirps"
+        assert "weather_skills_source" not in ds.attrs
 
 
 class TestPngMetadata:

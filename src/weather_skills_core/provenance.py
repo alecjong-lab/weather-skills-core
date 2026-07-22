@@ -14,10 +14,6 @@ input/output path strings, with resolved absolute dates), and ``input``:
 - ``reference_inputs``: an optional sibling key on the entry listing
   ``{"basename", "hash"}`` for secondary reference stores (e.g. a reference
   grid) whose content must enter the cache key.
-
-Legacy artifacts carry the same data under the ``rhiza_`` attr prefix
-(``rhiza_history``, ``rhiza_source``, ``rhiza_forecast_init``); reads fall
-back to it and writes migrate it forward.
 """
 
 import hashlib
@@ -27,10 +23,6 @@ from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
-
-# compatibility read/migration for the rhiza_ attr prefix; scheduled for removal
-LEGACY_HISTORY_ATTR = "rhiza_history"
-LEGACY_ATTRS = ("rhiza_history", "rhiza_source", "rhiza_forecast_init")
 
 DEFAULT_SOFTWARE = "forecasting-skills"
 
@@ -192,19 +184,20 @@ def validate_chain(chain, loc: str) -> tuple[list, list]:
 def load_history(zarr_path: Path) -> list:
     """Read an artifact's provenance chain, tolerating absence and malformation.
 
-    Falls back to the legacy ``rhiza_history`` attr. A not-yet-existing or
-    unreadable store is a silent miss (empty chain). A present-but-non-array
-    value is malformed under the ``weather_skills_history`` contract; it is
-    treated as no history with a one-line stderr warning pointing at
-    ``provenance --check``. The coercion is array-level only: an array whose
-    individual entries are imperfect is passed through unchanged.
+    Only the ``weather_skills_history`` attr is read; a store carrying no such
+    attr has no history. A not-yet-existing or unreadable store is a silent
+    miss (empty chain). A present-but-non-array value is malformed under the
+    ``weather_skills_history`` contract; it is treated as no history with a
+    one-line stderr warning pointing at ``provenance --check``. The coercion
+    is array-level only: an array whose individual entries are imperfect is
+    passed through unchanged.
     """
     zarr_path = Path(zarr_path)
     try:
         import xarray as xr
 
         with xr.open_zarr(zarr_path, consolidated=False) as ds:
-            raw = ds.attrs.get(HISTORY_ATTR) or ds.attrs.get(LEGACY_HISTORY_ATTR)
+            raw = ds.attrs.get(HISTORY_ATTR)
     except (FileNotFoundError, KeyError, ValueError):
         # A not-yet-existing or unreadable output during a cache check is a miss.
         return []
@@ -348,34 +341,21 @@ def cache_hit(
     )
 
 
-def migrate_legacy_attrs(attrs: dict) -> dict:
-    """Migrate ``rhiza_*`` attrs to their ``weather_skills_*`` names, in place.
-
-    The legacy attr is always removed; its value lands on the new name only
-    when the new name is not already set.
-    """
-    for old in LEGACY_ATTRS:
-        if old in attrs:
-            new = "weather_skills_" + old.removeprefix("rhiza_")
-            attrs.setdefault(new, attrs.pop(old))
-    return attrs
-
-
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
-    """Stamp a dataset for writing: history attr, legacy migration, encoding clear.
+    """Stamp a dataset for writing: history attr and encoding clear.
 
     Serializes ``history`` (the full chain, oldest first) onto
     ``weather_skills_history`` with sorted keys, sets ``weather_skills_source``
-    when ``source`` is given (fetchers), migrates any legacy ``rhiza_*`` attrs,
-    and clears every variable's ``encoding`` -- per-variable encoding is not
-    part of the envelope contract, so re-writes must not carry the input's
-    codecs. Skills that need controlled write encodings (time units/calendar,
-    ``_FillValue``) set them after this call so the clear cannot drop them.
+    when ``source`` is given (fetchers), and clears every variable's
+    ``encoding`` -- per-variable encoding is not part of the envelope
+    contract, so re-writes must not carry the input's codecs. Skills that
+    need controlled write encodings (time units/calendar, ``_FillValue``) set
+    them after this call so the clear cannot drop them. Other pre-existing
+    attrs are left untouched.
     """
     ds.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
     if source is not None:
         ds.attrs[SOURCE_ATTR] = source
-    migrate_legacy_attrs(ds.attrs)
     for v in ds.variables:
         ds[v].encoding = {}
 

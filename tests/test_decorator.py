@@ -1249,7 +1249,9 @@ class TestWriteTail:
         fresh(["-i", str(src), "-o", str(out)])
         assert xr.open_zarr(out, consolidated=True).attrs["Conventions"] == "CF-1.13"
 
-    def test_legacy_attrs_migrated_on_write(self, tmp_path):
+    def test_rhiza_attrs_are_opaque(self, tmp_path, capsys):
+        # A store carrying only rhiza_* attrs has no history: the input is
+        # opaque, the chain starts fresh, and the attrs ride along unchanged.
         src = tmp_path / "in.zarr"
         ds = make_gridded()
         ds.attrs["rhiza_source"] = "chirps"
@@ -1260,12 +1262,11 @@ class TestWriteTail:
         skill = make_identity_skill([], input_type="any")
         out = tmp_path / "o.zarr"
         skill(["-i", str(src), "-o", str(out)])
+        assert "treating input as opaque" in capsys.readouterr().err
+        assert [e["skill"] for e in history_of(out)] == ["identity"]
         attrs = xr.open_zarr(out, consolidated=True).attrs
-        assert "rhiza_source" not in attrs
-        assert "rhiza_history" not in attrs
-        assert attrs["weather_skills_source"] == "chirps"
-        # The legacy chain was read as upstream and extended.
-        assert [e["skill"] for e in history_of(out)] == ["chirps-fetch", "identity"]
+        assert attrs["rhiza_source"] == "chirps"
+        assert "weather_skills_source" not in attrs
 
     def test_existing_output_replaced(self, tmp_path, gridded_store):
         out = tmp_path / "o.zarr"

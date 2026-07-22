@@ -347,8 +347,10 @@ hit it returns without calling you or touching the store. What you control:
   never report a cache hit.
 
 Everything else — chain append on the first input's trunk, per-branch
-histories for multi-input entries, legacy attribute migration, the
-`weather_skills_source` stamp, PNG metadata keys — the decorator does for you.
+histories for multi-input entries, the `weather_skills_source` stamp, PNG
+metadata keys — the decorator does for you. `weather_skills_history` is the
+only provenance attr: an input without it (whatever other attrs it carries)
+is opaque, and the chain starts fresh at your skill's entry.
 
 ### Raw-string parsers and the schema validator
 
@@ -468,7 +470,7 @@ Do not re-implement these in a skill body:
 - Date-grammar parsing, `latest` memoization, the resolved-dates stderr line.
 - The cache key, the cache-hit short-circuit, cache-completeness probing.
 - Provenance: entry construction, chain append, multi-input branch histories,
-  legacy attribute migration, PNG metadata.
+  PNG metadata.
 - Writing: encoding clear (set controlled write encodings via
   `write_encoding`, which runs after the clear), `consolidated=True`,
   streaming first-write/append ordering, partial-store rollback on failure.
