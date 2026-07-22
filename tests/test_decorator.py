@@ -969,6 +969,80 @@ class TestExitCodes:
         assert "non-empty" in capsys.readouterr().err
 
 
+class TestEmptyStringValues:
+    def make_fetcher(self, calls, **declaration):
+        @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", **declaration)
+        def fetch(**params):
+            """Fetch a toy dataset."""
+            calls.append(params)
+            return make_gridded()
+
+        return fetch
+
+    def test_empty_start_and_end_exit_2(self, tmp_path, capsys):
+        calls = []
+        fetch = self.make_fetcher(calls, start_time=True, end_time=True)
+        out = tmp_path / "o.zarr"
+        with pytest.raises(SystemExit) as exc:
+            fetch(["--start", "", "--end", "", "-o", str(out)])
+        assert exc.value.code == 2
+        assert "invalid date value" in capsys.readouterr().err
+        assert calls == []
+        assert not out.exists()
+
+    def test_lone_empty_start_with_end_exits_2(self, tmp_path, capsys):
+        calls = []
+        fetch = self.make_fetcher(calls, start_time=True, end_time=True)
+        with pytest.raises(SystemExit) as exc:
+            fetch(["--start", "", "--end", "2026-01-02", "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "invalid date value" in capsys.readouterr().err
+        assert calls == []
+
+    def test_empty_optional_start_and_end_exit_2(self, tmp_path, gridded_store):
+        # An explicit empty value on an optional window is malformed, not an
+        # omission.
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            start_time={"required": False},
+            end_time={"required": False},
+        )
+        with pytest.raises(SystemExit) as exc:
+            skill(
+                [
+                    "-i",
+                    str(gridded_store),
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                    "--start",
+                    "",
+                    "--end",
+                    "",
+                ]
+            )
+        assert exc.value.code == 2
+        assert calls == []
+
+    def test_empty_date_exits_2(self, tmp_path, capsys):
+        calls = []
+        fetch = self.make_fetcher(calls, date=True)
+        with pytest.raises(SystemExit) as exc:
+            fetch(["--date", "", "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "invalid date value" in capsys.readouterr().err
+        assert calls == []
+
+    def test_empty_required_bbox_exits_2(self, tmp_path, capsys):
+        calls = []
+        fetch = self.make_fetcher(calls, bbox="required")
+        with pytest.raises(SystemExit) as exc:
+            fetch(["--bbox", "", "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "N/W/S/E" in capsys.readouterr().err
+        assert calls == []
+
+
 class TestUnprefixedErrors:
     def make_skill(self, exc):
         @weather_skill("submit-feedback", "0.1.0", extra_args={"body": str})

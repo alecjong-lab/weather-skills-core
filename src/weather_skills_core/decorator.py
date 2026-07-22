@@ -751,8 +751,11 @@ def weather_skill(
 
         params = {}
         resolved_dates = {}
+        # "Given" means present on the command line (not None): an explicit
+        # empty-string value is a malformed token rejected by the parsers
+        # below with exit 2, never a silently omitted flag.
         if start_cfg is not None:
-            if args.start and args.end:
+            if args.start is not None and args.end is not None:
                 start_d, end_d, log_line = _dates.resolve_window(args.start, args.end, latest_fn)
                 if log_line is not None:
                     print(log_line, file=sys.stderr)
@@ -760,13 +763,13 @@ def weather_skill(
                 context.start_time, context.end_time = start_d, end_d
                 resolved_dates["start"] = start_d.isoformat()
                 resolved_dates["end"] = end_d.isoformat()
-            elif args.start or args.end:
+            elif args.start is not None or args.end is not None:
                 # Reachable only when the toggles declare required=False.
                 raise UsageError("--start and --end must be given together.")
             else:
                 params["start_time"] = params["end_time"] = None
         if date_cfg is not None:
-            if args.date:
+            if args.date is not None:
                 date_d, log_line = _dates.resolve_date(
                     args.date, latest_fn, context=date_cfg.get("context", "single date")
                 )
@@ -778,7 +781,7 @@ def weather_skill(
             else:
                 params["date"] = None
         if bbox_cfg is not None:
-            params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox else None
+            params["bbox"] = _envelope.parse_bbox(args.bbox) if args.bbox is not None else None
         if variable_cfg is not None:
             params["variable"] = args.variable
         if workers_cfg is not None:
