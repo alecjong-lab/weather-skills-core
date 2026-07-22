@@ -1564,6 +1564,43 @@ class TestWriteTail:
         assert out.is_dir()
         assert xr.open_zarr(out, consolidated=True).sizes["time"] == 1
 
+    def test_failed_write_removes_partial_store(self, tmp_path, gridded_store, capsys):
+        @weather_skill("bad-write", "0.1.0", input_type="any", output_type="gridded")
+        def bad_write(ds):
+            """Return a dataset zarr cannot serialize."""
+            out = ds.copy()
+            # Object dtype fails during the write, after the store directory
+            # (and its root metadata) already exists on disk.
+            out["junk"] = (("time",), np.array([object(), object()], dtype=object))
+            return out
+
+        out = tmp_path / "o.zarr"
+        with pytest.raises(ValueError, match="serialize"):
+            bad_write(["-i", str(gridded_store), "-o", str(out)])
+        assert not out.exists()
+        assert "Removed partial store" in capsys.readouterr().err
+
+    def test_failed_write_reruns_cleanly(self, tmp_path, gridded_store):
+        # The rollback re-raises the original failure; the second run is a
+        # clean miss (no truncated store to mistake for a cache hit).
+        calls = []
+
+        @weather_skill("bad-write", "0.1.0", input_type="any", output_type="gridded")
+        def bad_write(ds):
+            """Return a dataset zarr cannot serialize."""
+            calls.append(1)
+            out = ds.copy()
+            out["junk"] = (("time",), np.array([object(), object()], dtype=object))
+            return out
+
+        out = tmp_path / "o.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        with pytest.raises(ValueError, match="serialize"):
+            bad_write(argv)
+        with pytest.raises(ValueError, match="serialize"):
+            bad_write(argv)
+        assert len(calls) == 2
+
     def test_wrote_message(self, tmp_path, gridded_store, capsys):
         skill = make_identity_skill([])
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])

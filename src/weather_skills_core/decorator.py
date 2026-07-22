@@ -8,8 +8,8 @@ provenance, the cache-hit short-circuit, and output writing.
 The wrapped function receives the input dataset(s) positionally followed by
 the resolved parameters as keyword arguments, and returns its output:
 
-- a Dataset for a zarr-writing skill (the decorator stamps provenance and
-  writes it);
+- a Dataset for a zarr-writing skill (the decorator stamps provenance,
+  writes it, and removes a partial store when the write fails);
 - a generator of per-period Datasets in streaming mode (the decorator writes
   the first with ``mode="w"`` and appends the rest, re-stamping provenance on
   every append and rolling back a partial store on failure);
@@ -1040,7 +1040,22 @@ def weather_skill(
         if out.exists():
             _remove_existing(out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        result.to_zarr(out, mode="w", consolidated=True)
+        try:
+            result.to_zarr(out, mode="w", consolidated=True)
+        except BaseException:
+            # zarr stamps the root attrs before the chunk data, so a store
+            # truncated by a failed write carries the full history attr and
+            # would exactly match a later cache check; remove it before the
+            # error propagates. Only the new partial store can be present
+            # here -- any prior store was removed before the write started.
+            if out.exists():
+                shutil.rmtree(out)
+                print(
+                    f"Removed partial store {args.output} after a failed write "
+                    "so it is not mistaken for a complete cache on a later run.",
+                    file=sys.stderr,
+                )
+            raise
         _post_write(out, context)
         print(_wrote_line(args.output, f"{dict(result.sizes)}", summary), file=sys.stderr)
 

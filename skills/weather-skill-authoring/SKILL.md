@@ -284,9 +284,10 @@ for `--time-dim`). Overrides participate only in typed validation; an input
 declared `any` skips all shape checks.
 
 The decorator writes the returned Dataset: it carries the first input's attrs
-forward, stamps the provenance chain, clears encodings, and replaces the
-output store atomically enough for the cache contract. Do not open or write
-zarr yourself.
+forward, stamps the provenance chain, clears encodings, replaces whatever
+occupied the output path, and removes a partial store when the write fails,
+so a truncated store is never mistaken for a complete cache. Do not open or
+write zarr yourself.
 
 ### Worked example: fetcher with a `latest` resolver
 
