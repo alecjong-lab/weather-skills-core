@@ -1544,6 +1544,26 @@ class TestWriteTail:
         written = xr.open_zarr(out, consolidated=True)
         assert list(written.data_vars) == ["precip"]
 
+    def test_existing_output_regular_file_replaced(self, tmp_path, gridded_store):
+        out = tmp_path / "o.zarr"
+        out.write_text("not a store")
+        skill = make_identity_skill([])
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert out.is_dir()
+        assert list(xr.open_zarr(out, consolidated=True).data_vars) == ["precip"]
+
+    def test_streaming_existing_output_regular_file_replaced(self, tmp_path):
+        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        def fetch():
+            """Stream."""
+            yield make_gridded(n_time=1)
+
+        out = tmp_path / "o.zarr"
+        out.write_text("not a store")
+        fetch(["-o", str(out)])
+        assert out.is_dir()
+        assert xr.open_zarr(out, consolidated=True).sizes["time"] == 1
+
     def test_wrote_message(self, tmp_path, gridded_store, capsys):
         skill = make_identity_skill([])
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])

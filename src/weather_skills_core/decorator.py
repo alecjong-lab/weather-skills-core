@@ -190,6 +190,19 @@ def _split_extras(result, *, allow_override=True):
     return primary, override, summary
 
 
+def _remove_existing(path):
+    """Remove whatever occupies an output path before a rewrite.
+
+    A prior zarr store is a directory (``rmtree``); a regular file or a
+    symlink at the path (e.g. an unrelated artifact written under the same
+    name) is unlinked instead of crashing ``rmtree``.
+    """
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def rewrite_bbox_argv(argv):
     """Rewrite ``--bbox VAL`` to ``--bbox=VAL`` in an argv list.
 
@@ -1025,7 +1038,7 @@ def weather_skill(
         if write_encoding is not None:
             _call_hook(write_encoding, result, wants_context=encoding_wants_ctx, context=context)
         if out.exists():
-            shutil.rmtree(out)
+            _remove_existing(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         result.to_zarr(out, mode="w", consolidated=True)
         _post_write(out, context)
@@ -1061,7 +1074,7 @@ def weather_skill(
                     )
                 if not store_created:
                     if out.exists():
-                        shutil.rmtree(out)
+                        _remove_existing(out)
                     out.parent.mkdir(parents=True, exist_ok=True)
                     store_created = True
                     piece.to_zarr(out, mode="w", consolidated=True)
