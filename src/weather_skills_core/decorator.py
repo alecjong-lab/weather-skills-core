@@ -32,6 +32,7 @@ import argparse
 import datetime
 import functools
 import inspect
+import json
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -539,7 +540,10 @@ def weather_skill(
     - hooks: ``validate_args(args)`` for pre-cache argument validation (raise
       ``UsageError``); ``normalize_args(dict) -> dict`` canonicalizes the
       recorded entry args (sort/dedupe) so flag order cannot cause spurious
-      misses; ``exclude_args`` drops further dests from the entry args;
+      misses -- the returned dict is passed through a JSON round-trip before
+      the cache compare and the stamp, so JSON-equivalent containers (a
+      tuple vs. the list it serializes to) compare equal;
+      ``exclude_args`` drops further dests from the entry args;
       ``write_encoding(ds)`` sets controlled write encodings after the
       encoding clear; ``post_write(path)`` runs after the artifact is written
       (zarr, streaming, or PNG -- requires an artifact output_type),
@@ -955,7 +959,11 @@ def weather_skill(
             raw = _call_hook(
                 normalize_args, raw, wants_context=normalize_wants_ctx, context=context
             )
-        return raw
+        # Canonicalize through a JSON round-trip so the compared entry equals
+        # the stamped entry's decoded form: a tuple from a normalize hook
+        # serializes as a list, and without the round-trip the stamped store
+        # would never match its own cache key again.
+        return json.loads(json.dumps(raw))
 
     def _open_inputs(paths, args):
         import xarray as xr

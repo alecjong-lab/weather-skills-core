@@ -661,6 +661,24 @@ class TestCacheShortCircuit:
         assert len(calls) == 1
         assert history_of(out)[-1]["args"]["variable"] == ["a", "b"]
 
+    def test_normalize_args_tuple_still_hits(self, tmp_path, gridded_store):
+        # A tuple from the normalize hook stamps as a JSON list; the compared
+        # entry must go through the same canonicalization or the store would
+        # never match its own cache key again.
+        calls = []
+
+        def normalize(args):
+            if args.get("variable"):
+                args["variable"] = tuple(sorted(set(args["variable"])))
+            return args
+
+        skill = make_identity_skill(calls, variable="repeat", normalize_args=normalize)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a"])
+        skill(["-i", str(gridded_store), "-o", str(out), "-v", "a", "-v", "b"])
+        assert len(calls) == 1
+        assert history_of(out)[-1]["args"]["variable"] == ["a", "b"]
+
     def test_exclude_args(self, tmp_path, gridded_store):
         calls = []
         skill = make_identity_skill(calls, extra_args={"verbose": bool}, exclude_args=("verbose",))
