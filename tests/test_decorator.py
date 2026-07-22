@@ -1597,6 +1597,40 @@ class TestWriteTail:
         assert out.is_dir()
         assert list(xr.open_zarr(out, consolidated=True).data_vars) == ["precip"]
 
+    def test_existing_output_dangling_symlink_replaced(self, tmp_path, gridded_store):
+        out = tmp_path / "o.zarr"
+        out.symlink_to(tmp_path / "never-created.zarr")
+        skill = make_identity_skill([])
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert out.is_dir()
+        assert not out.is_symlink()
+        assert list(xr.open_zarr(out, consolidated=True).data_vars) == ["precip"]
+
+    def test_existing_output_symlink_to_dir_unlinked_not_followed(self, tmp_path, gridded_store):
+        target = tmp_path / "target.zarr"
+        make_gridded(fill=9.0, name="other").to_zarr(target, mode="w", consolidated=True)
+        out = tmp_path / "o.zarr"
+        out.symlink_to(target)
+        skill = make_identity_skill([])
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        # The link itself was replaced by a real store; the target survives.
+        assert out.is_dir()
+        assert not out.is_symlink()
+        assert list(xr.open_zarr(target, consolidated=True).data_vars) == ["other"]
+
+    def test_streaming_existing_output_dangling_symlink_replaced(self, tmp_path):
+        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        def fetch():
+            """Stream."""
+            yield make_gridded(n_time=1)
+
+        out = tmp_path / "o.zarr"
+        out.symlink_to(tmp_path / "never-created.zarr")
+        fetch(["-o", str(out)])
+        assert out.is_dir()
+        assert not out.is_symlink()
+        assert xr.open_zarr(out, consolidated=True).sizes["time"] == 1
+
     def test_streaming_existing_output_regular_file_replaced(self, tmp_path):
         @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
         def fetch():

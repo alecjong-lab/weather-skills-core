@@ -195,12 +195,14 @@ def _remove_existing(path):
 
     A prior zarr store is a directory (``rmtree``); a regular file or a
     symlink at the path (e.g. an unrelated artifact written under the same
-    name) is unlinked instead of crashing ``rmtree``.
+    name) is unlinked instead of crashing ``rmtree``. A dangling symlink --
+    which ``exists()`` misses because it follows the link -- is unlinked
+    too, and a vacant path is a no-op, so callers need no existence check.
     """
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
     else:
-        path.unlink()
+        path.unlink(missing_ok=True)
 
 
 def rewrite_bbox_argv(argv):
@@ -1043,8 +1045,7 @@ def weather_skill(
         _provenance.stamp_zarr(result, upstream + [entry], source=source)
         if write_encoding is not None:
             _call_hook(write_encoding, result, wants_context=encoding_wants_ctx, context=context)
-        if out.exists():
-            _remove_existing(out)
+        _remove_existing(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             result.to_zarr(out, mode="w", consolidated=True)
@@ -1094,8 +1095,7 @@ def weather_skill(
                         write_encoding, piece, wants_context=encoding_wants_ctx, context=context
                     )
                 if not store_created:
-                    if out.exists():
-                        _remove_existing(out)
+                    _remove_existing(out)
                     out.parent.mkdir(parents=True, exist_ok=True)
                     store_created = True
                     piece.to_zarr(out, mode="w", consolidated=True)
