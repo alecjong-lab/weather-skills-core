@@ -336,6 +336,7 @@ def weather_skill(
     reference_args=(),
     history_labels=None,
     write_encoding=None,
+    post_write=None,
     append_dim="time",
     savefig_kwargs=None,
     cache_hit_label=None,
@@ -410,7 +411,12 @@ def weather_skill(
       recorded entry args (sort/dedupe) so flag order cannot cause spurious
       misses; ``exclude_args`` drops further dests from the entry args;
       ``write_encoding(ds)`` sets controlled write encodings after the
-      encoding clear.
+      encoding clear; ``post_write(path)`` runs after the artifact is written
+      (zarr, streaming, or PNG -- requires an artifact output_type),
+      receiving the output path, and may fail the run by raising a
+      ``SkillError`` (which maps to the usual exit codes) -- use it for
+      read-back verification of the written store. It runs before the
+      ``Wrote:`` line, and a cache hit skips it (nothing was written).
     - run context: every hook above (plus ``latest_resolver`` and
       ``completeness_probe``) and the wrapped function itself opt into the
       run context by naming a ``context`` parameter; the decorator then also
@@ -447,6 +453,8 @@ def weather_skill(
         )
     if output_type is None and input_types:
         raise ValueError("no-artifact skills do not declare input_type")
+    if post_write is not None and output_type is None:
+        raise ValueError("post_write requires an artifact-writing output_type")
     if bbox not in (None, "optional", "required"):
         raise ValueError(f"bbox must be None, 'optional', or 'required', not {bbox!r}")
     if variable not in (None, "single", "repeat"):
@@ -470,6 +478,7 @@ def weather_skill(
     normalize_wants_ctx = normalize_args is not None and _wants_context(normalize_args)
     probe_wants_ctx = completeness_probe is not None and _wants_context(completeness_probe)
     encoding_wants_ctx = write_encoding is not None and _wants_context(write_encoding)
+    post_wants_ctx = post_write is not None and _wants_context(post_write)
 
     def decorate(fn):
         fn_wants_ctx = _wants_context(fn)
@@ -637,9 +646,14 @@ def weather_skill(
         entry_args = _entry_args(args, resolved_dates, context)
 
         if output_type == PNG:
-            _run_png(fn, args, paths, out, entry_args, params)
+            _run_png(fn, args, paths, out, entry_args, params, context)
             return
         _run_zarr(fn, args, paths, out, entry_args, params, context)
+
+    def _post_write(out, context):
+        """Run the post-write hook, after the artifact write and before the Wrote line."""
+        if post_write is not None:
+            _call_hook(post_write, out, wants_context=post_wants_ctx, context=context)
 
     def _input_paths(args):
         if input_names:
@@ -733,7 +747,7 @@ def weather_skill(
                 refs.append(ref_p)
         return _provenance.reference_ref(refs) if refs else None
 
-    def _run_png(fn, args, paths, out, entry_args, params):
+    def _run_png(fn, args, paths, out, entry_args, params, context):
         # Plot skills carry no cache: they always render. Each input branch
         # gets its own entry (same args, that input's basename + hash) on top
         # of that input's chain.
@@ -770,6 +784,7 @@ def weather_skill(
             pass
         else:
             plt.close(fig)
+        _post_write(out, context)
         print(_wrote_line(args.output, "", summary), file=sys.stderr)
 
     def _run_zarr(fn, args, paths, out, entry_args, params, context):
@@ -864,6 +879,7 @@ def weather_skill(
             shutil.rmtree(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         result.to_zarr(out, mode="w", consolidated=True)
+        _post_write(out, context)
         print(_wrote_line(args.output, f"{dict(result.sizes)}", summary), file=sys.stderr)
 
     def _write_streaming(gen, out, upstream, entry, args, context):
@@ -912,6 +928,7 @@ def weather_skill(
             raise
         if not store_created:
             raise DataError(f"{name} produced no data for the requested window; nothing written.")
+        _post_write(out, context)
         print(_wrote_line(args.output, f"{append_dim}={total}", summary), file=sys.stderr)
 
     return decorate

@@ -1363,6 +1363,104 @@ class TestInputPaths:
             weather_skill("x", "0.1.0", output_type="gridded", input_paths=True)(lambda: None)
 
 
+class TestPostWrite:
+    def test_runs_after_write_with_output_path(self, tmp_path, gridded_store):
+        seen = {}
+
+        def verify(path):
+            # The store is fully written by the time the hook runs.
+            seen["sizes"] = dict(xr.open_zarr(path, consolidated=True).sizes)
+            seen["path"] = path
+
+        skill = make_identity_skill([], post_write=verify)
+        out = tmp_path / "o.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert seen["path"] == out
+        assert seen["sizes"]["time"] == 2
+
+    def test_cache_hit_skips_post_write(self, tmp_path, gridded_store):
+        ran = []
+        skill = make_identity_skill([], post_write=lambda p: ran.append(p))
+        out = tmp_path / "o.zarr"
+        argv = ["-i", str(gridded_store), "-o", str(out)]
+        skill(argv)
+        skill(argv)
+        assert len(ran) == 1
+
+    def test_failure_maps_to_usual_exit_codes(self, tmp_path, gridded_store, capsys):
+        def verify(path):
+            raise DataError("written store failed verification")
+
+        skill = make_identity_skill([], post_write=verify)
+        out = tmp_path / "o.zarr"
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(out)])
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Error: written store failed verification" in err
+        # A failed run never claims success.
+        assert "Wrote:" not in err
+        # The written store is left in place for inspection.
+        assert out.exists()
+
+    def test_streaming_runs_after_final_append(self, tmp_path):
+        seen = {}
+
+        def verify(path):
+            seen["time"] = xr.open_zarr(path, consolidated=True).sizes["time"]
+
+        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True, post_write=verify)
+        def fetch():
+            """Stream."""
+            yield make_gridded(n_time=1, start="2026-01-01")
+            yield make_gridded(n_time=1, start="2026-01-02")
+
+        fetch(["-o", str(tmp_path / "o.zarr")])
+        assert seen["time"] == 2
+
+    def test_png_receives_png_path(self, tmp_path, gridded_store):
+        seen = {}
+
+        @weather_skill(
+            "plot",
+            "0.1.0",
+            input_type="any",
+            output_type="png",
+            post_write=lambda p: seen.update(path=p),
+        )
+        def plot(ds):
+            """Plot."""
+            return FakeFigure()
+
+        out = tmp_path / "p.png"
+        plot(["-i", str(gridded_store), "-o", str(out)])
+        assert seen["path"] == out
+        assert out.exists()
+
+    def test_context_opt_in(self, tmp_path):
+        # The cmip6 pattern: the body stashes a fetch-discovered value; the
+        # post-write hook verifies the written store against it.
+        seen = {}
+
+        def verify(path, context):
+            seen["calendar"] = context.state["source_calendar"]
+            seen["path"] = path
+
+        @weather_skill("f", "0.1.0", output_type="gridded", source="toy", post_write=verify)
+        def fetch(context):
+            """Fetch."""
+            context.state["source_calendar"] = "noleap"
+            return make_gridded()
+
+        out = tmp_path / "o.zarr"
+        fetch(["-o", str(out)])
+        assert seen == {"calendar": "noleap", "path": out}
+
+    def test_requires_artifact_output(self):
+        with pytest.raises(ValueError, match="post_write"):
+            weather_skill("x", "0.1.0", post_write=lambda p: None)(lambda: None)
+
+
 class TestRunContext:
     def test_function_opt_in_receives_context(self, tmp_path, gridded_store):
         seen = {}
