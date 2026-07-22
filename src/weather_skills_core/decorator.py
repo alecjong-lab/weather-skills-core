@@ -436,13 +436,19 @@ def weather_skill(
       recorded provenance args. Requires a declared ``input_type``.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
-      ``"same"``, or ``"png"`` for a Figure-writing skill. ``"same"``
-      declares a shape-preserving transform: the output is whatever envelope
-      type the (first) input carries, useful for skills whose ``input_type``
-      admits several shapes (``"gridded|forecast"``, ``"any"``, ...). It
-      requires at least one declared zarr input and is written through the
-      zarr path exactly like an explicit zarr type; it asserts nothing new
-      about the output's shape beyond "the input's shape, preserved".
+      a tuple/set of zarr envelope types (a union), ``"same"``, or ``"png"``
+      for a Figure-writing skill. ``"same"`` declares a shape-preserving
+      transform: the output is whatever envelope type the (first) input
+      carries, useful for skills whose ``input_type`` admits several shapes
+      (``"gridded|forecast"``, ``"any"``, ...). It requires at least one
+      declared zarr input and is written through the zarr path exactly like
+      an explicit zarr type; it asserts nothing new about the output's shape
+      beyond "the input's shape, preserved". A union (e.g. ``("gridded",
+      "forecast")``, for a fetcher whose source decides the shape) VALIDATES
+      rather than selects: the returned dataset's detected shape must be a
+      member, checked before the write (a mismatch exits 1); the declaration
+      never coerces the output toward any member. A single-type declaration
+      stays unchecked, as before.
     - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
       relative-or-absolute date grammar; resolved dates are passed to the
       function and recorded in provenance), ``bbox`` (``"required"`` or
@@ -523,9 +529,23 @@ def weather_skill(
         raise ValueError("input_names must declare one flag per declared input type")
     if input_paths and not input_types:
         raise ValueError("input_paths=True requires a declared input_type")
-    if output_type not in (None, PNG, SAME, *_ZARR_OUTPUT_TYPES):
+    output_union = None
+    if isinstance(output_type, tuple | set | frozenset | list):
+        members = list(output_type)
+        if not members:
+            raise ValueError("a union output_type needs at least one envelope type")
+        bad = [t for t in members if t not in _ZARR_OUTPUT_TYPES]
+        if bad:
+            raise ValueError(
+                f"a union output_type may hold only zarr envelope types "
+                f"{list(_ZARR_OUTPUT_TYPES)}; got {bad}"
+            )
+        output_union = tuple(dict.fromkeys(members))
+        zarr_output = True
+    elif output_type not in (None, PNG, SAME, *_ZARR_OUTPUT_TYPES):
         raise ValueError(f"unknown output_type {output_type!r}")
-    zarr_output = output_type in (SAME, *_ZARR_OUTPUT_TYPES)
+    else:
+        zarr_output = output_type in (SAME, *_ZARR_OUTPUT_TYPES)
     if output_type == SAME and not input_types:
         raise ValueError('output_type="same" requires at least one declared zarr input')
     if streaming and not zarr_output:
@@ -773,6 +793,15 @@ def weather_skill(
         if post_write is not None:
             _call_hook(post_write, out, wants_context=post_wants_ctx, context=context)
 
+    def _check_output_union(ds):
+        """Validate a returned dataset's detected shape against a union output_type."""
+        detected = _envelope.detect_type(ds)
+        if detected not in output_union:
+            raise DataError(
+                f"{name} returned a {detected} envelope, but its declared "
+                f"output_type allows {' or '.join(output_union)}."
+            )
+
     def _input_paths(args):
         if input_names:
             return [Path(getattr(args, d)) for d in input_dests]
@@ -984,6 +1013,8 @@ def weather_skill(
             return
 
         result, override, summary = _split_extras(result)
+        if output_union is not None:
+            _check_output_union(result)
         if override is not None:
             entry = {**entry, "args": {**entry["args"], **override.args}}
         # Carry the first input's attrs (source metadata, upstream history)
@@ -1021,6 +1052,8 @@ def weather_skill(
                     summary = item
                     continue
                 piece = item
+                if output_union is not None:
+                    _check_output_union(piece)
                 _provenance.stamp_zarr(piece, upstream + [entry], source=source)
                 if write_encoding is not None:
                     _call_hook(

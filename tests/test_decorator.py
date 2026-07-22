@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_gridded
+from conftest import make_forecast, make_gridded, make_station
 
 from weather_skills_core import (
     DataError,
@@ -630,6 +630,95 @@ class TestOutputTypeSame:
     def test_requires_a_declared_input(self):
         with pytest.raises(ValueError, match="declared zarr input"):
             weather_skill("x", "0.1.0", output_type="same")(lambda: None)
+
+
+class TestUnionOutputType:
+    def make_fetcher(self, build, **declaration):
+        @weather_skill(
+            "shape-fetch",
+            "0.1.0",
+            output_type=("gridded", "forecast"),
+            source="toy",
+            **declaration,
+        )
+        def fetch(**params):
+            """Fetch a dataset whose shape the source decides."""
+            return build()
+
+        return fetch
+
+    def test_member_shapes_validate_and_write(self, tmp_path):
+        out = tmp_path / "g.zarr"
+        self.make_fetcher(make_gridded)(["-o", str(out)])
+        assert xr.open_zarr(out, consolidated=True).sizes["time"] == 2
+        out = tmp_path / "f.zarr"
+        self.make_fetcher(make_forecast)(["-o", str(out)])
+        assert "step" in xr.open_zarr(out, consolidated=True).sizes
+
+    def test_cache_applies(self, tmp_path):
+        ran = []
+
+        def build():
+            ran.append(1)
+            return make_gridded()
+
+        fetch = self.make_fetcher(build)
+        out = tmp_path / "o.zarr"
+        fetch(["-o", str(out)])
+        fetch(["-o", str(out)])
+        assert len(ran) == 1
+
+    def test_non_member_shape_exits_1(self, tmp_path, capsys):
+        fetch = self.make_fetcher(make_station)
+        with pytest.raises(SystemExit) as exc:
+            fetch(["-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "returned a station envelope" in err
+        assert "gridded or forecast" in err
+
+    def test_streaming_pieces_validated(self, tmp_path):
+        @weather_skill(
+            "s",
+            "0.1.0",
+            output_type=("gridded", "forecast"),
+            streaming=True,
+            source="toy",
+        )
+        def fetch():
+            """Stream."""
+            yield make_gridded(n_time=1, start="2026-01-01")
+            yield make_station()
+
+        out = tmp_path / "o.zarr"
+        with pytest.raises(SystemExit) as exc:
+            fetch(["-o", str(out)])
+        assert exc.value.code == 1
+        # The mid-stream failure rolled back the partial store.
+        assert not out.exists()
+
+    def test_transform_union_validates(self, tmp_path, gridded_store):
+        @weather_skill(
+            "t",
+            "0.1.0",
+            input_type="any",
+            output_type=("gridded", "forecast"),
+        )
+        def transform(ds):
+            """Transform."""
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        transform(["-i", str(gridded_store), "-o", str(out)])
+        assert history_of(out)[-1]["skill"] == "t"
+
+    def test_declaration_errors(self):
+        with pytest.raises(ValueError, match="only zarr envelope types"):
+            weather_skill("x", "0.1.0", output_type=("gridded", "png"))(lambda: None)
+        with pytest.raises(ValueError, match="only zarr envelope types"):
+            weather_skill("x", "0.1.0", output_type=("gridded", "same"))(lambda: None)
+        with pytest.raises(ValueError, match="at least one"):
+            weather_skill("x", "0.1.0", output_type=())(lambda: None)
 
 
 class TestCacheDisabled:
