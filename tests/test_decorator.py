@@ -1573,6 +1573,37 @@ class TestPngMode:
         plot(argv)
         assert len(calls) == 2
 
+    def test_output_dir_exits_2(self, tmp_path, gridded_store, capsys):
+        calls = []
+
+        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        def plot(ds):
+            """Plot."""
+            calls.append(1)
+            return FakeFigure()
+
+        out = tmp_path / "p.png"
+        out.mkdir()
+        with pytest.raises(SystemExit) as exc:
+            plot(["-i", str(gridded_store), "-o", str(out)])
+        assert exc.value.code == 2
+        assert "is a directory" in capsys.readouterr().err
+        assert calls == []
+
+    def test_no_input_is_declaration_error(self):
+        with pytest.raises(ValueError, match="at least one declared zarr input"):
+            weather_skill("plot", "0.1.0", output_type="png")(lambda: None)
+
+    def test_duplicate_history_labels_is_declaration_error(self):
+        with pytest.raises(ValueError, match="unique"):
+            weather_skill(
+                "plot-compare",
+                "0.1.0",
+                input_type=["any", "any"],
+                output_type="png",
+                history_labels=["a", "a"],
+            )(lambda x, y: None)
+
     def test_upstream_chain_embedded(self, tmp_path, gridded_store):
         mid = tmp_path / "mid.zarr"
         make_identity_skill([])(["-i", str(gridded_store), "-o", str(mid)])

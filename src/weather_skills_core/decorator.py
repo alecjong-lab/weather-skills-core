@@ -632,9 +632,16 @@ def weather_skill(
             "the decorator resolves and passes itself; rename the extra argument(s)"
         )
     png_labels = history_labels if history_labels is not None else input_names
+    if output_type == PNG and not input_types:
+        raise ValueError('output_type="png" requires at least one declared zarr input')
     if output_type == PNG and len(input_types) > 1:
         if png_labels is None or len(png_labels) != len(input_types):
             raise ValueError("a multi-input PNG skill must declare one history label per input")
+        if len(set(png_labels)) != len(png_labels):
+            raise ValueError(
+                "history labels must be unique; duplicates would collide on the "
+                "embedded PNG metadata keys"
+            )
 
     input_dests = list(input_names) if input_names else (["input"] if input_types else [])
     input_dests = [d.replace("-", "_") for d in input_dests]
@@ -967,6 +974,11 @@ def weather_skill(
         return _provenance.reference_ref(refs) if refs else None
 
     def _run_png(fn, args, paths, out, entry_args, params, context):
+        if out.is_dir():
+            raise UsageError(
+                f"--output {args.output} exists and is a directory; the png "
+                "output must be a file path."
+            )
         # Plot skills carry no cache: they always render. Each input branch
         # gets its own entry (same args, that input's basename + hash) on top
         # of that input's chain.
