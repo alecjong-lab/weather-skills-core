@@ -357,8 +357,9 @@ def fetch(start_time, end_time, bbox):
 Yield one Dataset per period. The decorator writes the first with
 `mode="w"` and appends the rest along `append_dim`, re-stamping provenance on
 every append, and removes a partial store on any mid-stream failure. Yield an
-`EntryOverride` (before or between datasets) to rewrite the recorded args;
-the last stamp is the one that persists.
+`EntryOverride` at any point to rewrite the recorded args; the persisted
+chain reflects every override, including one yielded after the final dataset
+(the decorator re-stamps the written store).
 
 ### Worked example: plot
 

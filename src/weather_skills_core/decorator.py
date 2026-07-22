@@ -152,11 +152,13 @@ class EntryOverride:
 
     ``args`` is merged over the entry's recorded args. A standard-mode skill
     returns ``(dataset, EntryOverride(...))`` instead of a bare dataset; a
-    streaming skill yields it from the generator (before or between datasets)
-    and every subsequent stamp uses the rewritten entry -- the last stamp is
-    the one that persists on the store. This supports effective-end rewrites:
-    a fetcher that discovers mid-run that trailing days are unavailable
-    records the effective window rather than the requested one.
+    streaming skill yields it from the generator at any point -- every
+    subsequent stamp uses the rewritten entry, and an override yielded after
+    the final dataset is applied by re-stamping the written store, so the
+    persisted chain always reflects every override. This supports
+    effective-end rewrites: a fetcher that discovers mid-run that trailing
+    days are unavailable records the effective window rather than the
+    requested one.
     """
 
     args: dict
@@ -1078,6 +1080,7 @@ def weather_skill(
         store_created = False
         total = 0
         summary = None
+        written_entry = None
         try:
             for item in gen:
                 if isinstance(item, EntryOverride):
@@ -1101,6 +1104,7 @@ def weather_skill(
                     piece.to_zarr(out, mode="w", consolidated=True)
                 else:
                     piece.to_zarr(out, mode="a", append_dim=append_dim, consolidated=True)
+                written_entry = entry
                 total += piece.sizes.get(append_dim, 0)
         except BaseException:
             if store_created and out.exists():
@@ -1113,6 +1117,10 @@ def weather_skill(
             raise
         if not store_created:
             raise DataError(f"{name} produced no data for the requested window; nothing written.")
+        if entry != written_entry:
+            # An EntryOverride yielded after the final dataset arrived after
+            # the last stamp; correct the persisted chain in place.
+            _provenance.restamp_zarr(out, upstream + [entry])
         _post_write(out, context)
         print(_wrote_line(args.output, f"{append_dim}={total}", summary), file=sys.stderr)
 

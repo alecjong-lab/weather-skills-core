@@ -369,6 +369,20 @@ def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
         ds[v].encoding = {}
 
 
+def restamp_zarr(zarr_path: Path, history: list) -> None:
+    """Rewrite the history attr on an already-written store, in place.
+
+    Updates ``weather_skills_history`` on the root group and re-consolidates
+    the metadata so consolidated and unconsolidated readers agree. Chunk data
+    and every other attr are untouched.
+    """
+    import zarr
+
+    group = zarr.open_group(str(zarr_path), mode="r+", use_consolidated=False)
+    group.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
+    zarr.consolidate_metadata(str(zarr_path))
+
+
 def png_metadata(chains, software: str = DEFAULT_SOFTWARE) -> dict:
     """Build the ``savefig(metadata=...)`` dict for a plot skill's PNG output.
 

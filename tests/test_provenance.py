@@ -295,6 +295,26 @@ class TestStampZarr:
         assert "weather_skills_source" not in ds.attrs
 
 
+class TestRestampZarr:
+    def test_history_rewritten_for_both_readers(self, tmp_path):
+        store = write_store(tmp_path / "a.zarr", [entry(args={"end": "2026-01-31"})])
+        new_chain = [entry(args={"end": "2026-01-02"})]
+        provenance.restamp_zarr(store, new_chain)
+        assert provenance.load_history(store) == new_chain
+        consolidated = xr.open_zarr(store, consolidated=True)
+        assert json.loads(consolidated.attrs["weather_skills_history"]) == new_chain
+
+    def test_data_and_other_attrs_untouched(self, tmp_path):
+        ds = make_gridded(fill=3.0)
+        ds.attrs["weather_skills_source"] = "toy"
+        path = tmp_path / "a.zarr"
+        ds.to_zarr(path, mode="w", consolidated=True)
+        provenance.restamp_zarr(path, [entry()])
+        after = xr.open_zarr(path, consolidated=True)
+        assert after.attrs["weather_skills_source"] == "toy"
+        assert float(after["precip"].values.max()) == 3.0
+
+
 class TestPngMetadata:
     def test_single_unlabeled(self):
         chain = [entry()]

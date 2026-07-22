@@ -1246,6 +1246,26 @@ class TestStreaming:
         assert args["start"] == "2026-01-01"
         assert args["end"] == "2026-01-05"
 
+    def test_entry_override_after_final_dataset_is_applied(self, tmp_path):
+        def pieces():
+            yield make_gridded(n_time=1, start="2026-01-01")
+            yield make_gridded(n_time=1, start="2026-01-02")
+            yield EntryOverride({"end": "2026-01-02"})
+
+        fetch = self.make_streamer(pieces, start_time=True, end_time=True)
+        out = tmp_path / "out.zarr"
+        fetch(["--start", "2026-01-01", "--end", "2026-01-31", "-o", str(out)])
+        # Both the consolidated and unconsolidated readers see the override.
+        args = history_of(out)[0]["args"]
+        assert args["end"] == "2026-01-02"
+        from weather_skills_core import provenance
+
+        assert provenance.load_history(out)[0]["args"]["end"] == "2026-01-02"
+        # The re-stamp touched only the history attr.
+        ds = xr.open_zarr(out, consolidated=True)
+        assert ds.sizes["time"] == 2
+        assert ds.attrs["weather_skills_source"] == "toy"
+
 
 class TestEntryOverrideStandardMode:
     def test_tuple_return_rewrites_entry(self, tmp_path):
