@@ -290,6 +290,71 @@ def cf_axes_missing(ds, axes: tuple = ("X", "Y", "T")) -> list:
     return missing
 
 
+def stamp_cf_dsg(ds, var_attrs: dict, *, station_id_long_name: str, name_long_name: str):
+    """Stamp CF timeSeries DSG attributes onto a station dataset in place.
+
+    The coordinate attrs are fixed by the DSG shape: ``latitude`` and
+    ``longitude`` get ``standard_name``/``long_name`` (``"station latitude"`` /
+    ``"station longitude"``)/``units``/``axis``; ``time`` gets
+    ``standard_name``/``long_name="time"``/``axis`` (its units/calendar belong
+    in the write encoding); ``station_id`` gets ``cf_role="timeseries_id"``
+    with ``station_id_long_name``; an optional ``name`` coord or variable gets
+    ``name_long_name`` (absent, it is skipped).
+
+    Every data variable's attrs are updated with
+    ``coordinates="latitude longitude time"`` -- the load-bearing DSG attr
+    tying the variable to its auxiliary coords -- followed by that variable's
+    entry from ``var_attrs``, a mapping of data-variable name to its attr dict
+    (``units``, ``long_name``, ``cell_methods``, any ``standard_name``); the
+    per-variable values, including udunits validity of the units, are the
+    caller's to build and validate. A data variable missing from ``var_attrs``
+    raises :class:`KeyError`. Returns ``ds``.
+    """
+    ds["latitude"].attrs.update(
+        standard_name="latitude", long_name="station latitude", units="degrees_north", axis="Y"
+    )
+    ds["longitude"].attrs.update(
+        standard_name="longitude", long_name="station longitude", units="degrees_east", axis="X"
+    )
+    ds["time"].attrs.update(standard_name="time", long_name="time", axis="T")
+    ds["station_id"].attrs.update(cf_role="timeseries_id", long_name=station_id_long_name)
+    if "name" in ds.coords or "name" in ds.variables:
+        ds["name"].attrs.update(long_name=name_long_name)
+
+    for var in ds.data_vars:
+        ds[var].attrs.update({"coordinates": "latitude longitude time", **var_attrs[var]})
+    return ds
+
+
+def verify_cf_dsg(ds) -> None:
+    """Confirm cf-xarray resolves the timeSeries geometry before writing.
+
+    cf-xarray identifies the DSG off ``cf_role="timeseries_id"`` (which must
+    resolve to ``station_id``) and resolves the latitude/longitude/time
+    coordinates off the coord attrs. If any of those do not resolve, the
+    stamping is wrong and the store would falsely claim CF-1.13 compliance;
+    raises :class:`DataError` listing every problem rather than write it.
+    """
+    import cf_xarray  # noqa: F401 -- registers the .cf accessor
+
+    problems = []
+    cf_roles = ds.cf.cf_roles
+    # Membership, not exact list-equality: cf-xarray returns the resolved role
+    # as a list, and a correctly-stamped store must not be rejected over that
+    # list's shape or order -- only over station_id being absent from it.
+    if "station_id" not in cf_roles.get("timeseries_id", []):
+        problems.append(f"cf_role timeseries_id did not resolve to station_id (got {cf_roles})")
+    for name in ("latitude", "longitude", "time"):
+        try:
+            ds.cf[name]
+        except KeyError:
+            problems.append(f"cf-xarray could not resolve the {name} coordinate")
+    if problems:
+        raise DataError(
+            "CF-1.13 DSG verification failed before write:\n  - " + "\n  - ".join(problems)
+        )
+
+
 def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = None):
     """Subset a gridded dataset to an ``N/W/S/E`` bbox.
 
