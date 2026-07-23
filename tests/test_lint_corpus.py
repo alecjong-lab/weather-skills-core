@@ -218,9 +218,7 @@ class TestAgainstGitHub:
 
         monkeypatch.setattr(corpus_module, "github_clone_url", lambda reference: f"file://{repo}")
         monkeypatch.setattr(corpus_module, "_fetch_github", spy_fetch)
-        run_lint(
-            FIXTURES / "multi_tree" / "skills" / "alpha", [f"fixture-org/fixture-repo@{sha}"]
-        )
+        run_lint(FIXTURES / "multi_tree" / "skills" / "alpha", [f"fixture-org/fixture-repo@{sha}"])
         assert created and all(not dest.exists() for dest in created)
 
     def test_malformed_reference_is_a_usage_error(self):
