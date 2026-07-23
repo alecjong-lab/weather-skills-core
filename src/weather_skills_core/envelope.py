@@ -194,6 +194,102 @@ def _shape_detail(ds, allowed) -> str:
     return f"{detail} (dims: {list(ds.dims)})"
 
 
+def stamp_cf_attrs(ds):
+    """Stamp CF ``standard_name``/``units``/``axis`` on spatial + time coords, non-destructively.
+
+    The first latitude-named coord present (``latitude``/``lat``/``y``) gets
+    ``standard_name="latitude"``, ``units="degrees_north"``, ``axis="Y"``; the
+    first longitude-named coord (``longitude``/``lon``/``x``) gets the
+    longitude equivalents; a ``time`` coord gets ``standard_name``/``axis``
+    (its units/calendar belong in the write encoding). Every attr is applied
+    with ``setdefault``, so source-provided values win. Returns ``ds``.
+    """
+    for name in _LAT_NAMES:
+        if name in ds.coords:
+            ds[name].attrs.setdefault("standard_name", "latitude")
+            ds[name].attrs.setdefault("units", "degrees_north")
+            ds[name].attrs.setdefault("axis", "Y")
+            break
+    for name in _LON_NAMES:
+        if name in ds.coords:
+            ds[name].attrs.setdefault("standard_name", "longitude")
+            ds[name].attrs.setdefault("units", "degrees_east")
+            ds[name].attrs.setdefault("axis", "X")
+            break
+    if "time" in ds.coords:
+        ds["time"].attrs.setdefault("standard_name", "time")
+        ds["time"].attrs.setdefault("axis", "T")
+    return ds
+
+
+def stamp_cf_coords(ds, *, long_names: dict | None = None):
+    """Force CF ``standard_name``/``units``/``axis`` onto latitude/longitude/time coords.
+
+    The overwriting counterpart of :func:`stamp_cf_attrs` for fetchers that
+    assert the coordinate metadata rather than fill gaps: a ``latitude`` coord
+    gets ``standard_name="latitude"``, ``units="degrees_north"``, ``axis="Y"``
+    (``longitude`` the equivalents; ``time`` gets ``standard_name``/``axis``
+    only -- its units/calendar belong in the write encoding), replacing any
+    prior values. Only the canonical names are stamped; coords absent from the
+    dataset are skipped. ``long_names`` optionally maps a coord name to a
+    ``long_name`` applied with ``setdefault`` (a source-provided long_name
+    wins). Returns ``ds``.
+    """
+    long_names = long_names or {}
+    stamps = {
+        "latitude": {"standard_name": "latitude", "units": "degrees_north", "axis": "Y"},
+        "longitude": {"standard_name": "longitude", "units": "degrees_east", "axis": "X"},
+        "time": {"standard_name": "time", "axis": "T"},
+    }
+    for name, attrs in stamps.items():
+        if name in ds.coords:
+            ds[name].attrs.update(attrs)
+            if name in long_names:
+                ds[name].attrs.setdefault("long_name", long_names[name])
+    return ds
+
+
+def udunits_error(units, *, catch: tuple = (ValueError,)):
+    """Parse ``units`` with cf_units; return the parse failure, or None when it parses.
+
+    ``catch`` is the exception tuple treated as a parse failure --
+    ``cf_units.Unit`` raises :class:`ValueError` for an unparseable string;
+    pass ``(Exception,)`` to convert any parse-time error. The caller owns
+    message construction and raises its own typed error from the returned
+    exception. Note that ``cf_units.Unit(None)`` and ``cf_units.Unit("")``
+    return an "unknown" unit rather than raising, so a missing/blank-units
+    guard also belongs to the caller.
+    """
+    import cf_units
+
+    try:
+        cf_units.Unit(units)
+    except catch as exc:
+        return exc
+    return None
+
+
+def cf_axes_missing(ds, axes: tuple = ("X", "Y", "T")) -> list:
+    """Return the CF axis letters among ``axes`` that cf-xarray cannot resolve on ``ds``.
+
+    Each axis is resolved independently off the dataset's CF attrs; a
+    resolution failure counts that axis as missing rather than raising. An
+    empty list means every requested axis resolved. Use it for write-side or
+    post-write decode checks; the caller decides the failure message.
+    """
+    import cf_xarray  # noqa: F401 -- registers the .cf accessor
+
+    missing = []
+    for axis in axes:
+        try:
+            resolved = ds.cf.axes.get(axis)
+        except Exception:  # noqa: BLE001 -- an unresolvable axis is the finding, not a failure
+            resolved = None
+        if not resolved:
+            missing.append(axis)
+    return missing
+
+
 def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = None):
     """Subset a gridded dataset to an ``N/W/S/E`` bbox.
 

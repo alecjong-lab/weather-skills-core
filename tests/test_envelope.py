@@ -246,3 +246,145 @@ class TestBboxSubset:
         sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
         assert sub["precip"].shape == (2, 2, 2)
         assert isinstance(sub, xr.Dataset)
+
+
+class TestStampCfAttrs:
+    def test_canonical_names(self):
+        ds = envelope.stamp_cf_attrs(make_gridded())
+        assert ds["latitude"].attrs == {
+            "standard_name": "latitude",
+            "units": "degrees_north",
+            "axis": "Y",
+        }
+        assert ds["longitude"].attrs == {
+            "standard_name": "longitude",
+            "units": "degrees_east",
+            "axis": "X",
+        }
+        assert ds["time"].attrs == {"standard_name": "time", "axis": "T"}
+
+    def test_alias_names(self):
+        ds = envelope.stamp_cf_attrs(make_gridded().rename({"latitude": "lat", "longitude": "lon"}))
+        assert ds["lat"].attrs["standard_name"] == "latitude"
+        assert ds["lon"].attrs["standard_name"] == "longitude"
+
+    def test_setdefault_preserves_source_values(self):
+        ds = make_gridded()
+        ds["latitude"].attrs["units"] = "degree_north"
+        ds["time"].attrs["standard_name"] = "forecast_reference_time"
+        envelope.stamp_cf_attrs(ds)
+        assert ds["latitude"].attrs["units"] == "degree_north"
+        assert ds["latitude"].attrs["axis"] == "Y"
+        assert ds["time"].attrs["standard_name"] == "forecast_reference_time"
+
+    def test_missing_coords_are_skipped(self):
+        ds = make_gridded().rename({"latitude": "row", "longitude": "col"}).drop_vars("time")
+        out = envelope.stamp_cf_attrs(ds)
+        assert out["row"].attrs == {}
+        assert out["col"].attrs == {}
+
+    def test_returns_dataset(self):
+        ds = make_gridded()
+        assert envelope.stamp_cf_attrs(ds) is ds
+
+
+class TestStampCfCoords:
+    def test_overwrites_prior_values(self):
+        ds = make_gridded()
+        ds["latitude"].attrs.update(standard_name="wrong", units="wrong", axis="Z")
+        envelope.stamp_cf_coords(ds)
+        assert ds["latitude"].attrs == {
+            "standard_name": "latitude",
+            "units": "degrees_north",
+            "axis": "Y",
+        }
+        assert ds["longitude"].attrs == {
+            "standard_name": "longitude",
+            "units": "degrees_east",
+            "axis": "X",
+        }
+
+    def test_time_gets_no_units(self):
+        ds = envelope.stamp_cf_coords(make_gridded())
+        assert ds["time"].attrs == {"standard_name": "time", "axis": "T"}
+
+    def test_long_names_applied_with_setdefault(self):
+        ds = make_gridded()
+        ds["latitude"].attrs["long_name"] = "source latitude"
+        envelope.stamp_cf_coords(
+            ds, long_names={"latitude": "Latitude", "longitude": "Longitude", "time": "Time"}
+        )
+        assert ds["latitude"].attrs["long_name"] == "source latitude"
+        assert ds["longitude"].attrs["long_name"] == "Longitude"
+        assert ds["time"].attrs["long_name"] == "Time"
+
+    def test_no_long_name_by_default(self):
+        ds = envelope.stamp_cf_coords(make_gridded())
+        assert "long_name" not in ds["latitude"].attrs
+
+    def test_missing_coords_are_skipped(self):
+        ds = make_gridded().drop_vars("time")
+        out = envelope.stamp_cf_coords(ds)
+        assert out["latitude"].attrs["axis"] == "Y"
+
+    def test_alias_names_are_not_stamped(self):
+        # Only the canonical post-rename names are asserted; a fetcher stamps
+        # after renaming to latitude/longitude.
+        ds = envelope.stamp_cf_coords(make_gridded().rename({"latitude": "lat"}))
+        assert ds["lat"].attrs == {}
+
+    def test_returns_dataset(self):
+        ds = make_gridded()
+        assert envelope.stamp_cf_coords(ds) is ds
+
+
+class TestUdunitsError:
+    @pytest.mark.parametrize("units", ["mm", "degC", "kg m-3", "mm day-1", "1"])
+    def test_valid_units_return_none(self, units):
+        assert envelope.udunits_error(units) is None
+
+    def test_invalid_units_return_the_exception(self):
+        exc = envelope.udunits_error("definitely ! not a unit")
+        assert isinstance(exc, ValueError)
+        assert "not a unit" in str(exc)
+
+    def test_blank_units_pass_through(self):
+        # cf_units.Unit(None) and Unit("") return an "unknown" unit without
+        # raising; rejecting blanks is the caller's guard.
+        assert envelope.udunits_error(None) is None
+        assert envelope.udunits_error("") is None
+
+    def test_catch_widens_the_converted_failures(self):
+        class Boom(Exception):
+            pass
+
+        # With the default catch, only ValueError converts; a wider catch
+        # returns whatever cf_units raised.
+        assert envelope.udunits_error("degC", catch=(Exception,)) is None
+        exc = envelope.udunits_error("definitely ! not a unit", catch=(Exception,))
+        assert isinstance(exc, ValueError)
+        with pytest.raises(ValueError):
+            envelope.udunits_error("definitely ! not a unit", catch=(Boom,))
+
+
+class TestCfAxesMissing:
+    def test_all_resolved(self):
+        ds = envelope.stamp_cf_attrs(make_gridded())
+        assert envelope.cf_axes_missing(ds) == []
+
+    def test_partially_stamped_dataset_misses_x_and_y(self):
+        # Axis resolution keys on the CF attrs (an unrenamed bare `time` name
+        # resolves the "time" coordinate, not the "T" axis), so only the
+        # stamped coord resolves.
+        ds = make_gridded().rename({"latitude": "row", "longitude": "col"})
+        ds["time"].attrs["axis"] = "T"
+        assert envelope.cf_axes_missing(ds) == ["X", "Y"]
+
+    def test_all_missing_on_unstamped_dataset(self):
+        assert envelope.cf_axes_missing(make_gridded()) == ["X", "Y", "T"]
+
+    def test_custom_axes(self):
+        ds = make_gridded()
+        ds["time"].attrs["axis"] = "T"
+        assert envelope.cf_axes_missing(ds, axes=("T",)) == []
+        assert envelope.cf_axes_missing(ds, axes=("Y",)) == ["Y"]

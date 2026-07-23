@@ -20,6 +20,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "cf-units>=3.3.1",
     "pre-commit>=4.6",
     "pytest>=9.1",
     "ruff>=0.15",
