@@ -649,6 +649,14 @@ dependencies = [
     { name = "zarr" },
 ]
 
+[package.optional-dependencies]
+geo = [
+    { name = "shapely" },
+]
+units = [
+    { name = "cf-units" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "cf-units" },
@@ -660,12 +668,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cf-units", marker = "extra == 'units'", specifier = ">=3.3.1" },
     { name = "cf-xarray", specifier = ">=0.11" },
     { name = "cftime", specifier = ">=1.6" },
     { name = "numpy", specifier = ">=2.5" },
+    { name = "shapely", marker = "extra == 'geo'", specifier = ">=2.1.2" },
     { name = "xarray", specifier = ">=2026.7" },
     { name = "zarr", specifier = ">=3.2" },
 ]
+provides-extras = ["units", "geo"]
 
 [package.metadata.requires-dev]
 dev = [
