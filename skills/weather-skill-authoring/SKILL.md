@@ -13,13 +13,17 @@ body holds only domain logic.
 
 ## Read these first
 
-- `ENVELOPE.md` (forecasting-skills) — the artifact contract: envelope shapes,
-  the `weather_skills_history` schema, CF compliance, write rules.
-- `CONVENTIONS.md` (forecasting-skills) — canonical CLI flag names and the
+- `references/ENVELOPE.md` — the artifact contract: envelope shapes, the
+  `weather_skills_history` schema, CF compliance, write rules. This is the
+  authoritative copy.
+- `references/CONVENTIONS.md` — canonical CLI flag names and the
   relative-or-absolute date grammar. A flag that does the same thing on
-  different skills has the same name; match the table.
-- `CONTRIBUTING.md` (forecasting-skills) — the publish model and the
-  version-bump workflow.
+  different skills has the same name; match the table. This is the
+  authoritative copy.
+- `CONTRIBUTING.md` in the forecasting-skills repo — that repo's own
+  publish/version-bump/CI/branch-protection flow. Relevant only when
+  publishing a skill into forecasting-skills; not part of the core authoring
+  contract.
 
 ## The five skill classes
 
@@ -34,20 +38,15 @@ body holds only domain logic.
 ## The envelope contract
 
 Every zarr input and output is a weather-skills envelope: a CF-compliant Zarr
-store plus the `weather_skills_history` provenance attr. Shapes:
+store plus the `weather_skills_history` provenance attr, in one of three
+shapes — `gridded`, `forecast`, `station`. Declare each input's shape in
+`input_type` (use `any` to opt out of shape validation); the decorator
+validates on open and exits 2 with a message naming the offending dim.
 
-- `gridded` — `latitude`/`longitude` dims (aliases accepted on input) with a
-  `time` dim;
-- `forecast` — a `step` (lead time) dim plus a scalar `time` coord for the
-  init date;
-- `station` — a `station_id` dim with 1-D `latitude(station_id)` /
-  `longitude(station_id)` coords and a `time` dim.
-
-Declare each input's shape in `input_type` (use `any` to opt out of shape
-validation); the decorator validates on open and exits 2 with a message naming
-the offending dim. Outputs are written `consolidated=True`, missing data is
-NaN (never a sentinel), and per-variable `encoding` is not part of the
-contract — the decorator clears it on write.
+`references/ENVELOPE.md` is authoritative for the rest: the exact dims and
+coords of each shape, the CF-compliance requirement, the write rules
+(`consolidated=True`, NaN for missing data, per-variable `encoding` cleared on
+write and not part of the contract), and the `weather_skills_history` schema.
 
 ## Declaring a skill
 
@@ -415,15 +414,13 @@ diagnostics go to stderr.
 ## The date grammar, from the author's side
 
 You never parse date tokens. Declare `start_time`/`end_time` (or `date`) and
-the decorator applies the full grammar from CONVENTIONS.md: absolute
-`YYYY-MM-DD`, `now`/`today`, `latest`, `now/latest-N{d,w}` offsets with the
-36525-day cap, inclusive endpoints, and the duration idiom (`latest-3w ..
-latest` is exactly 21 days inclusive of `latest`). Malformed tokens, month or
-year units, future offsets, and reversed ranges exit 2 before any network
-call; relative resolutions print a stderr line with the resolved dates, the
-day count, and the boundary reason. Your only obligation is the
-`latest_resolver` callable for sources that support `latest` — one bounded
-discovery call returning a `datetime.date`.
+the decorator applies the full relative-or-absolute grammar defined in
+`references/CONVENTIONS.md` (absolute dates, `now`/`today`/`latest`, `-N{d,w}`
+offsets, inclusive endpoints, the duration idiom). Malformed tokens, future
+offsets, and reversed ranges exit 2 before any network call; relative
+resolutions print a stderr line with the resolved dates. Your only obligation
+is the `latest_resolver` callable for sources that support `latest` — one
+bounded discovery call returning a `datetime.date`.
 
 ## Provenance and caching
 
@@ -468,11 +465,14 @@ hit it returns without calling you or touching the store. What you control:
   after the work (an effective end discovered mid-fetch), accepting that
   reruns miss.
 
-Everything else — chain append on the first input's trunk, per-branch
-histories for multi-input entries, the `weather_skills_source` stamp, PNG
-metadata keys — the decorator does for you. `weather_skills_history` is the
-only provenance attr: an input without it (whatever other attrs it carries)
-is opaque, and the chain starts fresh at your skill's entry.
+Everything that shapes the on-disk chain — entry fields, chain append on the
+first input's trunk, per-branch histories for multi-input entries, the
+`weather_skills_source` stamp, PNG metadata keys — the decorator does for you;
+`references/ENVELOPE.md` is authoritative for the `weather_skills_history`
+schema those pieces produce. One author-facing consequence:
+`weather_skills_history` is the only provenance attr the decorator reads, so
+an input without it (whatever other attrs it carries) is opaque, and the chain
+starts fresh at your skill's entry.
 
 ### Raw-string parsers and the schema validator
 
