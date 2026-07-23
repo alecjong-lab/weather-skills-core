@@ -36,6 +36,31 @@ class TestIsTransient:
     def test_case_insensitive(self):
         assert util.is_transient(Exception("Timed Out while reading")) is True
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A status code embedded in a longer number is not a status token.
+            "order 14290 failed",
+            "processed 50000 records",
+            # urllib3 wraps a permanent failure in an HTTPSConnectionPool prefix;
+            # the bare word "connection" there must not read as transient.
+            "HTTPSConnectionPool(host='x'): Max retries exceeded (404 Not Found)",
+        ],
+    )
+    def test_permanent_lookalikes_are_not_transient(self, text):
+        assert util.is_transient(Exception(text)) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Failed to establish a new connection: Connection refused",
+            "('Connection aborted.', RemoteDisconnected())",
+            "HTTPSConnectionPool(host='x'): Read timed out",
+        ],
+    )
+    def test_genuine_connection_and_timeout_failures_are_transient(self, text):
+        assert util.is_transient(Exception(text)) is True
+
 
 class TestRequireEnv:
     def test_returns_values_in_order(self, monkeypatch):
