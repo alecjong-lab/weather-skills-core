@@ -466,6 +466,33 @@ class TestPolygonFromGeojson:
         with pytest.raises(UsageError, match="--clip-geojson file not found"):
             envelope.polygon_from_geojson(tmp_path / "nope.geojson", flag="--clip-geojson")
 
+    def test_non_list_features_value_raises_usage_error(self, tmp_path):
+        payload = {"type": "FeatureCollection", "features": {"not": "a list"}}
+        with pytest.raises(UsageError, match="'features' is not a list"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
+    def test_non_object_feature_entry_raises_usage_error(self, tmp_path):
+        payload = {"type": "FeatureCollection", "features": ["not-an-object"]}
+        with pytest.raises(UsageError, match="a feature is not a JSON object"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
+    def test_unknown_geometry_type_raises_usage_error_naming_the_flag(self, tmp_path):
+        payload = {"type": "Bogus", "coordinates": [0, 0]}
+        with pytest.raises(UsageError, match="--mask-geojson.*has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
+    def test_geometry_missing_coordinates_raises_usage_error(self, tmp_path):
+        payload = {"type": "Feature", "geometry": {"type": "Point"}}
+        with pytest.raises(UsageError, match="has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
+    def test_malformed_coordinates_raise_usage_error_not_a_traceback(self, tmp_path):
+        # A string where a coordinate array is expected makes shape() raise a
+        # TypeError; it must convert to a flag-named UsageError.
+        payload = {"type": "Point", "coordinates": "nope"}
+        with pytest.raises(UsageError, match="has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
 
 class TestNormalizeLongitude:
     def test_0_360_axis_wraps_and_sorts(self):

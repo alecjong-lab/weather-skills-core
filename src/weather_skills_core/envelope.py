@@ -373,7 +373,15 @@ def polygon_from_geojson(path, *, flag: str = "--mask-geojson"):
         # Valid JSON, but a top-level array or scalar is no GeoJSON object.
         raise UsageError(f"{flag} {path} has no usable geometry.")
     if data.get("type") == "FeatureCollection":
-        geoms = [f["geometry"] for f in data.get("features", []) if f.get("geometry")]
+        features = data.get("features", [])
+        if not isinstance(features, list):
+            raise UsageError(f"{flag} {path}: 'features' is not a list.")
+        geoms = []
+        for feature in features:
+            if not isinstance(feature, dict):
+                raise UsageError(f"{flag} {path}: a feature is not a JSON object.")
+            if feature.get("geometry"):
+                geoms.append(feature["geometry"])
     elif data.get("type") == "Feature":
         geoms = [data["geometry"]] if data.get("geometry") else []
     else:
@@ -383,10 +391,18 @@ def polygon_from_geojson(path, *, flag: str = "--mask-geojson"):
     if not geoms:
         raise UsageError(f"{flag} {path} has no usable geometry.")
 
+    from shapely.errors import GeometryTypeError
     from shapely.geometry import shape
     from shapely.ops import unary_union
 
-    return unary_union([shape(g) for g in geoms])
+    # shape()/unary_union() raise on a well-formed JSON value that is not a
+    # valid geometry (an unknown type, missing/malformed coordinates, a
+    # non-object entry); convert every such failure to a flag-named UsageError
+    # so no JSON input produces a raw traceback.
+    try:
+        return unary_union([shape(g) for g in geoms])
+    except (GeometryTypeError, KeyError, AttributeError, ValueError, TypeError) as exc:
+        raise UsageError(f"{flag} {path} has no usable geometry ({exc}).") from None
 
 
 def normalize_longitude(ds, lon_dim: str = "longitude"):
