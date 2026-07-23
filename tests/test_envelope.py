@@ -454,6 +454,14 @@ class TestPolygonFromGeojson:
         with pytest.raises(UsageError, match="has no usable geometry"):
             envelope.polygon_from_geojson(self.write(tmp_path, payload))
 
+    def test_top_level_array_is_no_usable_geometry(self, tmp_path):
+        with pytest.raises(UsageError, match="has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, [self.square]))
+
+    def test_top_level_scalar_is_no_usable_geometry(self, tmp_path):
+        with pytest.raises(UsageError, match="has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, "Polygon"))
+
     def test_flag_names_the_source_flag(self, tmp_path):
         with pytest.raises(UsageError, match="--clip-geojson file not found"):
             envelope.polygon_from_geojson(tmp_path / "nope.geojson", flag="--clip-geojson")

@@ -362,6 +362,9 @@ def polygon_from_geojson(path, *, flag: str = "--mask-geojson"):
     except (OSError, json.JSONDecodeError) as exc:
         raise UsageError(f"could not read {flag} {path}: {exc}") from None
 
+    if not isinstance(data, dict):
+        # Valid JSON, but a top-level array or scalar is no GeoJSON object.
+        raise UsageError(f"{flag} {path} has no usable geometry.")
     if data.get("type") == "FeatureCollection":
         geoms = [f["geometry"] for f in data.get("features", []) if f.get("geometry")]
     elif data.get("type") == "Feature":
