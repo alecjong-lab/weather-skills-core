@@ -338,6 +338,150 @@ class TestStampCfCoords:
         assert envelope.stamp_cf_coords(ds) is ds
 
 
+class TestCfDim:
+    def test_resolves_stamped_coord(self):
+        ds = make_gridded().rename({"latitude": "yy"})
+        ds["yy"].attrs.update(standard_name="latitude", units="degrees_north")
+        assert envelope.cf_dim(ds, "latitude") == "yy"
+
+    def test_unresolvable_returns_none(self):
+        ds = make_gridded().rename({"latitude": "yy"})
+        assert envelope.cf_dim(ds, "latitude") is None
+
+    def test_works_on_dataarrays(self):
+        ds = envelope.stamp_cf_attrs(make_gridded())
+        assert envelope.cf_dim(ds["precip"], "longitude") == "longitude"
+
+
+class TestAutoVariable:
+    def test_picks_the_first_data_var(self):
+        assert envelope.auto_variable(make_gridded()) == "precip"
+
+    def test_skips_grid_mapping_container_and_targets(self):
+        ds = make_gridded()
+        ds["crs"] = xr.DataArray(0, attrs={"grid_mapping_name": "latitude_longitude"})
+        ds["precip"].attrs["grid_mapping"] = "crs"
+        assert envelope.auto_variable(ds) == "precip"
+        # A var NAMED by another var's grid_mapping attr is skipped even
+        # without its own grid_mapping_name attr.
+        ds2 = make_gridded()
+        ds2["other"] = xr.DataArray(0)
+        ds2["precip"].attrs["grid_mapping"] = "other"
+        assert envelope.auto_variable(ds2) == "precip"
+
+    def test_prefers_multidim_vars(self):
+        ds = make_gridded()
+        ds = ds[["precip"]]
+        ds["scalar_first"] = xr.DataArray(1.0)
+        ds = ds[["scalar_first", "precip"]]
+        assert envelope.auto_variable(ds) == "precip"
+
+    def test_falls_back_to_one_dim_candidate(self):
+        ds = make_gridded()
+        ds["series"] = ("time", np.ones(ds.sizes["time"]))
+        ds = ds[["series"]]
+        assert envelope.auto_variable(ds) == "series"
+
+    def test_no_candidates_returns_none(self):
+        ds = make_gridded()[[]]
+        assert envelope.auto_variable(ds) is None
+
+
+class TestLatSlice:
+    def test_ascending(self):
+        assert envelope.lat_slice(np.array([1.0, 2.0, 3.0]), 3.0, 1.0) == slice(1.0, 3.0)
+
+    def test_descending(self):
+        assert envelope.lat_slice(np.array([3.0, 2.0, 1.0]), 3.0, 1.0) == slice(3.0, 1.0)
+
+    def test_empty_axis_defaults_to_ascending(self):
+        assert envelope.lat_slice(np.array([]), 3.0, 1.0) == slice(1.0, 3.0)
+
+    def test_single_value(self):
+        assert envelope.lat_slice(np.array([2.0]), 3.0, 1.0) == slice(1.0, 3.0)
+
+
+class TestPolygonFromGeojson:
+    square = {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+    }
+    east_square = {
+        "type": "Polygon",
+        "coordinates": [[[2, 0], [2, 1], [3, 1], [3, 0], [2, 0]]],
+    }
+
+    def write(self, tmp_path, payload):
+        import json
+
+        p = tmp_path / "mask.geojson"
+        p.write_text(json.dumps(payload))
+        return p
+
+    def test_feature_collection_unions_all_features(self, tmp_path):
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": self.square},
+                {"type": "Feature", "geometry": self.east_square},
+                {"type": "Feature", "geometry": None},
+            ],
+        }
+        poly = envelope.polygon_from_geojson(self.write(tmp_path, payload))
+        assert poly.area == pytest.approx(2.0)
+
+    def test_single_feature(self, tmp_path):
+        payload = {"type": "Feature", "geometry": self.square}
+        poly = envelope.polygon_from_geojson(self.write(tmp_path, payload))
+        assert poly.area == pytest.approx(1.0)
+
+    def test_bare_geometry(self, tmp_path):
+        poly = envelope.polygon_from_geojson(self.write(tmp_path, self.square))
+        assert poly.area == pytest.approx(1.0)
+
+    def test_missing_file(self, tmp_path):
+        with pytest.raises(UsageError, match="--mask-geojson file not found"):
+            envelope.polygon_from_geojson(tmp_path / "nope.geojson")
+
+    def test_unreadable_json(self, tmp_path):
+        p = tmp_path / "mask.geojson"
+        p.write_text("{not json")
+        with pytest.raises(UsageError, match="could not read --mask-geojson"):
+            envelope.polygon_from_geojson(p)
+
+    def test_no_usable_geometry(self, tmp_path):
+        payload = {"type": "FeatureCollection", "features": []}
+        with pytest.raises(UsageError, match="has no usable geometry"):
+            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+
+    def test_flag_names_the_source_flag(self, tmp_path):
+        with pytest.raises(UsageError, match="--clip-geojson file not found"):
+            envelope.polygon_from_geojson(tmp_path / "nope.geojson", flag="--clip-geojson")
+
+
+class TestNormalizeLongitude:
+    def test_0_360_axis_wraps_and_sorts(self):
+        ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
+        out = envelope.normalize_longitude(ds)
+        assert list(out["longitude"].values) == [-180.0, -90.0, 0.0, 90.0]
+
+    def test_values_follow_their_cells(self):
+        ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
+        ds["precip"][:, :, 3] = 7.0  # the 270 column
+        out = envelope.normalize_longitude(ds)
+        assert float(out["precip"].sel(longitude=-90.0).isel(time=0, latitude=0)) == 7.0
+
+    def test_already_normalized_axis_is_unchanged(self):
+        ds = make_gridded(lons=(-90.0, 0.0, 90.0))
+        out = envelope.normalize_longitude(ds)
+        assert list(out["longitude"].values) == [-90.0, 0.0, 90.0]
+
+    def test_custom_dim_name(self):
+        ds = make_gridded(lons=(0.0, 270.0)).rename({"longitude": "lon"})
+        out = envelope.normalize_longitude(ds, lon_dim="lon")
+        assert list(out["lon"].values) == [-90.0, 0.0]
+
+
 class TestStampCfDsg:
     def stamped(self, ds=None, var_attrs=None):
         ds = ds if ds is not None else make_station()

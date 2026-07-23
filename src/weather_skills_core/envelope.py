@@ -290,6 +290,110 @@ def cf_axes_missing(ds, axes: tuple = ("X", "Y", "T")) -> list:
     return missing
 
 
+def cf_dim(obj, cf_name: str):
+    """Name of the coord cf-xarray resolves for ``cf_name`` on ``obj``, or None.
+
+    ``cf_name`` is a cf-xarray key (``"latitude"``, ``"longitude"``,
+    ``"time"``, an axis letter); ``obj`` is a Dataset or DataArray. Unlike
+    :func:`detect_spatial_dims`/:func:`detect_time_dim`, this is a bare lookup
+    with no name-heuristic fallback and no error: an unresolvable key returns
+    None and the caller decides what that means.
+    """
+    import cf_xarray  # noqa: F401 -- registers the .cf accessor
+
+    try:
+        return obj.cf[cf_name].name
+    except KeyError:
+        return None
+
+
+def auto_variable(ds):
+    """First real data var, skipping CF grid-mapping (CRS) containers.
+
+    A CF grid-mapping variable (e.g. ``latitude_longitude``) is a zero-data
+    CRS container: it carries a ``grid_mapping_name`` attr and is named by
+    another var's ``grid_mapping`` attr. Skip those so a no-flag auto-pick
+    lands on a real data var. Prefer a var with >= 2 dims (spatial/data),
+    falling back to the first remaining candidate; None when no candidate
+    remains.
+    """
+    mapping_targets = {
+        ds[d].attrs.get("grid_mapping") for d in ds.data_vars if ds[d].attrs.get("grid_mapping")
+    }
+    candidates = [
+        v
+        for v in ds.data_vars
+        if "grid_mapping_name" not in ds[v].attrs and v not in mapping_targets
+    ]
+    if not candidates:
+        return None
+    multidim = [v for v in candidates if len(ds[v].dims) >= 2]
+    return (multidim or candidates)[0]
+
+
+def lat_slice(lat_vals, north, south) -> slice:
+    """Return a ``slice`` for ``ds.sel`` that works for ascending or descending lat.
+
+    ``lat_vals`` is the latitude coord's values array; a descending axis gets
+    ``slice(north, south)``, an ascending (or empty) one ``slice(south,
+    north)``.
+    """
+    if lat_vals.size and lat_vals[0] > lat_vals[-1]:
+        return slice(north, south)
+    return slice(south, north)
+
+
+def polygon_from_geojson(path, *, flag: str = "--mask-geojson"):
+    """Return the unioned shapely polygon from a GeoJSON file.
+
+    Accepts a FeatureCollection (every feature's geometry is unioned), a
+    single Feature, or a bare geometry object. Raises :class:`UsageError`
+    naming ``flag`` (the CLI flag the path arrived on) when the file is
+    missing, unreadable/not JSON, or has no usable geometry.
+    """
+    import json
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        raise UsageError(f"{flag} file not found: {path}")
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise UsageError(f"could not read {flag} {path}: {exc}") from None
+
+    if data.get("type") == "FeatureCollection":
+        geoms = [f["geometry"] for f in data.get("features", []) if f.get("geometry")]
+    elif data.get("type") == "Feature":
+        geoms = [data["geometry"]] if data.get("geometry") else []
+    else:
+        # A bare geometry object.
+        geoms = [data]
+
+    if not geoms:
+        raise UsageError(f"{flag} {path} has no usable geometry.")
+
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+
+    return unary_union([shape(g) for g in geoms])
+
+
+def normalize_longitude(ds, lon_dim: str = "longitude"):
+    """Map a 0..360 longitude axis onto [-180, 180) and sort ascending.
+
+    Sources such as ERA5, OISST, and many CMIP6 grids store longitude as
+    0..360; normalizing lets an N/W/S/E bbox with negative west/east values
+    (the convention resolve-region and the fetchers use) select the right
+    cells. The mapping is applied unconditionally -- values already in
+    [-180, 180) are unchanged by it -- and the dataset is returned sorted
+    ascending along ``lon_dim``.
+    """
+    lon = ((ds[lon_dim] + 180) % 360) - 180
+    ds = ds.assign_coords({lon_dim: lon})
+    return ds.sortby(lon_dim)
+
+
 def stamp_cf_dsg(ds, var_attrs: dict, *, station_id_long_name: str, name_long_name: str):
     """Stamp CF timeSeries DSG attributes onto a station dataset in place.
 

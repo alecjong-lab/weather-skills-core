@@ -177,3 +177,33 @@ class TestResolveDate:
     def test_latest_without_resolver_rejected(self):
         with pytest.raises(UsageError, match="no 'latest' resolver"):
             dates.resolve_date("latest")
+
+
+class TestNpToDate:
+    def test_day_precision(self):
+        import numpy as np
+
+        assert dates.np_to_date(np.datetime64("2026-05-09")) == date(2026, 5, 9)
+
+    def test_time_of_day_truncated(self):
+        import numpy as np
+
+        assert dates.np_to_date(np.datetime64("2026-05-09T23:59:58")) == date(2026, 5, 9)
+
+    def test_nanosecond_values(self):
+        import numpy as np
+
+        value = np.datetime64("2026-05-09T12:00:00", "ns")
+        assert dates.np_to_date(value) == date(2026, 5, 9)
+
+
+class TestTodayUtc:
+    def test_returns_the_current_utc_date(self):
+        before = today()
+        resolved = dates.today_utc()
+        after = today()
+        assert before <= resolved <= after
+
+    def test_accepts_and_ignores_resolver_args(self):
+        # Callable as latest_resolver(args): one positional argument.
+        assert isinstance(dates.today_utc(object()), date)

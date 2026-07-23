@@ -44,6 +44,24 @@ _ABS_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAX_OFFSET_DAYS = 36525
 
 
+def np_to_date(value) -> date:
+    """Convert a numpy datetime64 to a calendar date (truncating any time-of-day)."""
+    import numpy as np
+
+    return date.fromisoformat(np.datetime_as_string(value, unit="D"))
+
+
+def today_utc(args=None) -> date:
+    """The current UTC date.
+
+    Shaped as a ``latest_resolver`` (it accepts and ignores the parsed args),
+    for sources with no cheap day-precise discovery endpoint where ``latest``
+    resolves to today and a thin not-yet-published trailing tail is handled as
+    a normal partial window.
+    """
+    return datetime.now(UTC).date()
+
+
 def parse_token(value: str) -> tuple:
     """Parse a date value into a structured token.
 

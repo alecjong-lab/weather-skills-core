@@ -24,6 +24,7 @@ dev = [
     "pre-commit>=4.6",
     "pytest>=9.1",
     "ruff>=0.15",
+    "shapely>=2.1.2",
 ]
 
 [tool.hatch.build.targets.wheel]
