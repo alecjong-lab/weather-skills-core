@@ -663,10 +663,14 @@ class TestMakeCompletenessProbe:
         probe = provenance.make_completeness_probe("precip", check_time="time")
         assert probe(self.store(tmp_path)) is True
 
-    def test_check_time_missing_coord_is_a_miss(self, tmp_path):
+    def test_check_time_missing_coord_raises(self, tmp_path):
+        # A check_time coord absent from the store is a misconfiguration, loud
+        # like the other unsupported-time cases, not a silent incompleteness
+        # miss.
         ds = make_gridded().rename({"time": "t"})
         probe = provenance.make_completeness_probe("precip", check_time="time")
-        assert probe(self.store(tmp_path, ds)) is False
+        with pytest.raises(ValueError, match="absent from the store"):
+            probe(self.store(tmp_path, ds))
 
     def test_check_time_nat_is_a_miss(self, tmp_path):
         import numpy as np
@@ -714,6 +718,21 @@ class TestMakeCompletenessProbe:
         probe = provenance.make_completeness_probe("precip", check_time="time")
         with pytest.raises(ValueError, match="dimension coordinate"):
             probe(store)
+
+    def test_unconsolidated_store_is_not_a_permanent_miss(self, tmp_path):
+        # open_zarr(consolidated=True) raises when a valid store carries no
+        # consolidated metadata; the probe falls back to consolidated=False
+        # rather than concluding a miss.
+        path = tmp_path / "out.zarr"
+        make_gridded().to_zarr(path, mode="w", consolidated=False)
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(path) is True
+
+    def test_unconsolidated_store_with_check_time(self, tmp_path):
+        path = tmp_path / "out.zarr"
+        make_gridded().to_zarr(path, mode="w", consolidated=False)
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(path) is True
 
     def test_probe_signature_opts_into_the_run_context(self):
         import inspect

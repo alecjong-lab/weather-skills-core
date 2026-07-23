@@ -366,6 +366,20 @@ def cache_hit(
     return not probe_rejects("recomputing")
 
 
+def _open_for_probe(xr, path):
+    """Open a store for the completeness probe, tolerating absent consolidated metadata.
+
+    A store written without consolidated metadata is valid, but
+    ``open_zarr(consolidated=True)`` raises rather than falling back; retry the
+    unconsolidated open before the caller concludes a miss. A genuinely broken
+    or missing store fails both opens and surfaces to the probe's miss handler.
+    """
+    try:
+        return xr.open_zarr(path, consolidated=True)
+    except (FileNotFoundError, KeyError, ValueError):
+        return xr.open_zarr(path, consolidated=False)
+
+
 class _UnsupportedTimeCoordError(ValueError):
     """``check_time`` named a coordinate the probe cannot check.
 
@@ -385,17 +399,18 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
     mid-run failure can leave a partial Zarr whose root attrs (and so its
     ``weather_skills_history``) were written before the array data landed, and
     honoring such a store as a cache hit would hand the caller a broken output.
-    The probe opens the store with ``consolidated=True`` and corner-reads one
-    element of each probed variable, forcing a real chunk read (a truncated
-    store can keep intact metadata while a chunk is missing, so a
-    metadata-only check is not enough). Any store-read failure -- an
-    unreadable store, an unknown variable or coord name, an empty dimension,
-    an undecodable chunk -- returns False (a cache miss that forces a
-    recompute), never an exception. Probe misconfiguration is the exception
-    to that: a raising ``variables`` callable and an unsupported
-    ``check_time`` coordinate (below) propagate, because a misconfigured
-    probe that returned False would silently recompute a complete store on
-    every run.
+    The probe opens the store with ``consolidated=True``, falling back to
+    ``consolidated=False`` when the store carries no consolidated metadata (a
+    valid unconsolidated store must not read as a permanent miss), and
+    corner-reads one element of each probed variable, forcing a real chunk
+    read (a truncated store can keep intact metadata while a chunk is missing,
+    so a metadata-only check is not enough). Any store-read failure -- an
+    unreadable store, an unknown probed variable, an empty dimension, an
+    undecodable chunk -- returns False (a cache miss that forces a recompute),
+    never an exception. Probe misconfiguration is the exception to that: a
+    raising ``variables`` callable and an unsupported ``check_time``
+    coordinate (below) propagate, because a misconfigured probe that returned
+    False would silently recompute a complete store on every run.
 
     ``variables`` declares which data variables must read back:
 
@@ -419,9 +434,11 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
     coordinate must be a dimension coordinate (its only dim is itself) holding
     datetime64 values. The store's actual representation is only knowable at
     probe time, so the factory cannot reject a mismatch up front; instead the
-    probe raises :class:`ValueError` when the coordinate is present but is a
-    scalar/auxiliary coordinate or holds a non-datetime64 representation
-    (cftime/object/numeric values). Stores with such time coordinates (e.g. a
+    probe raises :class:`ValueError` when the coordinate is absent from the
+    store, or is present but is a scalar/auxiliary coordinate, or holds a
+    non-datetime64 representation (cftime/object/numeric values) -- each a
+    misconfiguration, distinct from genuine incompleteness. Stores with such
+    time coordinates (e.g. a
     non-standard model calendar decoded to cftime, or a forecast envelope's
     scalar init ``time``) cannot use ``check_time``; probe them by variables
     alone or write a bespoke probe.
@@ -441,7 +458,7 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
         else:
             wanted = None  # probe every data variable present in the store
         try:
-            with xr.open_zarr(path, consolidated=True) as ds:
+            with _open_for_probe(xr, path) as ds:
                 probed = set(ds.data_vars) if wanted is None else wanted
                 if not probed or not probed.issubset(ds.data_vars):
                     return False
@@ -449,7 +466,11 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
                     import numpy as np
 
                     if check_time not in ds.coords:
-                        return False
+                        raise _UnsupportedTimeCoordError(
+                            f"check_time={check_time!r} names a coordinate absent from the "
+                            f"store (coords present: {list(ds.coords)}); a missing time "
+                            "coordinate is a probe misconfiguration, not incompleteness"
+                        )
                     time_var = ds[check_time]
                     if time_var.dims != (check_time,):
                         raise _UnsupportedTimeCoordError(
