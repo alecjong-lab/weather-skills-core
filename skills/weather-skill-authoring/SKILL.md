@@ -825,6 +825,82 @@ Before calling a skill done, confirm:
 - [ ] SKILL.md: current-behavior only, bounded examples, reactive-error
       catalog documented.
 
+## Linting your skill
+
+weather-skills-core ships a conformance linter that checks a skill's
+declaration against the ecosystem's conventions. Run it on your skill
+directory (or from inside it with no argument):
+
+```bash
+uvx weather-skills-core lint skills/my-skill
+```
+
+From a checkout of weather-skills-core:
+
+```bash
+uv run weather-skills-core lint skills/my-skill
+```
+
+The target is layout-auto-detected: a skill directory, a `scripts/`
+directory, a `skills/` tree, or a repo root holding one. Declarations are
+read from the scripts by AST — the linter never imports or runs a skill —
+and the standard flag surface comes from introspecting the decorator itself,
+so the linter and the decorator cannot drift apart.
+
+### The corpus model
+
+The cross-skill rules (duplicate and divergent one-off flags) compare your
+skill against a corpus:
+
+- linting a whole `skills/` tree uses the tree itself;
+- linting one skill inside a `skills/` tree discovers its siblings upward —
+  they join the corpus as context, and findings are reported only for your
+  skill;
+- `--against <path-or-repo>` adds more corpora: a local path or a public
+  GitHub repository reference (`org/repo`, `org/repo@rev`, or an
+  `https://github.com/...` URL), fetched shallowly for its declarations and
+  not retained. Repeat the flag to lint against several skill sets at once.
+
+With no corpus beyond the target (a standalone skill and no `--against`),
+the cross-skill rules report a skipped state — visible in both output
+formats — and are excluded from the score; they are never silently scored
+as clean.
+
+### Rule catalog
+
+| ID | Severity | Checks | Remediation |
+| --- | --- | --- | --- |
+| WSK001 | error | The script parses and contains a `@weather_skill` call. | Fix the syntax error or declare the skill through the decorator. |
+| WSK101 | warning | No `extra_args` entry shadows a standard flag or dest (`--input`, `--output`, `--start`, `--end`, `--date`, `--bbox`, `--variable`, `--workers`, `--title`, `--dims`, `--time-dim`). | Declare the standard toggle instead; its dict form covers help/required/choices overrides. |
+| WSK201 | warning | A one-off flag name is not also declared by another corpus skill. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
+| WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
+| WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |
+| WSK401 | error | `_SKILL_VERSION` exists and is passed as the decorator's version argument. | Define the constant at module top and pass it (CI bumps it). |
+| WSK402 | error | The PEP 723 block declares weather-skills-core. | Add the core dependency to the inline script block. |
+
+Rule IDs are stable: new rules take new numbers and existing rules are never
+renumbered. Severity semantics: `error` breaks an ecosystem contract,
+`warning` is a conformance divergence worth fixing, `info` is an advisory
+note.
+
+### Score and output
+
+Each skill scores 0-100: the mean over the applicable rules, where a rule
+with no findings scores full and a rule with findings scores by its worst
+severity (error 0, warning 0.5, info 0.8 of that rule's weight); skipped
+rules leave the denominator. An unanalyzable script scores 0. The aggregate
+is the mean of the per-skill scores.
+
+`--format json` emits a stable schema (`findings`, `score`, `skipped_rules`,
+`notes`) for tooling.
+
+The linter is advisory: it exits 0 whether or not findings exist (2 for
+usage errors), and the score informs — maintainers decide. A shadowed or
+duplicated flag can be the right call for a particular skill; the linter's
+job is to make the divergence visible, not to block it. Callers that want a
+gate can opt in with `--strict <severity>`; nothing in the ecosystem depends
+on it.
+
 ## Updating this playbook
 
 This is a living document. When the skill paradigm shifts — a new declaration
