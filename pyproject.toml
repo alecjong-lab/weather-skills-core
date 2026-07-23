@@ -18,6 +18,9 @@ dependencies = [
     "zarr>=3.2",
 ]
 
+[project.scripts]
+weather-skills-core = "weather_skills_core.cli:main"
+
 [project.optional-dependencies]
 # udunits validation: envelope.udunits_error
 units = ["cf-units>=3.3.1"]
