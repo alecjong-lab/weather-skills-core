@@ -16,9 +16,11 @@ covered here should be added to this file in the same PR that introduces them.
 The weather-skills-core conformance linter checks `extra_args` flag naming and
 shape across skills: WSK101 flags an extra argument that shadows a standard
 parameter, WSK201 flags a one-off flag name declared by more than one skill, and
-WSK202 flags a shared flag name whose shape diverges between skills. This repo's
-CI does not run that linter, so within this repo the naming convention is upheld
-by review.
+WSK202 flags a shared flag name whose shape diverges between skills. The
+forecasting-skills CI runs this linter as an advisory check on the skills changed
+in a pull request, posting the findings as a sticky comment; it does not block
+merge, so the naming convention is upheld by that advisory check together with
+review.
 
 ## Canonical names
 
