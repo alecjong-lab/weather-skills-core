@@ -631,9 +631,23 @@ class TestMakeCompletenessProbe:
         context = SimpleNamespace(args=SimpleNamespace(variable=None))
         assert probe(self.store(tmp_path), context=context) is True
 
-    def test_callable_spec_failure_is_a_miss_not_a_traceback(self, tmp_path):
+    def test_raising_callable_spec_propagates(self, tmp_path):
+        # A raising spec is a skill bug: it must crash loudly, never read as
+        # a cache miss that silently recomputes on every run.
         probe = provenance.make_completeness_probe(lambda context: context.args.variable)
-        assert probe(self.store(tmp_path), context=None) is False
+        with pytest.raises(AttributeError):
+            probe(self.store(tmp_path), context=None)
+
+    def test_store_read_failure_with_callable_spec_is_a_miss(self, tmp_path):
+        # The spec resolves fine; the unreadable store stays a plain miss.
+        from types import SimpleNamespace
+
+        path = tmp_path / "not-a-zarr"
+        path.mkdir()
+        (path / "zarr.json").write_text("garbage")
+        probe = provenance.make_completeness_probe(lambda context: context.args.variable)
+        context = SimpleNamespace(args=SimpleNamespace(variable=["precip"]))
+        assert probe(path, context=context) is False
 
     def test_check_time_reads_the_last_slice(self, tmp_path):
         # Two single-step time chunks; corrupting the LAST one is caught only
@@ -669,6 +683,37 @@ class TestMakeCompletenessProbe:
         ds = ds.assign_coords(time=ds["time"].values[::-1])
         probe = provenance.make_completeness_probe("precip", check_time="time")
         assert probe(self.store(tmp_path, ds)) is False
+
+    def test_check_time_cftime_coordinate_raises(self, tmp_path):
+        # A non-standard calendar decodes to cftime objects, which check_time
+        # cannot verify. A complete store must never read as a permanent
+        # miss, so the unsupported representation raises instead.
+        times = xr.date_range("2026-01-01", periods=2, freq="D", calendar="noleap")
+        ds = make_gridded().assign_coords(time=times)
+        store = self.store(tmp_path, ds)
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        with pytest.raises(ValueError, match="datetime64"):
+            probe(store)
+
+    def test_check_time_numeric_coordinate_raises(self, tmp_path):
+        import numpy as np
+
+        ds = make_gridded()
+        ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
+        store = self.store(tmp_path, ds)
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        with pytest.raises(ValueError, match="datetime64"):
+            probe(store)
+
+    def test_check_time_scalar_coordinate_raises(self, tmp_path):
+        # A forecast-style scalar init time is not a dimension coordinate;
+        # check_time cannot verify it, and a complete store must never read
+        # as a permanent miss, so the unsupported shape raises instead.
+        ds = make_gridded().isel(time=0)
+        store = self.store(tmp_path, ds)
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        with pytest.raises(ValueError, match="dimension coordinate"):
+            probe(store)
 
     def test_probe_signature_opts_into_the_run_context(self):
         import inspect

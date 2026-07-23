@@ -577,16 +577,24 @@ parameterized by them. Do not reimplement any of these in a skill body.
 
 - `make_completeness_probe(variables=None, *, check_time=None)` — builds the
   `completeness_probe=` callable: opens the candidate store consolidated and
-  corner-reads one element of each probed variable, returning False (never
-  raising) on an unreadable store, an unknown name, an empty dimension, or an
-  undecodable chunk. `variables` is None to probe every data variable present
-  (an empty store is incomplete), a name or list of required names, or a
-  callable receiving the run context (e.g.
-  `lambda context: context.args.variable`) resolved at probe time.
+  corner-reads one element of each probed variable, returning False on any
+  store-read failure — an unreadable store, an unknown name, an empty
+  dimension, an undecodable chunk. `variables` is None to probe every data
+  variable present (an empty store is incomplete), a name or list of required
+  names, or a callable receiving the run context (e.g.
+  `lambda context: context.args.variable`) resolved at probe time; an
+  exception the callable raises propagates — a skill bug, not a cache miss.
   `check_time` names a coordinate that must be present, non-NaT, and strictly
   increasing, and moves the corner read to the LAST index along it — the
-  slice an interrupted append would be missing. Write a bespoke probe only
-  when a store needs checks this cannot express.
+  slice an interrupted append would be missing. `check_time` REQUIRES a
+  datetime64 dimension coordinate: a store whose named coordinate is a
+  scalar/auxiliary coordinate or holds cftime/object/numeric values makes
+  the probe raise `ValueError` (a misconfigured probe must fail loudly, not
+  read as a permanent miss that recomputes a complete store on every run).
+  For such stores — a non-standard model calendar decoded to cftime, a
+  forecast envelope's scalar init `time` — probe by variables alone or write
+  a bespoke probe. Write a bespoke probe only when a store needs checks this
+  cannot express.
 
 ### Runtime checks (`weather_skills_core.util`)
 

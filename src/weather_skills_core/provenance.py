@@ -366,6 +366,17 @@ def cache_hit(
     return not probe_rejects("recomputing")
 
 
+class _UnsupportedTimeCoordError(ValueError):
+    """``check_time`` named a coordinate the probe cannot check.
+
+    Raised (as a :class:`ValueError`) by probes built with
+    :func:`make_completeness_probe` when the named coordinate is not a
+    datetime64 dimension coordinate; the probe re-raises it past its
+    store-read exception handling so a misconfigured probe fails loudly
+    instead of reading as a permanent cache miss.
+    """
+
+
 def make_completeness_probe(variables=None, *, check_time: str | None = None):
     """Build a completeness probe for the decorator's ``completeness_probe=`` slot.
 
@@ -377,10 +388,14 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
     The probe opens the store with ``consolidated=True`` and corner-reads one
     element of each probed variable, forcing a real chunk read (a truncated
     store can keep intact metadata while a chunk is missing, so a
-    metadata-only check is not enough). Any failure -- an unreadable store, an
-    unknown variable or coord name, an empty dimension, an undecodable chunk
-    -- returns False (a cache miss that forces a recompute), never an
-    exception.
+    metadata-only check is not enough). Any store-read failure -- an
+    unreadable store, an unknown variable or coord name, an empty dimension,
+    an undecodable chunk -- returns False (a cache miss that forces a
+    recompute), never an exception. Probe misconfiguration is the exception
+    to that: a raising ``variables`` callable and an unsupported
+    ``check_time`` coordinate (below) propagate, because a misconfigured
+    probe that returned False would silently recompute a complete store on
+    every run.
 
     ``variables`` declares which data variables must read back:
 
@@ -390,45 +405,80 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
     - an iterable of names: all must be present;
     - a callable: invoked with the run context at probe time and returning any
       of the above -- e.g. ``lambda context: context.args.variable`` for a
-      probe keyed to the requested ``--variable`` value(s).
+      probe keyed to the requested ``--variable`` value(s). The callable is
+      resolved before the store is opened, and an exception it raises
+      propagates -- it is a skill bug, not a cache miss.
 
     ``check_time``, when given, names a coordinate that must be present,
     non-empty, free of NaT (a half-written append leaves unfilled slots), and
     strictly increasing; each probed variable's corner read then uses the LAST
     index along that dimension (the slice an interrupted append would be
     missing) instead of the first.
+
+    ``check_time`` REQUIRES a datetime64 dimension coordinate: the named
+    coordinate must be a dimension coordinate (its only dim is itself) holding
+    datetime64 values. The store's actual representation is only knowable at
+    probe time, so the factory cannot reject a mismatch up front; instead the
+    probe raises :class:`ValueError` when the coordinate is present but is a
+    scalar/auxiliary coordinate or holds a non-datetime64 representation
+    (cftime/object/numeric values). Stores with such time coordinates (e.g. a
+    non-standard model calendar decoded to cftime, or a forecast envelope's
+    scalar init ``time``) cannot use ``check_time``; probe them by variables
+    alone or write a bespoke probe.
     """
 
     def probe(path, *, context=None) -> bool:
         import xarray as xr
 
+        # A callable spec is resolved outside the store-read try block: an
+        # exception it raises is a skill bug and must propagate, not read as
+        # a cache miss that silently recomputes on every run.
+        spec = variables(context) if callable(variables) else variables
+        if isinstance(spec, str):
+            wanted = {spec}
+        elif spec:
+            wanted = set(spec)
+        else:
+            wanted = None  # probe every data variable present in the store
         try:
             with xr.open_zarr(path, consolidated=True) as ds:
-                spec = variables(context) if callable(variables) else variables
-                if isinstance(spec, str):
-                    wanted = {spec}
-                elif spec:
-                    wanted = set(spec)
-                else:
-                    wanted = set(ds.data_vars)
-                if not wanted or not wanted.issubset(ds.data_vars):
+                probed = set(ds.data_vars) if wanted is None else wanted
+                if not probed or not probed.issubset(ds.data_vars):
                     return False
                 if check_time is not None:
                     import numpy as np
 
-                    if check_time not in ds.coords or ds.sizes.get(check_time, 0) == 0:
+                    if check_time not in ds.coords:
                         return False
-                    time_vals = ds[check_time].values
+                    time_var = ds[check_time]
+                    if time_var.dims != (check_time,):
+                        raise _UnsupportedTimeCoordError(
+                            f"check_time={check_time!r} requires a dimension "
+                            f"coordinate, but the store's {check_time!r} has dims "
+                            f"{list(time_var.dims)}"
+                        )
+                    if not np.issubdtype(time_var.dtype, np.datetime64):
+                        raise _UnsupportedTimeCoordError(
+                            f"check_time={check_time!r} requires datetime64 values, "
+                            f"but the store's {check_time!r} has dtype "
+                            f"{time_var.dtype} (cftime/object/numeric time "
+                            "representations are not supported)"
+                        )
+                    if ds.sizes.get(check_time, 0) == 0:
+                        return False
+                    time_vals = time_var.values
                     if np.isnat(time_vals).any():
                         return False
                     zero = np.timedelta64(0, "ns")
                     if time_vals.size > 1 and not np.all(np.diff(time_vals) > zero):
                         return False
-                for name in sorted(wanted):
+                for name in sorted(probed):
                     var = ds[name]
                     corner = {d: (-1 if d == check_time else 0) for d in var.dims}
                     var.isel(corner).compute()
-        except Exception:  # noqa: BLE001 -- any failure means the store is not a usable cache hit
+        except _UnsupportedTimeCoordError:
+            raise
+        except Exception:  # noqa: BLE001 -- a store-read failure is a cache miss, not an error
             return False
         return True
 
