@@ -1235,3 +1235,181 @@ def _normalize_input_types(input_type):
     if isinstance(input_type, str):
         return [t.strip() for t in input_type.split(",")]
     return list(input_type)
+
+
+@dataclass(frozen=True)
+class StandardParameter:
+    """One standard CLI parameter owned by the ``@weather_skill`` decorator.
+
+    Describes the parameter's argparse surface as the decorator constructs it:
+
+    - ``name`` -- the declaration keyword on :func:`weather_skill` (``"input"``
+      and ``"output"`` for the I/O flags, which are driven by ``input_type``/
+      ``input_names``/``variadic_input`` and ``output_type`` rather than a
+      keyword of their own).
+    - ``kind`` -- ``"io"`` for the input/output flags, ``"toggle"`` for the
+      standard parameter toggles.
+    - ``dest`` -- the argparse dest the flag parses into (``--start`` parses
+      into ``start``; the decorator passes the resolved value to the wrapped
+      function under ``start_time``).
+    - ``flags`` -- every flag spelling the decorator registers. ``input_names``
+      replaces the ``input`` entry's flags with one dedicated flag per input;
+      the flags here are the default ``--input``/``-i`` surface.
+    - ``arity`` -- ``"single"`` for one value per invocation, or
+      ``"single_or_append"`` when a declaration mode selects between one value
+      and a repeatable flag (``variable="repeat"``; a multi-input or variadic
+      ``--input``).
+    - ``type_name`` -- the argparse ``type`` callable's name when the flag
+      converts its value (``--workers`` parses through ``int``), else ``None``
+      (the raw CLI string).
+    - ``accepts_choices`` / ``accepts_help`` / ``accepts_required`` -- whether
+      the toggle's dict form accepts that key. I/O flags and the plain toggles
+      (``title``, ``dims``, ``time_dim``) have no dict form, so all three are
+      ``False`` for them; ``input_help`` covers input-flag help, and ``bbox``
+      requiredness is its ``mode`` key, not a dict ``required``.
+    """
+
+    name: str
+    kind: str
+    dest: str
+    flags: tuple[str, ...]
+    arity: str
+    type_name: str | None
+    accepts_choices: bool
+    accepts_help: bool
+    accepts_required: bool
+
+
+def standard_parameters() -> tuple[StandardParameter, ...]:
+    """The decorator's standard CLI parameter surface, for introspection.
+
+    Enumerates every flag the decorator itself registers -- the input/output
+    flags plus the standard parameter toggles -- with each flag's dest,
+    spelling(s), arity, value type, and dict-form capability. Read-only: the
+    parser construction in :func:`weather_skill` is the behavior; this
+    function describes it (a conformance linter enumerates the standard
+    surface from here instead of hardcoding a list).
+    """
+    return (
+        StandardParameter(
+            name="input",
+            kind="io",
+            dest="input",
+            flags=("--input", "-i"),
+            arity="single_or_append",
+            type_name=None,
+            accepts_choices=False,
+            accepts_help=False,
+            accepts_required=False,
+        ),
+        StandardParameter(
+            name="output",
+            kind="io",
+            dest="output",
+            flags=("--output", "-o"),
+            arity="single",
+            type_name=None,
+            accepts_choices=False,
+            accepts_help=False,
+            accepts_required=False,
+        ),
+        StandardParameter(
+            name="start_time",
+            kind="toggle",
+            dest="start",
+            flags=("--start",),
+            arity="single",
+            type_name=None,
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=True,
+        ),
+        StandardParameter(
+            name="end_time",
+            kind="toggle",
+            dest="end",
+            flags=("--end",),
+            arity="single",
+            type_name=None,
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=True,
+        ),
+        StandardParameter(
+            name="date",
+            kind="toggle",
+            dest="date",
+            flags=("--date",),
+            arity="single",
+            type_name=None,
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=True,
+        ),
+        StandardParameter(
+            name="bbox",
+            kind="toggle",
+            dest="bbox",
+            flags=("--bbox",),
+            arity="single",
+            type_name=None,
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=False,
+        ),
+        StandardParameter(
+            name="variable",
+            kind="toggle",
+            dest="variable",
+            flags=("--variable", "-v"),
+            arity="single_or_append",
+            type_name=None,
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=True,
+        ),
+        StandardParameter(
+            name="workers",
+            kind="toggle",
+            dest="workers",
+            flags=("--workers",),
+            arity="single",
+            type_name="int",
+            accepts_choices=True,
+            accepts_help=True,
+            accepts_required=True,
+        ),
+        StandardParameter(
+            name="title",
+            kind="toggle",
+            dest="title",
+            flags=("--title",),
+            arity="single",
+            type_name=None,
+            accepts_choices=False,
+            accepts_help=False,
+            accepts_required=False,
+        ),
+        StandardParameter(
+            name="dims",
+            kind="toggle",
+            dest="dims",
+            flags=("--dims",),
+            arity="single",
+            type_name=None,
+            accepts_choices=False,
+            accepts_help=False,
+            accepts_required=False,
+        ),
+        StandardParameter(
+            name="time_dim",
+            kind="toggle",
+            dest="time_dim",
+            flags=("--time-dim",),
+            arity="single",
+            type_name=None,
+            accepts_choices=False,
+            accepts_help=False,
+            accepts_required=False,
+        ),
+    )
