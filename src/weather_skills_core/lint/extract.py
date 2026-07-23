@@ -11,6 +11,7 @@ with a note on the declaration.
 """
 
 import ast
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -298,6 +299,9 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
     decl = SkillDeclaration(skill_dir=skill_dir, script=script)
     try:
         source = script.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        decl.error = f"script is not valid UTF-8 ({exc})"
+        return decl
     except OSError as exc:
         decl.error = f"could not read the script ({exc})"
         return decl
@@ -380,7 +384,26 @@ def extract_skill(skill_dir: Path) -> list[SkillDeclaration]:
     each carries its analysis failure.
     """
     scripts_dir = skill_dir / "scripts"
-    scripts = sorted(scripts_dir.glob("*.py")) if scripts_dir.is_dir() else []
+    # os.scandir raises on an unlistable directory; Path.glob would suppress
+    # the PermissionError and misreport it as "no scripts/*.py found".
+    try:
+        if scripts_dir.is_dir():
+            with os.scandir(scripts_dir) as entries:
+                scripts = sorted(
+                    Path(entry.path)
+                    for entry in entries
+                    if entry.name.endswith(".py") and not entry.name.startswith(".")
+                )
+        else:
+            scripts = []
+    except OSError as exc:
+        return [
+            SkillDeclaration(
+                skill_dir=skill_dir,
+                script=scripts_dir,
+                error=f"could not list the scripts directory ({exc})",
+            )
+        ]
     if not scripts:
         return [
             SkillDeclaration(

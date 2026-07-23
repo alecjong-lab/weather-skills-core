@@ -1,7 +1,10 @@
 """AST extraction of skill declarations: shapes, toggles, version, PEP 723."""
 
+import os
 import textwrap
 from pathlib import Path
+
+import pytest
 
 from weather_skills_core.lint.extract import (
     extract_script,
@@ -209,6 +212,36 @@ class TestExtractionErrors:
         decls = extract_skill(empty)
         assert len(decls) == 1
         assert "no scripts/*.py" in decls[0].error
+
+    def test_non_utf8_script_reported_per_script(self, tmp_path):
+        script, skill_dir = write_script(tmp_path, '"""Doc."""\n')
+        script.write_bytes(b'"""Doc."""\nname = "caf\xe9"\n')  # latin-1, not UTF-8
+        decl = extract_script(script, skill_dir)
+        assert decl.error is not None
+        assert "not valid UTF-8" in decl.error
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="permission bits do not bind root")
+    def test_unreadable_script_reported_per_script(self, tmp_path):
+        script, skill_dir = write_script(tmp_path, '"""Doc."""\n')
+        script.chmod(0o000)
+        try:
+            decl = extract_script(script, skill_dir)
+        finally:
+            script.chmod(0o644)
+        assert decl.error is not None
+        assert "could not read the script" in decl.error
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="permission bits do not bind root")
+    def test_unlistable_scripts_directory_reported_per_skill(self, tmp_path):
+        script, skill_dir = write_script(tmp_path, '"""Doc."""\n')
+        scripts_dir = script.parent
+        scripts_dir.chmod(0o000)
+        try:
+            decls = extract_skill(skill_dir)
+        finally:
+            scripts_dir.chmod(0o755)
+        assert len(decls) == 1
+        assert "could not list the scripts directory" in decls[0].error
 
 
 class TestVersionAndDeps:

@@ -23,6 +23,11 @@ from pathlib import Path
 from weather_skills_core.errors import UsageError
 from weather_skills_core.lint.extract import SkillDeclaration, extract_skill
 
+#: Ceiling on any one git subprocess. The fetches are shallow and
+#: blob-filtered, so a healthy clone finishes well inside this; expiry is a
+#: usage error naming the reference rather than an indefinite hang.
+GIT_TIMEOUT_SECONDS = 300
+
 _GITHUB_REF_RE = re.compile(
     r"^(?:https?://github\.com/)?"
     r"(?P<org>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)"
@@ -66,16 +71,19 @@ def resolve_skill_dirs(path: Path) -> tuple[list[Path], bool]:
             f"{path} is not a directory; lint a skill directory, a scripts directory, "
             "a skills/ tree, or a repo root holding one."
         )
-    if _is_skill_dir(p):
-        return [p], True
-    if p.name == "scripts" and any(p.glob("*.py")):
-        return [p.parent], True
-    children = _skill_children(p)
-    if children:
-        return children, False
-    nested = _skill_children(p / "skills")
-    if nested:
-        return nested, False
+    try:
+        if _is_skill_dir(p):
+            return [p], True
+        if p.name == "scripts" and any(p.glob("*.py")):
+            return [p.parent], True
+        children = _skill_children(p)
+        if children:
+            return children, False
+        nested = _skill_children(p / "skills")
+        if nested:
+            return nested, False
+    except OSError as exc:
+        raise UsageError(f"could not scan {path} for skill layouts: {exc}") from exc
     raise UsageError(
         f"{path} does not match any skill layout (no scripts/*.py, no */scripts/*.py, no skills/*)."
     )
@@ -84,7 +92,10 @@ def resolve_skill_dirs(path: Path) -> tuple[list[Path], bool]:
 def sibling_skills(skill_dir: Path) -> list[Path]:
     """Skill directories that share the target's enclosing tree (upward discovery)."""
     parent = skill_dir.resolve().parent
-    return [child for child in _skill_children(parent) if child != skill_dir.resolve()]
+    try:
+        return [child for child in _skill_children(parent) if child != skill_dir.resolve()]
+    except OSError as exc:
+        raise UsageError(f"could not scan {parent} for sibling skills: {exc}") from exc
 
 
 def github_clone_url(reference: str) -> str:
@@ -96,13 +107,24 @@ def github_clone_url(reference: str) -> str:
 
 
 def _run_git(args: list[str], reference: str) -> subprocess.CompletedProcess:
-    result = subprocess.run(
-        ["git", *args],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except FileNotFoundError as exc:
+        raise UsageError(
+            f"--against {reference}: git is not installed or not on PATH; "
+            "a GitHub reference needs the git binary."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UsageError(
+            f"--against {reference}: git {args[0]} timed out after {GIT_TIMEOUT_SECONDS} seconds."
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise UsageError(

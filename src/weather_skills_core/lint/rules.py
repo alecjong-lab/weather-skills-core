@@ -233,7 +233,17 @@ def _rule_skill_md(decl: SkillDeclaration) -> list[Finding]:
                 "SKILL.md is missing alongside scripts/; add the skill manifest.",
             )
         ]
-    text = skill_md.read_text(encoding="utf-8")
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return [
+            _finding(
+                "WSK301",
+                decl,
+                None,
+                f"SKILL.md could not be read ({exc}); fix its encoding or permissions.",
+            )
+        ]
     findings = []
     primary, all_spellings = _declared_flags(decl)
     for flag, origin in sorted(primary.items()):
