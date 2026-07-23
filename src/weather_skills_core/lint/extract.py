@@ -97,6 +97,20 @@ class SkillDeclaration:
     def display_name(self) -> str:
         return self.name or self.skill_dir.name
 
+    @property
+    def key(self) -> str:
+        """Collision-proof identity: the script path relative to the skill dir's parent.
+
+        Two scripts in one skill directory, and two skill directories that
+        pick the same display name, get distinct keys; this is the identity
+        findings and per-skill scores are grouped by, where the display name
+        can collide.
+        """
+        try:
+            return str(self.script.relative_to(self.skill_dir.parent))
+        except ValueError:
+            return str(self.script)
+
     def toggle_enabled(self, keyword: str) -> bool:
         """True when a standard toggle keyword is declared with a non-off value.
 

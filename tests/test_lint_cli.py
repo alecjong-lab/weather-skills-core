@@ -71,7 +71,13 @@ class TestJsonFormat:
         assert set(payload["score"]) == {"aggregate", "per_skill"}
         finding = payload["findings"][0]
         assert set(finding) == {"rule", "severity", "skill", "flag", "file", "message"}
-        assert payload["score"]["per_skill"].keys() == {"alpha", "beta", "gamma"}
+        # per_skill keys are the collision-proof relative script path, not the
+        # display name (two scripts in one skill directory can share a name).
+        assert payload["score"]["per_skill"].keys() == {
+            "alpha/scripts/alpha.py",
+            "beta/scripts/beta.py",
+            "gamma/scripts/gamma.py",
+        }
 
     def test_skipped_rules_visible_in_json(self, capsys):
         main(
@@ -85,4 +91,4 @@ class TestJsonFormat:
         payload = json.loads(capsys.readouterr().out)
         assert [s["rule"] for s in payload["skipped_rules"]] == ["WSK201", "WSK202"]
         assert payload["findings"] == []
-        assert payload["score"]["per_skill"] == {"clean-skill": 100}
+        assert payload["score"]["per_skill"] == {"clean-skill/scripts/clean_skill.py": 100}

@@ -16,6 +16,7 @@ advisory: findings never gate a run by themselves.
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from weather_skills_core.decorator import StandardParameter, standard_parameters
 from weather_skills_core.lint.corpus import CorpusSkill
@@ -222,7 +223,17 @@ def _documented_argument_flags(text: str) -> set[str]:
     return flags
 
 
-def _rule_skill_md(decl: SkillDeclaration) -> list[Finding]:
+def _rule_skill_md(decl: SkillDeclaration, siblings: list[SkillDeclaration]) -> list[Finding]:
+    """WSK301 for one script against its skill directory's SKILL.md.
+
+    ``siblings`` is every analyzable declaration in the same skill directory
+    (including ``decl``). The forward check (a declared flag absent from
+    SKILL.md) is per script. The reverse check (SKILL.md documents a flag no
+    script declares) unions the declarations of all ``siblings`` so a
+    multi-script skill's arguments do not read as undeclared just because they
+    live in another of its scripts; it is emitted once, on the lexically first
+    sibling, so the finding is not duplicated across scripts.
+    """
     skill_md = decl.skill_dir / "SKILL.md"
     if not skill_md.is_file():
         return [
@@ -245,7 +256,7 @@ def _rule_skill_md(decl: SkillDeclaration) -> list[Finding]:
             )
         ]
     findings = []
-    primary, all_spellings = _declared_flags(decl)
+    primary, _ = _declared_flags(decl)
     for flag, origin in sorted(primary.items()):
         if not _flag_mentioned(flag, text):
             findings.append(
@@ -257,16 +268,21 @@ def _rule_skill_md(decl: SkillDeclaration) -> list[Finding]:
                     "document it in the Arguments section.",
                 )
             )
-    for flag in sorted(_documented_argument_flags(text) - all_spellings):
-        findings.append(
-            _finding(
-                "WSK301",
-                decl,
-                flag,
-                f"SKILL.md documents {flag} but the script does not declare it; remove "
-                "the entry or declare the argument.",
+    if decl.key == min(sibling.key for sibling in siblings):
+        union_spellings: set[str] = set()
+        for sibling in siblings:
+            _, spellings = _declared_flags(sibling)
+            union_spellings |= spellings
+        for flag in sorted(_documented_argument_flags(text) - union_spellings):
+            findings.append(
+                _finding(
+                    "WSK301",
+                    decl,
+                    flag,
+                    f"SKILL.md documents {flag} but the skill does not declare it in any "
+                    "script; remove the entry or declare the argument.",
+                )
             )
-        )
     return findings
 
 
@@ -306,13 +322,19 @@ def _rule_cross_skill(corpus: list[CorpusSkill]) -> list[Finding]:
 
     findings = []
     for identity, entries in sorted(by_identity.items()):
-        holders = {id(cs.decl): cs for cs, _ in entries}
-        if len(holders) < 2:
+        # Holders are skill directories, not individual scripts: two scripts in
+        # one skill directory sharing a flag are not a cross-skill collision, so
+        # a skill is never fired against its own scripts.
+        holder_dirs = {cs.decl.skill_dir.resolve() for cs, _ in entries}
+        if len(holder_dirs) < 2:
             continue
         for cs, shape in entries:
             if not cs.is_target:
                 continue
-            others = [(o, s) for o, s in entries if o.decl is not cs.decl]
+            this_dir = cs.decl.skill_dir.resolve()
+            others = [(o, s) for o, s in entries if o.decl.skill_dir.resolve() != this_dir]
+            if not others:
+                continue
             other_names = ", ".join(f"{o.decl.display_name} ({o.source})" for o, _ in others)
             findings.append(
                 _finding(
@@ -350,6 +372,13 @@ def _rule_cross_skill(corpus: list[CorpusSkill]) -> list[Finding]:
 def lint_corpus(corpus: list[CorpusSkill], corpus_available: bool) -> list[Finding]:
     """Evaluate every rule over the corpus; findings only for target skills."""
     findings: list[Finding] = []
+    # Analyzable target declarations grouped by skill directory: the SKILL.md
+    # reverse check unions all of a skill's scripts (WSK301 must not flag one
+    # script's argument as undeclared when a sibling script declares it).
+    siblings: dict[Path, list[SkillDeclaration]] = {}
+    for cs in corpus:
+        if cs.is_target and cs.decl.error is None:
+            siblings.setdefault(cs.decl.skill_dir.resolve(), []).append(cs.decl)
     for cs in corpus:
         if not cs.is_target:
             continue
@@ -358,7 +387,7 @@ def lint_corpus(corpus: list[CorpusSkill], corpus_available: bool) -> list[Findi
             findings.append(_finding("WSK001", decl, None, f"{decl.error}."))
             continue
         findings += _rule_shadow(decl)
-        findings += _rule_skill_md(decl)
+        findings += _rule_skill_md(decl, siblings[decl.skill_dir.resolve()])
         findings += _rule_version(decl)
         findings += _rule_core_dep(decl)
     if corpus_available:

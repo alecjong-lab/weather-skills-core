@@ -58,7 +58,12 @@ def run_lint(target: Path, against: list[str]) -> LintReport:
     """
     with ExitStack() as stack:
         corpus, notes = build_corpus(target, against, stack)
-        corpus_available = len(corpus) > 1
+        # A cross-skill comparison needs at least two distinct skill
+        # directories: a single skill's own sibling scripts are not a corpus,
+        # so a lone skill (however many scripts) has no corpus regardless of
+        # declaration count.
+        distinct_dirs = {cs.decl.skill_dir.resolve() for cs in corpus if cs.decl.error is None}
+        corpus_available = len(distinct_dirs) >= 2
         findings = lint_corpus(corpus, corpus_available)
 
     skills = []
@@ -66,10 +71,19 @@ def run_lint(target: Path, against: list[str]) -> LintReport:
     for cs in corpus:
         if not cs.is_target:
             continue
-        name = cs.decl.display_name
-        skill_findings = [f for f in findings if f.skill == name]
+        # Group findings by the script path, not the display name: two scripts
+        # in one skill directory can share a name, and the file path is their
+        # collision-proof identity (it is what _finding records).
+        skill_findings = [f for f in findings if f.file == str(cs.decl.script)]
         score = skill_score(skill_findings, corpus_available)
-        skills.append({"name": name, "file": str(cs.decl.script), "score": score})
+        skills.append(
+            {
+                "name": cs.decl.display_name,
+                "key": cs.decl.key,
+                "file": str(cs.decl.script),
+                "score": score,
+            }
+        )
         scores.append(score)
 
     skipped = []

@@ -148,6 +148,106 @@ class TestAnalysisFailures:
         assert score_of(report, "good-skill") == 100
 
 
+_PEP723 = '# /// script\n# dependencies = ["weather-skills-core"]\n# ///\n'
+
+
+def _script(skill_name, func_name, extra_args_src):
+    return (
+        _PEP723
+        + "from weather_skills_core import weather_skill\n"
+        + '_SKILL_VERSION = "0.1.0"\n'
+        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, input_type='any', "
+        + f"output_type='same', extra_args={extra_args_src})\n"
+        + f"def {func_name}(ds):\n    return ds\n"
+    )
+
+
+def _manifest(flags):
+    lines = ["# multi-skill", "", "## Usage", "", "### Arguments"]
+    lines += [f"- `{flag}` — description." for flag in flags]
+    lines += ["- `--input`, `-i` — input Zarr.", "- `--output`, `-o` — output Zarr."]
+    return "\n".join(lines) + "\n"
+
+
+def make_multi_script_skill(tmp_path, *, scripts, manifest_flags):
+    """A single skill directory holding several decorated scripts and a manifest."""
+    skill = tmp_path / "multi-skill"
+    scripts_dir = skill / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for filename, source in scripts.items():
+        (scripts_dir / filename).write_text(source)
+    (skill / "SKILL.md").write_text(_manifest(manifest_flags))
+    return skill
+
+
+class TestMultiScriptSkill:
+    def test_a_skills_own_scripts_are_not_a_corpus(self, tmp_path):
+        # Two scripts in one skill declaring the same one-off flag are not a
+        # cross-skill collision; the cross-skill rules are skipped for a lone
+        # skill however many scripts it holds.
+        skill = make_multi_script_skill(
+            tmp_path,
+            scripts={
+                "one.py": _script("one", "one", "{'shared': {'type': int, 'help': 'x'}}"),
+                "two.py": _script("two", "two", "{'shared': {'type': int, 'help': 'x'}}"),
+            },
+            manifest_flags=["--shared"],
+        )
+        report = run_lint(skill, [])
+        assert not [f for f in report.findings if f.rule in ("WSK201", "WSK202")]
+        assert {s["rule"] for s in report.skipped_rules} == {"WSK201", "WSK202"}
+
+    def test_wsk301_reverse_check_unions_every_script(self, tmp_path):
+        # --foo is declared only by one.py, --bar only by two.py; documenting
+        # both must not read as undeclared against the script that omits it.
+        skill = make_multi_script_skill(
+            tmp_path,
+            scripts={
+                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
+                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+            },
+            manifest_flags=["--foo", "--bar"],
+        )
+        report = run_lint(skill, [])
+        assert [f for f in report.findings if f.rule == "WSK301"] == []
+
+    def test_wsk301_reverse_check_fires_once_for_an_undeclared_documented_flag(self, tmp_path):
+        # --ghost is documented but declared by no script: one reverse finding,
+        # not one per script.
+        skill = make_multi_script_skill(
+            tmp_path,
+            scripts={
+                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
+                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+            },
+            manifest_flags=["--foo", "--bar", "--ghost"],
+        )
+        report = run_lint(skill, [])
+        ghost = [f for f in report.findings if f.rule == "WSK301" and f.flag == "--ghost"]
+        assert len(ghost) == 1
+        assert "does not declare it in any script" in ghost[0].message
+
+    def test_findings_and_scores_key_by_script_not_display_name(self, tmp_path):
+        # Both scripts pick the display name "dup"; the collision-proof key is
+        # the relative script path, and a finding attaches to one script only.
+        skill = make_multi_script_skill(
+            tmp_path,
+            scripts={
+                "one.py": _script("dup", "one", "{'date': {'type': str, 'help': 'x'}}"),
+                "two.py": _script("dup", "two", "{'clean': {'type': int, 'help': 'x'}}"),
+            },
+            manifest_flags=["--date", "--clean"],
+        )
+        report = run_lint(skill, [])
+        assert {s["key"] for s in report.skills} == {
+            "multi-skill/scripts/one.py",
+            "multi-skill/scripts/two.py",
+        }
+        assert {s["name"] for s in report.skills} == {"dup"}
+        shadow = [f for f in report.findings if f.rule == "WSK101"]
+        assert len(shadow) == 1 and shadow[0].file.endswith("one.py")
+
+
 class TestScoreRubric:
     def test_warning_only_rule_scores_half_of_that_rule(self):
         # shadow-skill: 4 applicable rules (no corpus), one rule at its

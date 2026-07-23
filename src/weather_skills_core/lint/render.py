@@ -1,9 +1,11 @@
 """Text and JSON renderers for a lint report.
 
 The JSON schema is stable: ``findings`` (list of ``{rule, severity, skill,
-flag, file, message}``), ``score`` (``{"aggregate": int, "per_skill": {name:
-int}}``), ``skipped_rules`` (list of ``{rule, title, reason}``), and ``notes``
-(list of strings). New keys may be added; existing keys keep their meaning.
+flag, file, message}``), ``score`` (``{"aggregate": int, "per_skill":
+{key: int}}`` where ``key`` is the collision-proof relative script path, not
+the display name -- two scripts in one skill directory can share a name),
+``skipped_rules`` (list of ``{rule, title, reason}``), and ``notes`` (list of
+strings). New keys may be added; existing keys keep their meaning.
 """
 
 import json
@@ -16,7 +18,7 @@ def render_text(report: LintReport) -> str:
     lines = []
     for skill in report.skills:
         lines.append(f"{skill['name']} — score {skill['score']}/100")
-        skill_findings = [f for f in report.findings if f.skill == skill["name"]]
+        skill_findings = [f for f in report.findings if f.file == skill["file"]]
         if not skill_findings:
             lines.append("  no findings")
         for finding in skill_findings:
@@ -42,7 +44,7 @@ def render_json(report: LintReport) -> str:
         "findings": [asdict(f) for f in report.findings],
         "score": {
             "aggregate": report.aggregate,
-            "per_skill": {skill["name"]: skill["score"] for skill in report.skills},
+            "per_skill": {skill["key"]: skill["score"] for skill in report.skills},
         },
         "skipped_rules": report.skipped_rules,
         "notes": report.notes,
