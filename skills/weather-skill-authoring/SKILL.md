@@ -513,6 +513,10 @@ parameterized by them. Do not reimplement any of these in a skill body.
   (`longitude`/`lon`/`x`), and a `time` coord (`standard_name`/`axis` only),
   every attr via `setdefault` so source-provided values win. Returns `ds`.
   For fetchers whose source coords may already carry correct CF metadata.
+  Precondition: the alias matching treats `y`/`x` as latitude/longitude
+  names, so it assumes geographic coordinates — a dataset with projected
+  `x`/`y` coords (meters, not degrees) must be renamed to its real
+  geographic coords first, or must not go through this helper at all.
 - `stamp_cf_coords(ds, *, long_names=None)` — the overwriting counterpart:
   `update`s the same attrs onto the canonical `latitude`/`longitude`/`time`
   names (post-rename), replacing prior values; coords absent from the dataset

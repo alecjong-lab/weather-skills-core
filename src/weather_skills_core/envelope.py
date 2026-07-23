@@ -203,6 +203,13 @@ def stamp_cf_attrs(ds):
     longitude equivalents; a ``time`` coord gets ``standard_name``/``axis``
     (its units/calendar belong in the write encoding). Every attr is applied
     with ``setdefault``, so source-provided values win. Returns ``ds``.
+
+    Precondition: the alias matching treats ``y``/``x`` as latitude/longitude
+    names, so it assumes geographic coordinates. A dataset whose ``y``/``x``
+    coords are projected (meters, not degrees) must not be passed here --
+    the stamp would assert degree units and geographic standard names onto
+    projected values. Such callers rename to the real geographic coords
+    first, or skip this helper.
     """
     for name in _LAT_NAMES:
         if name in ds.coords:
