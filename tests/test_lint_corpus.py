@@ -13,6 +13,26 @@ from weather_skills_core.lint.run import run_lint
 
 FIXTURES = Path(__file__).parent / "fixtures" / "lint"
 
+DECORATED_SCRIPT = (
+    "from weather_skills_core import weather_skill\n"
+    "_SKILL_VERSION = '0.1.0'\n"
+    "@weather_skill('s', _SKILL_VERSION)\n"
+    "def s():\n"
+    "    ...\n"
+)
+
+
+def make_skill(parent, name, *, skill_md=True, decorated=True):
+    """A skill directory under ``parent`` with a script and optional SKILL.md."""
+    skill = parent / name
+    scripts = skill / "scripts"
+    scripts.mkdir(parents=True)
+    body = DECORATED_SCRIPT if decorated else "x = 1\n"
+    (scripts / f"{name.replace('-', '_')}.py").write_text(body)
+    if skill_md:
+        (skill / "SKILL.md").write_text(f"# {name}\n")
+    return skill
+
 
 class TestLayoutDetection:
     def test_single_skill_dir(self):
@@ -47,6 +67,41 @@ class TestLayoutDetection:
         alpha = FIXTURES / "multi_tree" / "skills" / "alpha"
         assert [d.name for d in sibling_skills(alpha)] == ["beta", "gamma"]
 
+    def test_skills_tree_wins_over_a_root_that_also_has_scripts(self, tmp_path):
+        # A repo root carrying both scripts/*.py and a skills/ tree must
+        # resolve to the tree, not misdetect as one skill.
+        root = tmp_path / "repo"
+        (root / "scripts").mkdir(parents=True)
+        (root / "scripts" / "tool.py").write_text(DECORATED_SCRIPT)
+        make_skill(root / "skills", "alpha")
+        make_skill(root / "skills", "beta")
+        dirs, single = resolve_skill_dirs(root)
+        assert [d.name for d in dirs] == ["alpha", "beta"] and not single
+
+    def test_non_skill_dir_with_scripts_does_not_shadow_the_skills_tree(self, tmp_path):
+        # An examples/ dir holding scripts/*.py is not a skill; it must not
+        # shadow a real skills/ tree at the same root.
+        root = tmp_path / "repo"
+        examples = root / "examples"
+        (examples / "scripts").mkdir(parents=True)
+        (examples / "scripts" / "demo.py").write_text("x = 1\n")
+        make_skill(root / "skills", "alpha")
+        dirs, single = resolve_skill_dirs(root)
+        assert [d.name for d in dirs] == ["alpha"] and not single
+
+    def test_bare_scripts_dir_without_skill_md_or_decorator_is_not_a_skill(self, tmp_path):
+        # scripts/*.py alone (no SKILL.md, no @weather_skill) is not a skill.
+        skill = make_skill(tmp_path, "bare", skill_md=False, decorated=False)
+        with pytest.raises(UsageError, match="does not match any skill layout"):
+            resolve_skill_dirs(skill)
+
+    def test_decorated_script_without_skill_md_is_a_skill(self, tmp_path):
+        # A missing SKILL.md is a lint finding, not a layout failure: the
+        # @weather_skill call is enough to mark the directory a skill.
+        skill = make_skill(tmp_path, "decorated", skill_md=False, decorated=True)
+        dirs, single = resolve_skill_dirs(skill)
+        assert dirs == [skill.resolve()] and single
+
 
 class TestAgainstLocalPath:
     def test_local_tree_joins_the_corpus_with_its_label(self):
@@ -64,6 +119,19 @@ class TestAgainstLocalPath:
         with pytest.raises(UsageError, match="not an existing local path"):
             run_lint(FIXTURES / "clean_tree", ["/no/such/path/anywhere"])
 
+    def test_against_the_targets_own_tree_is_excluded(self):
+        # --against resolving to the same tree as the target must not make
+        # every skill collide with its own duplicate.
+        tree = FIXTURES / "multi_tree"
+        report = run_lint(tree, [str(tree)])
+        assert any("is the lint target itself" in note for note in report.notes)
+        # The against copy contributes no WSK201/202 self-collision: --method
+        # collisions remain only among the genuine alpha/beta/gamma trio, each
+        # named once per holder.
+        dupes = [f for f in report.findings if f.rule == "WSK201" and f.flag == "--method"]
+        for f in dupes:
+            assert f"{f.skill} (" not in f.message  # a skill never lists itself
+
 
 def make_git_repo(tmp_path, source_tree):
     """A local git repository holding the given fixture tree, for file:// clones."""
@@ -76,7 +144,21 @@ def make_git_repo(tmp_path, source_tree):
         ["git", *env_args, "-C", str(repo), "commit", "--quiet", "-m", "fixture"],
         check=True,
     )
+    # A file:// server refuses fetch-by-arbitrary-SHA unless this is set.
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "uploadpack.allowAnySHA1InWant", "true"],
+        check=True,
+    )
     return repo
+
+
+def head_sha(repo):
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 class TestAgainstGitHub:
@@ -111,6 +193,35 @@ class TestAgainstGitHub:
         )
         with pytest.raises(UsageError, match="fixture-org/fixture-repo"):
             run_lint(FIXTURES / "clean_tree", ["fixture-org/fixture-repo"])
+
+    def test_commit_sha_reference_fetched_by_sha(self, tmp_path, monkeypatch):
+        # git clone --branch cannot take a SHA; the 40-hex revision must go
+        # through the git init + fetch --depth 1 origin <sha> + checkout path.
+        repo = make_git_repo(tmp_path, FIXTURES / "against_tree")
+        sha = head_sha(repo)
+        monkeypatch.setattr(corpus_module, "github_clone_url", lambda reference: f"file://{repo}")
+        report = run_lint(
+            FIXTURES / "multi_tree" / "skills" / "alpha", [f"fixture-org/fixture-repo@{sha}"]
+        )
+        dupe = next(f for f in report.findings if f.rule == "WSK201" and f.flag == "--method")
+        assert f"remote-skill (--against fixture-org/fixture-repo@{sha})" in dupe.message
+
+    def test_sha_clone_leaves_no_checkout_behind(self, tmp_path, monkeypatch):
+        repo = make_git_repo(tmp_path, FIXTURES / "against_tree")
+        sha = head_sha(repo)
+        created = []
+        real_fetch = corpus_module._fetch_github
+
+        def spy_fetch(reference, dest):
+            created.append(dest)
+            return real_fetch(reference, dest)
+
+        monkeypatch.setattr(corpus_module, "github_clone_url", lambda reference: f"file://{repo}")
+        monkeypatch.setattr(corpus_module, "_fetch_github", spy_fetch)
+        run_lint(
+            FIXTURES / "multi_tree" / "skills" / "alpha", [f"fixture-org/fixture-repo@{sha}"]
+        )
+        assert created and all(not dest.exists() for dest in created)
 
     def test_malformed_reference_is_a_usage_error(self):
         with pytest.raises(UsageError, match="not an existing local path"):

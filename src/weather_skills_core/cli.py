@@ -41,7 +41,8 @@ def main(argv=None) -> int:
         metavar="PATH_OR_REPO",
         help=(
             "Additional corpus for the cross-skill rules: a local path or a public "
-            "GitHub repository reference (org/repo[@rev]). Repeatable."
+            "GitHub repository reference (org/repo[@rev], where rev is a branch, tag, "
+            "or full commit SHA). Repeatable."
         ),
     )
     lint_parser.add_argument(
