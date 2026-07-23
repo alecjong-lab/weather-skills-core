@@ -828,11 +828,12 @@ Before calling a skill done, confirm:
 ## Linting your skill
 
 weather-skills-core ships a conformance linter that checks a skill's
-declaration against the ecosystem's conventions. Run it on your skill
-directory (or from inside it with no argument):
+declaration against the ecosystem's conventions. It is not published to PyPI,
+so run it from the git repository (or from inside your skill directory with
+no path argument):
 
 ```bash
-uvx weather-skills-core lint skills/my-skill
+uvx --from git+https://github.com/rhiza-research/weather-skills-core weather-skills-core lint skills/my-skill
 ```
 
 From a checkout of weather-skills-core:
@@ -844,8 +845,10 @@ uv run weather-skills-core lint skills/my-skill
 The target is layout-auto-detected: a skill directory, a `scripts/`
 directory, a `skills/` tree, or a repo root holding one. Declarations are
 read from the scripts by AST — the linter never imports or runs a skill —
-and the standard flag surface comes from introspecting the decorator itself,
-so the linter and the decorator cannot drift apart.
+and the standard flag surface comes from `standard_parameters()`, a
+maintained description of the decorator's CLI surface that
+`test_standard_parameters.py` verifies against the parser the decorator
+actually builds, so drift between the two fails the test suite.
 
 ### The corpus model
 
@@ -858,8 +861,11 @@ skill against a corpus:
   skill;
 - `--against <path-or-repo>` adds more corpora: a local path or a public
   GitHub repository reference (`org/repo`, `org/repo@rev`, or an
-  `https://github.com/...` URL), fetched shallowly for its declarations and
-  not retained. Repeat the flag to lint against several skill sets at once.
+  `https://github.com/...` URL), where `rev` is a branch, tag, or full commit
+  SHA, fetched shallowly for its declarations and not retained. Each git
+  subprocess is bounded by a 5-minute timeout; expiry is a usage error naming
+  the reference rather than an indefinite hang. Repeat the flag to lint
+  against several skill sets at once.
 
 With no corpus beyond the target (a standalone skill and no `--against`),
 the cross-skill rules report a skipped state — visible in both output
@@ -886,10 +892,10 @@ note.
 ### Score and output
 
 Each skill scores 0-100: the mean over the applicable rules, where a rule
-with no findings scores full and a rule with findings scores by its worst
-severity (error 0, warning 0.5, info 0.8 of that rule's weight); skipped
-rules leave the denominator. An unanalyzable script scores 0. The aggregate
-is the mean of the per-skill scores.
+with no findings scores 1.0 and a rule with findings scores by its worst
+severity (error 0.0, warning 0.5, info 0.8). Every applicable rule weighs
+equally in the mean; skipped rules leave the denominator. An unanalyzable
+script scores 0. The aggregate is the mean of the per-skill scores.
 
 `--format json` emits a stable schema (`findings`, `score`, `skipped_rules`,
 `notes`) for tooling.
