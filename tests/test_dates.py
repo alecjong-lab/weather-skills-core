@@ -199,9 +199,11 @@ class TestNpToDate:
 
 class TestTodayUtc:
     def test_returns_the_current_utc_date(self):
-        before = today()
+        # Bounds derived from the UTC clock at the assertion site, so the
+        # comparison holds in any local timezone.
+        before = datetime.now(UTC).date()
         resolved = dates.today_utc()
-        after = today()
+        after = datetime.now(UTC).date()
         assert before <= resolved <= after
 
     def test_accepts_and_ignores_resolver_args(self):
