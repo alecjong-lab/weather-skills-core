@@ -516,6 +516,34 @@ class TestNormalizeLongitude:
         out = envelope.normalize_longitude(ds, lon_dim="lon")
         assert list(out["lon"].values) == [-90.0, 0.0]
 
+    def test_longitude_attrs_preserved_across_the_wrap(self):
+        ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
+        ds["longitude"].attrs = {"standard_name": "longitude", "units": "degrees_east", "axis": "X"}
+        out = envelope.normalize_longitude(ds)
+        assert out["longitude"].attrs == {
+            "standard_name": "longitude",
+            "units": "degrees_east",
+            "axis": "X",
+        }
+
+    def test_duplicate_endpoint_is_dropped_and_axis_stays_sorted(self):
+        # 0.0 and 360.0 both wrap onto 0.0; the duplicate is dropped and the
+        # axis remains a valid, ascending index.
+        ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0, 360.0))
+        out = envelope.normalize_longitude(ds)
+        lons = list(out["longitude"].values)
+        assert lons == [-180.0, -90.0, 0.0, 90.0]
+        assert len(lons) == len(set(lons))
+
+    def test_duplicate_drop_keeps_the_first_occurrence(self):
+        # The 0.0 column carries a distinct value from the 360.0 column; the
+        # first occurrence (input order) is the one kept.
+        ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0, 360.0))
+        ds["precip"][:, :, 0] = 5.0  # the original 0.0 column
+        ds["precip"][:, :, 4] = 9.0  # the original 360.0 column
+        out = envelope.normalize_longitude(ds)
+        assert float(out["precip"].sel(longitude=0.0).isel(time=0, latitude=0)) == 5.0
+
 
 class TestStampCfDsg:
     def stamped(self, ds=None, var_attrs=None):

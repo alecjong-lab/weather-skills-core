@@ -414,9 +414,29 @@ def normalize_longitude(ds, lon_dim: str = "longitude"):
     cells. The mapping is applied unconditionally -- values already in
     [-180, 180) are unchanged by it -- and the dataset is returned sorted
     ascending along ``lon_dim``.
+
+    The longitude coordinate's attributes are preserved across the wrap (the
+    arithmetic would otherwise drop them), so this may run either before or
+    after :func:`stamp_cf_attrs`/:func:`stamp_cf_coords`: a longitude already
+    carrying ``standard_name``/``units``/``axis`` keeps them, and stamping
+    applied afterward still finds the canonical coordinate.
+
+    A grid that carries both endpoints of the 0..360 range (e.g. 0.0 and
+    360.0, which both wrap onto 0.0) yields a duplicate longitude label; the
+    duplicate is dropped deterministically -- the first occurrence in the
+    input order is kept -- so the returned axis is a valid, sorted index.
     """
+    import numpy as np
+
+    attrs = dict(ds[lon_dim].attrs)
     lon = ((ds[lon_dim] + 180) % 360) - 180
+    lon.attrs = attrs
     ds = ds.assign_coords({lon_dim: lon})
+    # np.unique returns each unique value's first-occurrence index; keeping
+    # those (in input order) drops any later duplicate the wrap produced.
+    _, first = np.unique(ds[lon_dim].values, return_index=True)
+    if len(first) < ds.sizes[lon_dim]:
+        ds = ds.isel({lon_dim: np.sort(first)})
     return ds.sortby(lon_dim)
 
 
