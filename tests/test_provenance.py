@@ -543,3 +543,135 @@ class TestCacheHitChained:
             completeness_probe=lambda p: probed.append(p) or True,
         )
         assert probed == []
+
+
+class TestMakeCompletenessProbe:
+    def store(self, tmp_path, ds=None, *, time_chunks=None):
+        ds = ds if ds is not None else make_gridded()
+        encoding = None
+        if time_chunks is not None:
+            sizes = ds["precip"].shape
+            encoding = {"precip": {"chunks": (time_chunks, *sizes[1:])}}
+        path = tmp_path / "out.zarr"
+        ds.to_zarr(path, mode="w", consolidated=True, encoding=encoding)
+        return path
+
+    def corrupt_chunk(self, store, name):
+        """Overwrite one named chunk file with undecodable bytes."""
+        chunk = store / "precip" / "c" / name
+        assert chunk.is_file()
+        chunk.write_bytes(b"not a chunk")
+
+    def test_complete_store_with_named_variable(self, tmp_path):
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(self.store(tmp_path)) is True
+
+    def test_unknown_variable_is_a_miss(self, tmp_path):
+        probe = provenance.make_completeness_probe("sst")
+        assert probe(self.store(tmp_path)) is False
+
+    def test_missing_store_is_a_miss(self, tmp_path):
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(tmp_path / "nope.zarr") is False
+
+    def test_unreadable_store_is_a_miss(self, tmp_path):
+        path = tmp_path / "not-a-zarr"
+        path.mkdir()
+        (path / "zarr.json").write_text("garbage")
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(path) is False
+
+    def test_corrupt_chunk_is_a_miss(self, tmp_path):
+        store = self.store(tmp_path)
+        self.corrupt_chunk(store, "0/0/0")
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(store) is False
+
+    def test_probe_all_variables_by_default(self, tmp_path):
+        probe = provenance.make_completeness_probe()
+        assert probe(self.store(tmp_path)) is True
+
+    def test_store_with_no_data_variables_is_a_miss(self, tmp_path):
+        import numpy as np
+
+        ds = xr.Dataset(coords={"time": np.array(["2026-01-01"], dtype="datetime64[ns]")})
+        probe = provenance.make_completeness_probe()
+        assert probe(self.store(tmp_path, ds)) is False
+
+    def test_variable_list_subset_and_superset(self, tmp_path):
+        store = self.store(tmp_path)
+        assert provenance.make_completeness_probe(["precip"])(store) is True
+        assert provenance.make_completeness_probe(["precip", "sst"])(store) is False
+
+    def test_empty_dimension_is_a_miss(self, tmp_path):
+        ds = make_gridded(lats=())
+        probe = provenance.make_completeness_probe("precip")
+        assert probe(self.store(tmp_path, ds)) is False
+
+    def test_scalar_variable_reads_back(self, tmp_path):
+        ds = make_gridded()
+        ds["count"] = xr.DataArray(3)
+        probe = provenance.make_completeness_probe(["precip", "count"])
+        assert probe(self.store(tmp_path, ds)) is True
+
+    def test_callable_spec_reads_the_run_context(self, tmp_path):
+        from types import SimpleNamespace
+
+        store = self.store(tmp_path)
+        probe = provenance.make_completeness_probe(lambda context: context.args.variable)
+        ok = SimpleNamespace(args=SimpleNamespace(variable=["precip"]))
+        missing = SimpleNamespace(args=SimpleNamespace(variable=["sst"]))
+        assert probe(store, context=ok) is True
+        assert probe(store, context=missing) is False
+
+    def test_callable_spec_none_probes_everything(self, tmp_path):
+        from types import SimpleNamespace
+
+        probe = provenance.make_completeness_probe(lambda context: context.args.variable)
+        context = SimpleNamespace(args=SimpleNamespace(variable=None))
+        assert probe(self.store(tmp_path), context=context) is True
+
+    def test_callable_spec_failure_is_a_miss_not_a_traceback(self, tmp_path):
+        probe = provenance.make_completeness_probe(lambda context: context.args.variable)
+        assert probe(self.store(tmp_path), context=None) is False
+
+    def test_check_time_reads_the_last_slice(self, tmp_path):
+        # Two single-step time chunks; corrupting the LAST one is caught only
+        # by the check_time corner (index -1 along time), not the default
+        # first-corner read.
+        store = self.store(tmp_path, time_chunks=1)
+        self.corrupt_chunk(store, "1/0/0")
+        assert provenance.make_completeness_probe("precip")(store) is True
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(store) is False
+
+    def test_check_time_accepts_a_complete_store(self, tmp_path):
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(self.store(tmp_path)) is True
+
+    def test_check_time_missing_coord_is_a_miss(self, tmp_path):
+        ds = make_gridded().rename({"time": "t"})
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(self.store(tmp_path, ds)) is False
+
+    def test_check_time_nat_is_a_miss(self, tmp_path):
+        import numpy as np
+
+        ds = make_gridded()
+        times = ds["time"].values.copy()
+        times[-1] = np.datetime64("NaT", "ns")
+        ds = ds.assign_coords(time=times)
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(self.store(tmp_path, ds)) is False
+
+    def test_check_time_non_increasing_is_a_miss(self, tmp_path):
+        ds = make_gridded()
+        ds = ds.assign_coords(time=ds["time"].values[::-1])
+        probe = provenance.make_completeness_probe("precip", check_time="time")
+        assert probe(self.store(tmp_path, ds)) is False
+
+    def test_probe_signature_opts_into_the_run_context(self):
+        import inspect
+
+        probe = provenance.make_completeness_probe("precip")
+        assert "context" in inspect.signature(probe).parameters

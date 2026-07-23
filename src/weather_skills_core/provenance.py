@@ -366,6 +366,75 @@ def cache_hit(
     return not probe_rejects("recomputing")
 
 
+def make_completeness_probe(variables=None, *, check_time: str | None = None):
+    """Build a completeness probe for the decorator's ``completeness_probe=`` slot.
+
+    The returned probe -- ``callable(path, *, context=None) -> bool`` -- cheaply
+    verifies that a candidate cache-hit store is fully written and readable: a
+    mid-run failure can leave a partial Zarr whose root attrs (and so its
+    ``weather_skills_history``) were written before the array data landed, and
+    honoring such a store as a cache hit would hand the caller a broken output.
+    The probe opens the store with ``consolidated=True`` and corner-reads one
+    element of each probed variable, forcing a real chunk read (a truncated
+    store can keep intact metadata while a chunk is missing, so a
+    metadata-only check is not enough). Any failure -- an unreadable store, an
+    unknown variable or coord name, an empty dimension, an undecodable chunk
+    -- returns False (a cache miss that forces a recompute), never an
+    exception.
+
+    ``variables`` declares which data variables must read back:
+
+    - ``None`` (or any falsy value): every data variable present in the store
+      is probed; a store with no data variables is incomplete;
+    - a ``str``: that single variable must be present;
+    - an iterable of names: all must be present;
+    - a callable: invoked with the run context at probe time and returning any
+      of the above -- e.g. ``lambda context: context.args.variable`` for a
+      probe keyed to the requested ``--variable`` value(s).
+
+    ``check_time``, when given, names a coordinate that must be present,
+    non-empty, free of NaT (a half-written append leaves unfilled slots), and
+    strictly increasing; each probed variable's corner read then uses the LAST
+    index along that dimension (the slice an interrupted append would be
+    missing) instead of the first.
+    """
+
+    def probe(path, *, context=None) -> bool:
+        import xarray as xr
+
+        try:
+            with xr.open_zarr(path, consolidated=True) as ds:
+                spec = variables(context) if callable(variables) else variables
+                if isinstance(spec, str):
+                    wanted = {spec}
+                elif spec:
+                    wanted = set(spec)
+                else:
+                    wanted = set(ds.data_vars)
+                if not wanted or not wanted.issubset(ds.data_vars):
+                    return False
+                if check_time is not None:
+                    import numpy as np
+
+                    if check_time not in ds.coords or ds.sizes.get(check_time, 0) == 0:
+                        return False
+                    time_vals = ds[check_time].values
+                    if np.isnat(time_vals).any():
+                        return False
+                    zero = np.timedelta64(0, "ns")
+                    if time_vals.size > 1 and not np.all(np.diff(time_vals) > zero):
+                        return False
+                for name in sorted(wanted):
+                    var = ds[name]
+                    corner = {d: (-1 if d == check_time else 0) for d in var.dims}
+                    var.isel(corner).compute()
+        except Exception:  # noqa: BLE001 -- any failure means the store is not a usable cache hit
+            return False
+        return True
+
+    return probe
+
+
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
     """Stamp a dataset for writing: history attr and encoding clear.
 
