@@ -196,6 +196,14 @@ class TestNpToDate:
         value = np.datetime64("2026-05-09T12:00:00", "ns")
         assert dates.np_to_date(value) == date(2026, 5, 9)
 
+    def test_nat_raises_data_error_with_an_actionable_message(self):
+        import numpy as np
+
+        from weather_skills_core.errors import DataError
+
+        with pytest.raises(DataError, match="NaT"):
+            dates.np_to_date(np.datetime64("NaT", "ns"))
+
 
 class TestTodayUtc:
     def test_returns_the_current_utc_date(self):

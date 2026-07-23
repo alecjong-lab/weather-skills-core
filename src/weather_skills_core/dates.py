@@ -29,7 +29,7 @@ referencing ``latest`` at both ends discovers once.
 import re
 from datetime import UTC, date, datetime, timedelta
 
-from weather_skills_core.errors import UsageError
+from weather_skills_core.errors import DataError, UsageError
 
 _REL_OFFSET_RE = re.compile(r"^(?P<base>now|latest)-(?P<n>\d+)(?P<unit>[dw])$")
 
@@ -45,9 +45,19 @@ MAX_OFFSET_DAYS = 36525
 
 
 def np_to_date(value) -> date:
-    """Convert a numpy datetime64 to a calendar date (truncating any time-of-day)."""
+    """Convert a numpy datetime64 to a calendar date (truncating any time-of-day).
+
+    A NaT (not-a-time) value raises :class:`DataError` with an actionable
+    message: ``np.datetime_as_string`` renders NaT as the string ``"NaT"``,
+    which ``date.fromisoformat`` would reject with an opaque ``ValueError``.
+    """
     import numpy as np
 
+    if np.isnat(value):
+        raise DataError(
+            "time coordinate value is NaT (not-a-time); the dataset has a missing or "
+            "unfilled time entry where a valid date is required."
+        )
     return date.fromisoformat(np.datetime_as_string(value, unit="D"))
 
 
