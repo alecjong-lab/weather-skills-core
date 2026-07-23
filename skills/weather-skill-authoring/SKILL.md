@@ -450,7 +450,10 @@ hit it returns without calling you or touching the store. What you control:
 - `completeness_probe` guards cache hits — fetcher and transform alike —
   against a truncated prior store: the probe receives the output store's
   path and is invoked only after the entry matches, so make it a cheap
-  corner-element read of the output, not a metadata check.
+  corner-element read of the output, not a metadata check. Build it with
+  `weather_skills_core.provenance.make_completeness_probe` (see Library
+  helpers) rather than hand-writing the open, corner-read, and
+  except-everything-to-False steps.
 - `validate_args` runs before the cache check — an invalid argument must
   never report a cache hit.
 - `EntryOverride` and the cache: the entry is the cache key and is computed
@@ -494,6 +497,108 @@ inspector reading zarr attrs or PNG tEXt keys) uses the functions exported by
   nested per-branch `history`; unknown/extra keys land in `notes` and do not
   fail validation.
 
+## Library helpers for skill bodies
+
+Beyond the decorator, `weather_skills_core` exports helpers for the
+mechanisms skills otherwise copy from each other. The division of labor is
+fixed: the per-skill constants — variable names, units strings, attr dicts,
+error-message wording — stay in the skill; the helper provides the mechanism,
+parameterized by them. Do not reimplement any of these in a skill body.
+
+### CF stamping and validation (`weather_skills_core.envelope`)
+
+- `stamp_cf_attrs(ds)` — non-destructive gridded stamping: sets CF
+  `standard_name`/`units`/`axis` on the first latitude-named coord
+  (`latitude`/`lat`/`y`), the first longitude-named coord
+  (`longitude`/`lon`/`x`), and a `time` coord (`standard_name`/`axis` only),
+  every attr via `setdefault` so source-provided values win. Returns `ds`.
+  For fetchers whose source coords may already carry correct CF metadata.
+- `stamp_cf_coords(ds, *, long_names=None)` — the overwriting counterpart:
+  `update`s the same attrs onto the canonical `latitude`/`longitude`/`time`
+  names (post-rename), replacing prior values; coords absent from the dataset
+  are skipped. `long_names` optionally maps a coord name to a `long_name`
+  applied with `setdefault`. For fetchers that assert coordinate metadata.
+  Global attrs and data-variable attrs stay in the skill — they are
+  per-source constants.
+- `stamp_cf_dsg(ds, var_attrs, *, station_id_long_name, name_long_name)` —
+  station timeSeries DSG stamping: fixed coordinate attrs
+  (lat/lon/time + `cf_role="timeseries_id"` on `station_id`, the two
+  long-name parameters naming the station identifier and the optional `name`
+  coord), then per data variable the load-bearing
+  `coordinates="latitude longitude time"` attr followed by that variable's
+  entry in `var_attrs` (a mapping of data-variable name to its attr dict:
+  `units`, `long_name`, `cell_methods`, any `standard_name`). Build and
+  udunits-validate the `var_attrs` values in the skill; a data variable
+  missing from the mapping raises `KeyError`.
+- `verify_cf_dsg(ds)` — pre-write DSG check: raises `DataError` listing every
+  problem when cf-xarray does not resolve `station_id` under the
+  `timeseries_id` role or any of the latitude/longitude/time coordinates.
+- `cf_axes_missing(ds, axes=("X", "Y", "T"))` — returns the axis letters
+  cf-xarray cannot resolve from the CF attrs, each axis probed independently
+  and a resolution failure counted as missing rather than raised. Use it for
+  write-side checks (on the dataset about to be written) and post-write
+  checks (on the reopened store); the failure message is yours.
+- `udunits_error(units, *, catch=(ValueError,))` — parses `units` with
+  `cf_units.Unit` and returns the parse failure (or None when it parses);
+  `catch` is the exception tuple converted to a returned value. Raise your
+  own `DataError` from the result — the message wording is a per-skill
+  constant. `cf_units.Unit(None)`/`Unit("")` return an "unknown" unit rather
+  than raising, so a missing/blank-units guard also belongs to the caller.
+
+### Envelope geometry and selection (`weather_skills_core.envelope`)
+
+- `cf_dim(obj, cf_name)` — the coord name cf-xarray resolves for a CF key on
+  a Dataset or DataArray, or None; a bare lookup with no heuristic fallback
+  and no error.
+- `auto_variable(ds)` — the no-flag variable auto-pick: first data var that
+  is not a CF grid-mapping (CRS) container nor named by another var's
+  `grid_mapping` attr, preferring one with >= 2 dims; None when no candidate
+  remains.
+- `lat_slice(lat_vals, north, south)` — a `.sel` slice that follows the
+  latitude axis's own ascending or descending order.
+- `polygon_from_geojson(path, flag="--mask-geojson")` — the unioned shapely
+  polygon from a GeoJSON file (FeatureCollection, Feature, or bare geometry);
+  raises `UsageError` naming `flag` when the file is missing, unreadable, or
+  has no usable geometry. `shapely` stays in the skill's inline deps.
+- `normalize_longitude(ds, lon_dim="longitude")` — maps a 0..360 longitude
+  axis onto [-180, 180) and sorts ascending, so N/W/S/E bboxes with negative
+  west/east select correctly.
+
+### Dates (`weather_skills_core.dates`)
+
+- `np_to_date(value)` — numpy datetime64 to `datetime.date`, truncating any
+  time-of-day.
+- `today_utc(args=None)` — the current UTC date, shaped as a
+  `latest_resolver`: pass `latest_resolver=today_utc` for sources with no
+  cheap day-precise discovery, where `latest` means today and a thin
+  not-yet-published tail is a normal partial window.
+
+### Completeness probes (`weather_skills_core.provenance`)
+
+- `make_completeness_probe(variables=None, *, check_time=None)` — builds the
+  `completeness_probe=` callable: opens the candidate store consolidated and
+  corner-reads one element of each probed variable, returning False (never
+  raising) on an unreadable store, an unknown name, an empty dimension, or an
+  undecodable chunk. `variables` is None to probe every data variable present
+  (an empty store is incomplete), a name or list of required names, or a
+  callable receiving the run context (e.g.
+  `lambda context: context.args.variable`) resolved at probe time.
+  `check_time` names a coordinate that must be present, non-NaT, and strictly
+  increasing, and moves the corner read to the LAST index along it — the
+  slice an interrupted append would be missing. Write a bespoke probe only
+  when a store needs checks this cannot express.
+
+### Runtime checks (`weather_skills_core.util`)
+
+- `is_transient(exc)` — True when an error's text carries an HTTP 429/5xx
+  status or a timeout/connection marker; the retry policy (attempt count,
+  backoff) stays in the skill.
+- `require_env(*names, message=None)` — returns the named environment
+  variables' values in order, raising `UsageError` (exit 2) when any is unset
+  or empty — with the default message naming only the missing variables, or
+  with `message` verbatim. Hand the values straight to the auth library;
+  never print or echo them.
+
 ## Units
 
 Units are the single most error-prone surface. For any skill that produces or
@@ -506,9 +611,12 @@ relabels data variables:
 - **Never convert numeric values** to land in a different unit. The one
   principled exception is a documented integer storage encoding with no unit
   of its own (e.g. "tenths of a mm"); declare it as a value conversion.
-- Validate every output data-variable unit with a real udunits check
-  (`cf_units.Unit(...)`); a missing or empty unit is invalid — drop the
-  variable with a note or fail, never write `units=None`.
+- Validate every output data-variable unit with a real udunits check —
+  `weather_skills_core.envelope.udunits_error` wraps the `cf_units.Unit`
+  parse and hands you the failure to word your own error around. A missing
+  or empty unit is invalid — drop the variable with a note or fail, never
+  write `units=None` (blank values do not fail the parse, so guard them
+  explicitly).
 - `standard_name` must match the unit family; verify the exact string against
   the current CF standard-name table before stamping it, and omit it when no
   verified entry cleanly applies (that is CF-valid).
