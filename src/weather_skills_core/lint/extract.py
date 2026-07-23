@@ -84,6 +84,7 @@ class SkillDeclaration:
     error: str | None = None  # set: the script could not be analyzed at all
     toggles: dict = field(default_factory=dict)  # toggle keyword -> literal value or DYNAMIC
     extra_args: dict[str, ArgShape] = field(default_factory=dict)
+    extra_args_dynamic: bool = False  # the declared-flag set is not statically knowable
     input_names: list[str] | None = None
     has_input: bool = False
     input_arity: str = "single"
@@ -133,7 +134,9 @@ def _literal(node):
         return DYNAMIC
 
 
-def _find_decorator_call(tree: ast.Module) -> ast.Call | None:
+def _find_decorator_calls(tree: ast.Module) -> list[tuple[str, ast.Call]]:
+    """Every ``@weather_skill(...)`` application, as ``(function name, call)`` in source order."""
+    calls: list[tuple[str, ast.Call]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
@@ -147,8 +150,9 @@ def _find_decorator_call(tree: ast.Module) -> ast.Call | None:
             elif isinstance(func, ast.Attribute):
                 func_name = func.attr
             if func_name == "weather_skill":
-                return dec
-    return None
+                calls.append((node.name, dec))
+    calls.sort(key=lambda pair: pair[1].lineno)
+    return calls
 
 
 def _default_flag(dest: str) -> str:
@@ -181,7 +185,18 @@ def _shape_from_dict_spec(dest: str, node: ast.Dict, notes: list[str]) -> ArgSha
     if positional:
         flags = ()
     else:
-        flags = (spec.get("flag", _default_flag(dest)), *spec.get("aliases", ()))
+        flag = spec.get("flag", _default_flag(dest))
+        if not isinstance(flag, str):
+            notes.append(f"extra_args {dest!r}: 'flag' is not a string; using the default flag")
+            flag = _default_flag(dest)
+        aliases = spec.get("aliases", ())
+        if isinstance(aliases, str) or not isinstance(aliases, list | tuple):
+            notes.append(f"extra_args {dest!r}: 'aliases' is not a list of strings; ignored")
+            aliases = ()
+        elif any(not isinstance(a, str) for a in aliases):
+            notes.append(f"extra_args {dest!r}: non-string alias(es) ignored")
+            aliases = tuple(a for a in aliases if isinstance(a, str))
+        flags = (flag, *aliases)
     if spec.get("action") == "store_true":
         arity = "store_true"
     elif spec.get("repeat", False) or spec.get("action") == "append":
@@ -190,7 +205,11 @@ def _shape_from_dict_spec(dest: str, node: ast.Dict, notes: list[str]) -> ArgSha
         arity = "single"
     choices = spec.get("choices")
     if choices is not None:
-        choices = tuple(choices)
+        if isinstance(choices, list | tuple | set):
+            choices = tuple(choices)
+        else:
+            notes.append(f"extra_args {dest!r}: 'choices' is not a list; ignored")
+            choices = None
     if dynamic_keys:
         notes.append(
             f"extra_args {dest!r}: non-literal value(s) for "
@@ -271,28 +290,51 @@ def _shape_from_spec(dest: str, node, notes: list[str]) -> ArgShape:
     return ArgShape(dest=dest, flags=(_default_flag(dest),), dynamic=True)
 
 
-def _extract_extra_args(node, notes: list[str]) -> dict[str, ArgShape]:
+def _extract_extra_args(node, notes: list[str]) -> tuple[dict[str, ArgShape], bool]:
+    """Extract ``extra_args`` shapes and whether the declared-flag set is dynamic.
+
+    The second return is True when the full set of declared flags cannot be
+    determined statically -- ``extra_args`` is not a literal dict (a name
+    reference, a call), merges ``**kwargs``, or carries a non-literal dest key.
+    The caller suppresses the SKILL.md reverse check for such a declaration,
+    which would otherwise flag every documented argument as undeclared.
+    """
     if node is None:
-        return {}
+        return {}, False
     if not isinstance(node, ast.Dict):
         notes.append(
-            "extra_args is not a literal dict; its entries are recorded as dynamic and skipped"
+            "extra_args is not a literal dict; the declared-flag set is unknown, so the "
+            "SKILL.md reverse check is suppressed for this script"
         )
-        return {}
+        return {}, True
+    dynamic = False
     shapes = {}
     for key_node, value_node in zip(node.keys, node.values, strict=True):
-        dest = _literal(key_node) if key_node is not None else DYNAMIC
+        if key_node is None:
+            notes.append(
+                "extra_args merges **kwargs; the declared-flag set is incomplete, so the "
+                "SKILL.md reverse check is suppressed for this script"
+            )
+            dynamic = True
+            continue
+        dest = _literal(key_node)
         if dest is DYNAMIC or not isinstance(dest, str):
             notes.append("extra_args: a non-literal dest name was skipped")
+            dynamic = True
             continue
         shapes[dest] = _shape_from_spec(dest, value_node, notes)
-    return shapes
+    return shapes, dynamic
 
 
 def _extract_pep723_deps(source: str, notes: list[str]) -> list[str] | None:
     blocks = [m for m in _PEP723_RE.finditer(source) if m.group("type") == "script"]
     if not blocks:
         return None
+    if len(blocks) > 1:
+        notes.append(
+            f"{len(blocks)} PEP 723 script blocks found; a script must have at most one. "
+            "Analyzing the first."
+        )
     content_lines = []
     for line in blocks[0].group("content").splitlines():
         content_lines.append(line[2:] if line.startswith("# ") else line[1:])
@@ -337,10 +379,17 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
             if isinstance(target, ast.Name) and target.id == "_SKILL_VERSION":
                 decl.version_constant = True
 
-    call = _find_decorator_call(tree)
-    if call is None:
+    calls = _find_decorator_calls(tree)
+    if not calls:
         decl.error = "no @weather_skill decorator call found"
         return decl
+    if len(calls) > 1:
+        skipped = ", ".join(func_name for func_name, _ in calls[1:])
+        decl.notes.append(
+            f"{len(calls)} @weather_skill functions in the script; only the first "
+            f"({calls[0][0]}) is analyzed; skipped: {skipped}"
+        )
+    call = calls[0][1]
 
     keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg is not None}
     if any(kw.arg is None for kw in call.keywords):
@@ -367,9 +416,21 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("input_type is not a literal; input arity unknown")
     elif input_type is not None:
         decl.has_input = True
-        n_inputs = len(input_type.split(",")) if isinstance(input_type, str) else len(input_type)
-        variadic = _literal(keywords["variadic_input"]) if "variadic_input" in keywords else False
-        decl.input_arity = "append" if (variadic is True or n_inputs > 1) else "single"
+        if isinstance(input_type, str):
+            n_inputs = len(input_type.split(","))
+        elif isinstance(input_type, list | tuple):
+            n_inputs = len(input_type)
+        else:
+            n_inputs = None
+            decl.notes.append(
+                f"input_type is a {type(input_type).__name__} literal, not a string or "
+                "sequence; input arity unknown"
+            )
+        if n_inputs is not None:
+            variadic = (
+                _literal(keywords["variadic_input"]) if "variadic_input" in keywords else False
+            )
+            decl.input_arity = "append" if (variadic is True or n_inputs > 1) else "single"
 
     if "input_names" in keywords:
         input_names = _literal(keywords["input_names"])
@@ -385,7 +446,9 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
     else:
         decl.has_output = output_type is not None
 
-    decl.extra_args = _extract_extra_args(keywords.get("extra_args"), decl.notes)
+    decl.extra_args, decl.extra_args_dynamic = _extract_extra_args(
+        keywords.get("extra_args"), decl.notes
+    )
     return decl
 
 

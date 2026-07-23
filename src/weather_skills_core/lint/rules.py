@@ -232,7 +232,10 @@ def _rule_skill_md(decl: SkillDeclaration, siblings: list[SkillDeclaration]) -> 
     script declares) unions the declarations of all ``siblings`` so a
     multi-script skill's arguments do not read as undeclared just because they
     live in another of its scripts; it is emitted once, on the lexically first
-    sibling, so the finding is not duplicated across scripts.
+    sibling, so the finding is not duplicated across scripts. It is suppressed
+    entirely when any sibling's ``extra_args`` is dynamic (its declared-flag
+    set is unknown), since the reverse check would then flag documented
+    arguments as undeclared; the extraction note surfaces that suppression.
     """
     skill_md = decl.skill_dir / "SKILL.md"
     if not skill_md.is_file():
@@ -268,7 +271,9 @@ def _rule_skill_md(decl: SkillDeclaration, siblings: list[SkillDeclaration]) -> 
                     "document it in the Arguments section.",
                 )
             )
-    if decl.key == min(sibling.key for sibling in siblings):
+    reverse_holder = decl.key == min(sibling.key for sibling in siblings)
+    reverse_reliable = not any(sibling.extra_args_dynamic for sibling in siblings)
+    if reverse_holder and reverse_reliable:
         union_spellings: set[str] = set()
         for sibling in siblings:
             _, spellings = _declared_flags(sibling)

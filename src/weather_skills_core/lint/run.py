@@ -86,6 +86,15 @@ def run_lint(target: Path, against: list[str]) -> LintReport:
         )
         scores.append(score)
 
+    # Surface each target script's extraction notes (a dynamic extra_args, a
+    # skipped second decorated function, a duplicate PEP 723 block) into the
+    # report, where render prints them; without this they stay in the buried
+    # per-declaration notes field and never reach the reader.
+    for cs in corpus:
+        if cs.is_target and cs.decl.error is None:
+            for note in cs.decl.notes:
+                notes.append(f"{cs.decl.key}: {note}")
+
     skipped = []
     if not corpus_available:
         for rule_id in CROSS_SKILL_RULES:

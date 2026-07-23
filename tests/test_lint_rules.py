@@ -247,6 +247,30 @@ class TestMultiScriptSkill:
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert len(shadow) == 1 and shadow[0].file.endswith("one.py")
 
+    def test_dynamic_extra_args_suppresses_the_wsk301_reverse_check(self, tmp_path):
+        # extra_args is a name reference: the declared-flag set is unknown, so
+        # documenting flags must not fire the reverse check, and the report
+        # surfaces the suppression note.
+        skill = tmp_path / "multi-skill"
+        scripts_dir = skill / "scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / "one.py").write_text(
+            _PEP723
+            + "from weather_skills_core import weather_skill\n"
+            + '_SKILL_VERSION = "0.1.0"\n'
+            + 'SHARED = {"foo": {"type": int}}\n'
+            + "@weather_skill('one', _SKILL_VERSION, input_type='any', "
+            + "output_type='same', extra_args=SHARED)\n"
+            + "def one(ds):\n    return ds\n"
+        )
+        (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))
+        report = run_lint(skill, [])
+        reverse = [
+            f for f in report.findings if f.rule == "WSK301" and "does not declare it" in f.message
+        ]
+        assert reverse == []
+        assert any("reverse check is suppressed" in note for note in report.notes)
+
 
 class TestScoreRubric:
     def test_warning_only_rule_scores_half_of_that_rule(self):

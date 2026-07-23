@@ -173,6 +173,161 @@ class TestDeclarationExtraction:
         assert decl.name == "alpha"
 
 
+class TestMalformedDeclarationHardening:
+    def test_non_sequence_input_type_literal_notes_instead_of_raising(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+
+
+            @weather_skill("some-skill", _SKILL_VERSION, input_type=5)
+            def some_skill(ds):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        assert decl.has_input
+        assert any("input_type" in note and "arity unknown" in note for note in decl.notes)
+
+    def test_non_string_flag_and_string_aliases_are_noted_and_ignored(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+
+
+            @weather_skill(
+                "some-skill",
+                _SKILL_VERSION,
+                extra_args={
+                    "bad_flag": {"flag": 7},
+                    "bad_aliases": {"aliases": "-x"},
+                    "bad_choices": {"choices": 3},
+                },
+            )
+            def some_skill(bad_flag, bad_aliases, bad_choices):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        # A non-string flag falls back to the derived default; string aliases
+        # are dropped rather than spread into single characters.
+        assert decl.extra_args["bad_flag"].flags == ("--bad-flag",)
+        assert decl.extra_args["bad_aliases"].flags == ("--bad-aliases",)
+        assert decl.extra_args["bad_choices"].choices is None
+        assert any("'flag' is not a string" in note for note in decl.notes)
+        assert any("'aliases' is not a list" in note for note in decl.notes)
+        assert any("'choices' is not a list" in note for note in decl.notes)
+
+    def test_extra_args_name_reference_marks_dynamic(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+            SHARED = {"pick": {"type": int}}
+
+
+            @weather_skill("some-skill", _SKILL_VERSION, extra_args=SHARED)
+            def some_skill(pick):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        assert decl.extra_args == {}
+        assert decl.extra_args_dynamic is True
+        assert any("reverse check is suppressed" in note for note in decl.notes)
+
+    def test_extra_args_kwargs_merge_marks_dynamic(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+            BASE = {"pick": {"type": int}}
+
+
+            @weather_skill(
+                "some-skill",
+                _SKILL_VERSION,
+                extra_args={**BASE, "extra": {"type": str}},
+            )
+            def some_skill(pick, extra):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        assert decl.extra_args_dynamic is True
+        assert "extra" in decl.extra_args  # the literal entry is still extracted
+
+    def test_multiple_decorated_functions_are_noted(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+
+
+            @weather_skill("first", _SKILL_VERSION)
+            def first(ds):
+                """Doc."""
+
+
+            @weather_skill("second", _SKILL_VERSION)
+            def second(ds):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        assert decl.name == "first"
+        assert any("only the first" in note and "second" in note for note in decl.notes)
+
+    def test_duplicate_pep723_blocks_are_noted(self, tmp_path):
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            # /// script
+            # dependencies = ["weather-skills-core"]
+            # ///
+
+            # /// script
+            # dependencies = ["cftime"]
+            # ///
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+
+
+            @weather_skill("some-skill", _SKILL_VERSION)
+            def some_skill(ds):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert decl.error is None
+        assert decl.pep723_deps == ["weather-skills-core"]  # the first block wins
+        assert any("PEP 723 script blocks found" in note for note in decl.notes)
+
+
 class TestExtractionErrors:
     def test_syntax_error_reported_per_script(self):
         skill_dir = FIXTURES / "errors_tree" / "skills" / "broken-syntax"
