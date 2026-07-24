@@ -107,7 +107,7 @@ class TestAgainstLocalPath:
     def test_local_tree_joins_the_corpus_with_its_label(self):
         target = FIXTURES / "multi_tree" / "skills" / "alpha"
         against = str(FIXTURES / "against_tree")
-        report = run_lint(target, [against])
+        report = run_lint(target, [against], extend_select=["WSK201"])
         dupe = next(f for f in report.findings if f.rule == "WSK201" and f.flag == "--method")
         assert f"remote-skill (--against {against})" in dupe.message
         divergence = next(f for f in report.findings if f.rule == "WSK202" and f.flag == "--method")
@@ -123,7 +123,7 @@ class TestAgainstLocalPath:
         # --against resolving to the same tree as the target must not make
         # every skill collide with its own duplicate.
         tree = FIXTURES / "multi_tree"
-        report = run_lint(tree, [str(tree)])
+        report = run_lint(tree, [str(tree)], extend_select=["WSK201"])
         assert any("is the lint target itself" in note for note in report.notes)
         # The against copy contributes no WSK201/202 self-collision: --method
         # collisions remain only among the genuine alpha/beta/gamma trio, each
@@ -166,7 +166,9 @@ class TestAgainstGitHub:
         repo = make_git_repo(tmp_path, FIXTURES / "against_tree")
         monkeypatch.setattr(corpus_module, "github_clone_url", lambda reference: f"file://{repo}")
         report = run_lint(
-            FIXTURES / "multi_tree" / "skills" / "alpha", ["fixture-org/fixture-repo"]
+            FIXTURES / "multi_tree" / "skills" / "alpha",
+            ["fixture-org/fixture-repo"],
+            extend_select=["WSK201"],
         )
         dupe = next(f for f in report.findings if f.rule == "WSK201" and f.flag == "--method")
         assert "remote-skill (--against fixture-org/fixture-repo)" in dupe.message
@@ -201,7 +203,9 @@ class TestAgainstGitHub:
         sha = head_sha(repo)
         monkeypatch.setattr(corpus_module, "github_clone_url", lambda reference: f"file://{repo}")
         report = run_lint(
-            FIXTURES / "multi_tree" / "skills" / "alpha", [f"fixture-org/fixture-repo@{sha}"]
+            FIXTURES / "multi_tree" / "skills" / "alpha",
+            [f"fixture-org/fixture-repo@{sha}"],
+            extend_select=["WSK201"],
         )
         dupe = next(f for f in report.findings if f.rule == "WSK201" and f.flag == "--method")
         assert f"remote-skill (--against fixture-org/fixture-repo@{sha})" in dupe.message

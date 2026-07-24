@@ -878,7 +878,7 @@ as clean.
 | --- | --- | --- | --- |
 | WSK001 | error | The script parses and contains a `@weather_skill` call. | Fix the syntax error or declare the skill through the decorator. |
 | WSK101 | warning | No `extra_args` entry shadows a standard flag or dest (`--input`, `--output`, `--start`, `--end`, `--date`, `--bbox`, `--variable`, `--workers`, `--title`, `--dims`, `--time-dim`). | Declare the standard toggle instead; its dict form covers help/required/choices overrides. |
-| WSK201 | warning | A one-off flag name is not also declared by another corpus skill. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
+| WSK201 | warning | A one-off flag name is not also declared by another corpus skill. **Advisory: off by default** (CONVENTIONS.md wants a flag doing the same job to share a name, so a shared flag is usually the desired consistency, not a defect; the genuinely-bad case — a shared name with a divergent shape — is WSK202). Opt in with `--extend-select WSK201` to survey shared flags that might be promoted to a core standard parameter. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
 | WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
 | WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |
 | WSK401 | error | `_SKILL_VERSION` exists and is passed as the decorator's version argument. | Define the constant at module top and pass it (CI bumps it). |
@@ -887,15 +887,44 @@ as clean.
 Rule IDs are stable: new rules take new numbers and existing rules are never
 renumbered. Severity semantics: `error` breaks an ecosystem contract,
 `warning` is a conformance divergence worth fixing, `info` is an advisory
-note.
+note. Severity is display and `--strict` metadata only — it does not decide
+which rules run.
+
+### Rule selection
+
+The **default rule set** is every rule above except WSK201: WSK001, WSK101,
+WSK202, WSK301, WSK401, and WSK402 run when you pass no selection flag (this
+is what CI invokes). WSK201 is off by default.
+
+Three repeatable flags choose the rules to run, with the same semantics as
+ruff's `select`/`extend-select`/`ignore`:
+
+- `--select CODE` **replaces** the default set with exactly the rules you
+  name. `--select WSK101` runs only WSK101.
+- `--extend-select CODE` **adds** to the set (the default set, or `--select`
+  if you also gave it). `--extend-select WSK201` runs the default set plus
+  WSK201.
+- `--ignore CODE` **removes** rules, applied last. `--ignore WSK202` runs the
+  default set without WSK202.
+
+Resolution order is: base (the `--select` rules if any were given, else the
+default set), then union `--extend-select`, then subtract `--ignore`.
+
+Each selector is a full rule code (`WSK201`) or a category prefix that matches
+every rule in the band: `WSK2` matches WSK201 and WSK202, `WSK` matches all.
+A selector that matches no known rule code is a usage error (exit 2) naming
+the bad selector. An `--ignore` selector that is valid but not in the active
+set is a silent no-op.
 
 ### Score and output
 
 Each skill scores 0-100: the mean over the applicable rules, where a rule
 with no findings scores 1.0 and a rule with findings scores by its worst
 severity (error 0.0, warning 0.5, info 0.8). Every applicable rule weighs
-equally in the mean; skipped rules leave the denominator. An unanalyzable
-script scores 0. The aggregate is the mean of the per-skill scores.
+equally in the mean; a rule that did not run — skipped for lack of a corpus,
+or left out of the resolved rule set — leaves the denominator entirely and is
+never silently scored as clean. An unanalyzable script scores 0. The
+aggregate is the mean of the per-skill scores.
 
 `--format json` emits a stable schema (`findings`, `score`, `skipped_rules`,
 `notes`) for tooling.

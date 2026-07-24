@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
-from weather_skills_core.lint.run import run_lint
+import pytest
+
+from weather_skills_core.errors import UsageError
+from weather_skills_core.lint.rules import default_rule_set
+from weather_skills_core.lint.run import resolve_rule_set, run_lint
 
 FIXTURES = Path(__file__).parent / "fixtures" / "lint"
 
@@ -110,7 +114,8 @@ class TestShadowRule:
 
 class TestCrossSkillRules:
     def test_same_shape_duplicate_fires_wsk201_on_every_holder(self):
-        report = run_lint(FIXTURES / "multi_tree", [])
+        # WSK201 is default-off; opt it in to exercise the shared-flag survey.
+        report = run_lint(FIXTURES / "multi_tree", [], extend_select=["WSK201"])
         dupes = [f for f in report.findings if f.rule == "WSK201" and f.flag == "--method"]
         assert {f.skill for f in dupes} == {"alpha", "beta", "gamma"}
         alpha = next(f for f in dupes if f.skill == "alpha")
@@ -135,7 +140,10 @@ class TestCrossSkillRules:
         assert "type int vs float" in next(f for f in window if f.skill == "alpha").message
 
     def test_upward_discovery_reports_findings_only_for_the_target(self):
-        report = run_lint(FIXTURES / "multi_tree" / "skills" / "alpha", [])
+        # WSK201 is default-off; opt it in so the shared-flag dupe is asserted.
+        report = run_lint(
+            FIXTURES / "multi_tree" / "skills" / "alpha", [], extend_select=["WSK201"]
+        )
         assert {f.skill for f in report.findings} == {"alpha"}
         assert [s["name"] for s in report.skills] == ["alpha"]
         assert not report.skipped_rules  # siblings provide the corpus
@@ -325,6 +333,89 @@ class TestMultiScriptSkill:
         ]
         assert reverse == []
         assert any("reverse check is suppressed" in note for note in report.notes)
+
+
+class TestResolveRuleSet:
+    def test_default_excludes_wsk201_and_keeps_the_rest(self):
+        active = resolve_rule_set()
+        assert "WSK201" not in active
+        assert active == default_rule_set()
+        assert {"WSK001", "WSK101", "WSK202", "WSK301", "WSK401", "WSK402"} <= active
+
+    def test_select_replaces_the_default_set(self):
+        assert resolve_rule_set(select=["WSK101"]) == {"WSK101"}
+
+    def test_select_is_repeatable(self):
+        assert resolve_rule_set(select=["WSK101", "WSK301"]) == {"WSK101", "WSK301"}
+
+    def test_extend_select_unions_onto_the_default(self):
+        assert resolve_rule_set(extend_select=["WSK201"]) == default_rule_set() | {"WSK201"}
+
+    def test_extend_select_unions_onto_select(self):
+        assert resolve_rule_set(select=["WSK101"], extend_select=["WSK201"]) == {
+            "WSK101",
+            "WSK201",
+        }
+
+    def test_ignore_subtracts_from_the_default_set(self):
+        assert resolve_rule_set(ignore=["WSK202"]) == default_rule_set() - {"WSK202"}
+
+    def test_ignore_of_an_inactive_rule_is_a_silent_no_op(self):
+        # WSK201 is not in the default set; ignoring it is not an error.
+        assert resolve_rule_set(ignore=["WSK201"]) == default_rule_set()
+
+    def test_ignore_is_applied_last(self):
+        assert resolve_rule_set(extend_select=["WSK201"], ignore=["WSK201"]) == default_rule_set()
+
+    def test_full_code_matches_only_itself(self):
+        assert resolve_rule_set(select=["WSK201"]) == {"WSK201"}
+
+    def test_prefix_selects_a_whole_category(self):
+        assert resolve_rule_set(select=["WSK2"]) == {"WSK201", "WSK202"}
+
+    def test_short_prefix_selects_all(self):
+        assert resolve_rule_set(select=["WSK"]) == set(default_rule_set()) | {"WSK201"}
+
+    def test_unknown_selector_raises_naming_it(self):
+        with pytest.raises(UsageError) as exc:
+            resolve_rule_set(select=["WSK999"])
+        assert "WSK999" in str(exc.value)
+
+    def test_unknown_ignore_selector_also_raises(self):
+        with pytest.raises(UsageError) as exc:
+            resolve_rule_set(ignore=["NOPE"])
+        assert "NOPE" in str(exc.value)
+
+
+class TestSelectionEndToEnd:
+    def test_default_run_excludes_wsk201(self):
+        report = run_lint(FIXTURES / "multi_tree", [])
+        assert not [f for f in report.findings if f.rule == "WSK201"]
+        # WSK202 (divergent shared shapes) still fires by default.
+        assert [f for f in report.findings if f.rule == "WSK202"]
+
+    def test_extend_select_brings_wsk201_back(self):
+        report = run_lint(FIXTURES / "multi_tree", [], extend_select=["WSK201"])
+        assert [f for f in report.findings if f.rule == "WSK201"]
+
+    def test_select_wsk101_runs_only_that_rule(self):
+        report = run_lint(FIXTURES / "shadow_tree", [], select=["WSK101"])
+        assert {f.rule for f in report.findings} == {"WSK101"}
+
+    def test_ignore_removes_wsk202_from_the_default_set(self):
+        report = run_lint(FIXTURES / "multi_tree", [], ignore=["WSK202"])
+        assert not [f for f in report.findings if f.rule == "WSK202"]
+
+    def test_prefix_select_runs_wsk201_and_wsk202(self):
+        report = run_lint(FIXTURES / "multi_tree", [], select=["WSK2"])
+        assert {f.rule for f in report.findings} <= {"WSK201", "WSK202"}
+        assert [f for f in report.findings if f.rule == "WSK201"]
+        assert [f for f in report.findings if f.rule == "WSK202"]
+
+    def test_unknown_selector_raises_usage_error(self):
+        with pytest.raises(UsageError) as exc:
+            run_lint(FIXTURES / "multi_tree", [], select=["WSK999"])
+        assert "WSK999" in str(exc.value)
 
 
 class TestScoreRubric:

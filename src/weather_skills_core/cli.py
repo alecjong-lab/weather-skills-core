@@ -46,6 +46,34 @@ def main(argv=None) -> int:
         ),
     )
     lint_parser.add_argument(
+        "--select",
+        action="append",
+        metavar="CODE",
+        help=(
+            "Replace the default rule set with these rules. A full code (WSK201) "
+            "or a category prefix (WSK2 matches every WSK2xx). Repeatable."
+        ),
+    )
+    lint_parser.add_argument(
+        "--extend-select",
+        action="append",
+        metavar="CODE",
+        help=(
+            "Add these rules to the set being run (the default set, or --select "
+            "if given). Codes or category prefixes. Repeatable. Use "
+            "--extend-select WSK201 to survey shared one-off flags."
+        ),
+    )
+    lint_parser.add_argument(
+        "--ignore",
+        action="append",
+        metavar="CODE",
+        help=(
+            "Remove these rules from the set being run (applied last). Codes or "
+            "category prefixes. Repeatable."
+        ),
+    )
+    lint_parser.add_argument(
         "--format",
         choices=("text", "json"),
         default="text",
@@ -70,7 +98,13 @@ def _lint(args) -> int:
     from weather_skills_core.lint.run import run_lint
 
     try:
-        report = run_lint(Path(args.path), args.against)
+        report = run_lint(
+            Path(args.path),
+            args.against,
+            select=args.select,
+            extend_select=args.extend_select,
+            ignore=args.ignore,
+        )
     except UsageError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

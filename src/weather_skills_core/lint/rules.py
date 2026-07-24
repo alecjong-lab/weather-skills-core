@@ -30,12 +30,20 @@ class Rule:
     id: str
     severity: str
     title: str
+    #: Whether the rule is in the default set (the set a bare run evaluates,
+    #: and the base that --select replaces / --extend-select adds to). This is
+    #: orthogonal to ``severity``: severity drives display and --strict only,
+    #: never default membership. WSK201 is advisory (a maintainer survey of
+    #: shared flags) and default-off; every other rule is default-on.
+    default_enabled: bool = True
 
 
 RULES = {
     "WSK001": Rule("WSK001", "error", "skill script could not be analyzed"),
     "WSK101": Rule("WSK101", "warning", "extra argument shadows a standard parameter"),
-    "WSK201": Rule("WSK201", "warning", "one-off flag declared by multiple skills"),
+    "WSK201": Rule(
+        "WSK201", "warning", "one-off flag declared by multiple skills", default_enabled=False
+    ),
     "WSK202": Rule("WSK202", "error", "shared flag name with divergent shape"),
     "WSK301": Rule("WSK301", "warning", "SKILL.md drift"),
     "WSK401": Rule("WSK401", "error", "_SKILL_VERSION missing or not passed to the decorator"),
@@ -46,6 +54,24 @@ RULES = {
 #: from the score denominator) when none is available.
 CROSS_SKILL_RULES = ("WSK201", "WSK202")
 PER_SKILL_RULES = ("WSK101", "WSK301", "WSK401", "WSK402")
+
+
+def default_rule_set() -> set[str]:
+    """The rule codes evaluated when no ``--select`` is given."""
+    return {rule.id for rule in RULES.values() if rule.default_enabled}
+
+
+def expand_selector(selector: str) -> set[str]:
+    """The rule codes a selector matches: a full code, or a category prefix.
+
+    An exact rule code (``WSK201``) matches only itself; anything else is
+    treated as a category prefix (``WSK2`` matches every ``WSK2xx``, ``WSK``
+    matches all). Returns an empty set when the selector matches no known code,
+    which the caller turns into a usage error.
+    """
+    if selector in RULES:
+        return {selector}
+    return {code for code in RULES if code.startswith(selector)}
 
 
 @dataclass(frozen=True)
@@ -381,8 +407,16 @@ def _rule_cross_skill(corpus: list[CorpusSkill]) -> list[Finding]:
     return findings
 
 
-def lint_corpus(corpus: list[CorpusSkill], corpus_available: bool) -> list[Finding]:
-    """Evaluate every rule over the corpus; findings only for target skills."""
+def lint_corpus(
+    corpus: list[CorpusSkill], corpus_available: bool, active_rules: set[str]
+) -> list[Finding]:
+    """Evaluate the active rules over the corpus; findings only for target skills.
+
+    ``active_rules`` is the resolved rule set (see
+    :func:`weather_skills_core.lint.run.resolve_rule_set`). Only findings whose
+    rule is active are returned, and the cross-skill pass is skipped entirely
+    when no cross-skill rule is active.
+    """
     findings: list[Finding] = []
     # Analyzable target declarations grouped by skill directory: the SKILL.md
     # reverse check unions all of a skill's scripts (WSK301 must not flag one
@@ -402,6 +436,6 @@ def lint_corpus(corpus: list[CorpusSkill], corpus_available: bool) -> list[Findi
         findings += _rule_skill_md(decl, siblings[decl.skill_dir.resolve()])
         findings += _rule_version(decl)
         findings += _rule_core_dep(decl)
-    if corpus_available:
+    if corpus_available and set(CROSS_SKILL_RULES) & active_rules:
         findings += _rule_cross_skill([cs for cs in corpus if cs.decl.error is None])
-    return findings
+    return [f for f in findings if f.rule in active_rules]

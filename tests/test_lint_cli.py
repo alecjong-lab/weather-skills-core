@@ -40,6 +40,65 @@ class TestExitCodes:
         assert main(["lint", str(FIXTURES / "shadow_tree"), "--strict", "error"]) == 0
 
 
+_PEP723 = '# /// script\n# dependencies = ["weather-skills-core"]\n# ///\n'
+
+
+def _clean_shared_flag_tree(root):
+    """A skills/ tree of two otherwise-clean skills sharing one same-shape flag.
+
+    The only finding this tree can produce is WSK201 (the shared one-off
+    ``--method``), and only when WSK201 is opted in -- so it isolates the
+    WSK201/selection behavior from every other rule.
+    """
+    skills = root / "skills"
+    for name in ("alpha", "beta"):
+        scripts_dir = skills / name / "scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / f"{name}.py").write_text(
+            _PEP723
+            + "from weather_skills_core import weather_skill\n"
+            + '_SKILL_VERSION = "0.1.0"\n'
+            + f"@weather_skill({name!r}, _SKILL_VERSION, input_type='any', "
+            + "output_type='same', extra_args={'method': {'type': str, 'help': 'x'}})\n"
+            + f"def {name}(ds):\n    return ds\n"
+        )
+        (skills / name / "SKILL.md").write_text(
+            "# skill\n\n## Usage\n\n### Arguments\n"
+            "- `--method` — the method.\n"
+            "- `--input`, `-i` — input Zarr.\n"
+            "- `--output`, `-o` — output Zarr.\n"
+        )
+    return skills
+
+
+class TestRuleSelection:
+    def test_default_run_omits_wsk201(self, tmp_path, capsys):
+        skills = _clean_shared_flag_tree(tmp_path)
+        assert main(["lint", str(skills)]) == 0
+        assert "WSK201" not in capsys.readouterr().out
+
+    def test_extend_select_surfaces_wsk201(self, tmp_path, capsys):
+        skills = _clean_shared_flag_tree(tmp_path)
+        assert main(["lint", str(skills), "--extend-select", "WSK201"]) == 0
+        assert "WSK201" in capsys.readouterr().out
+
+    def test_unknown_selector_exits_two_naming_it(self, tmp_path, capsys):
+        skills = _clean_shared_flag_tree(tmp_path)
+        assert main(["lint", str(skills), "--select", "WSK999"]) == 2
+        assert "WSK999" in capsys.readouterr().err
+
+    def test_extend_select_with_strict_warning_trips_on_wsk201(self, tmp_path, capsys):
+        skills = _clean_shared_flag_tree(tmp_path)
+        # WSK201 is a warning: the default run is clean (exit 0 even at
+        # --strict warning); opting WSK201 in trips --strict warning but not
+        # --strict error (the finding is below the error threshold).
+        assert main(["lint", str(skills), "--strict", "warning"]) == 0
+        capsys.readouterr()
+        assert main(["lint", str(skills), "--extend-select", "WSK201", "--strict", "warning"]) == 1
+        capsys.readouterr()
+        assert main(["lint", str(skills), "--extend-select", "WSK201", "--strict", "error"]) == 0
+
+
 class TestDefaultPath:
     def test_no_argument_lints_the_current_directory(self, capsys, monkeypatch):
         monkeypatch.chdir(FIXTURES / "clean_tree" / "skills" / "clean-skill")
