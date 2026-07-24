@@ -141,7 +141,8 @@ selects that variable facet (and is the output variable).
 | Target grid spacing | `--target-resolution` | float (degrees) | Target grid spacing in degrees. For `downscale` it must be finer-or-equal (`<=`) to the input on each axis; for `coarsen` it must be coarser-or-equal (`>=`) on each axis. Equal resolution is a valid no-op in both. |
 | Grid offset | `--offset` | float (degrees) | Used by `coarsen`: target points fall at `offset + k*resolution`. |
 | Reference-grid target | `--reference-grid` | path | Path to a Zarr whose lat/lon grid defines the target grid. Used by `downscale` to match another dataset's (finer-or-equal) grid. |
-| Downscaling method | `--method` | string from a per-skill fixed list | How a downscaling step adds information. `downscale` uses `choices={linear-interpolation, q-q}`. (Note: `aggregate-temporal` and `reduce` also use `--method` for their reducers — per-skill fixed lists, distinct values.) |
+| Downscaling algorithm | `--algorithm` | string from a per-skill fixed list | Which downscaling algorithm adds information when going finer. `downscale` uses `choices={linear-interpolation, q-q}`. |
+| Reducer statistic | `--method` | string from a per-skill fixed list | The reducer statistic that aggregates values. Used by `aggregate-temporal` and `reduce` only — per-skill fixed lists, distinct values. |
 
 ### Bias correction
 
