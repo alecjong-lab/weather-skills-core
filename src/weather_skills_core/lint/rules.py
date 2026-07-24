@@ -102,6 +102,13 @@ def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
             param = lookup[shape.dest]
         if param is None:
             continue
+        if not decl.has_output and param.kind == "io":
+            # A no-artifact skill (output_type is None) is forbidden from
+            # declaring input_type and owns no decorator --output, so --input
+            # and --output can only be reached through extra_args. Declaring
+            # them there is the only option, not a shadow of the standard
+            # surface. Other standard parameters are still flagged.
+            continue
         findings.append(
             _finding(
                 "WSK101",
