@@ -23,6 +23,9 @@ from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
+#: Set on every input dataset the decorator opens, holding the path it was
+#: opened from, and stripped by :func:`stamp_zarr` before any write.
+INPUT_PATH_ATTR = "weather_skills_input_path"
 
 DEFAULT_SOFTWARE = "forecasting-skills"
 
@@ -505,22 +508,40 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
 
 
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
-    """Stamp a dataset for writing: history attr and encoding clear.
+    """Stamp a dataset for writing: history attr, input-path strip, encoding clear.
 
     Serializes ``history`` (the full chain, oldest first) onto
     ``weather_skills_history`` with sorted keys, sets ``weather_skills_source``
-    when ``source`` is given (fetchers), and clears every variable's
-    ``encoding`` -- per-variable encoding is not part of the envelope
-    contract, so re-writes must not carry the input's codecs. Skills that
-    need controlled write encodings (time units/calendar, ``_FillValue``) set
-    them after this call so the clear cannot drop them. Other pre-existing
-    attrs are left untouched.
+    when ``source`` is given (fetchers), drops :data:`INPUT_PATH_ATTR`, and
+    clears every variable's ``encoding`` -- per-variable encoding is not part
+    of the envelope contract, so re-writes must not carry the input's codecs.
+    Skills that need controlled write encodings (time units/calendar,
+    ``_FillValue``) set them after this call so the clear cannot drop them.
+    Other pre-existing attrs are left untouched.
+
+    The input-path strip is load-bearing for caching, not tidiness: attrs live
+    inside the store and :func:`hash_zarr` hashes the store's bytes, so a path
+    left in the attrs would make the content hash vary with the local
+    directory layout. The decorator merges the first input's attrs into the
+    result before stamping, so the attr reaches here on every transform.
     """
     ds.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
     if source is not None:
         ds.attrs[SOURCE_ATTR] = source
+    ds.attrs.pop(INPUT_PATH_ATTR, None)
     for v in ds.variables:
         ds[v].encoding = {}
+
+
+def input_path(ds) -> Path:
+    """The path the decorator opened this input dataset from.
+
+    Set on every dataset the decorator opens and stripped before write, so a
+    skill can name its inputs in messages and labels without the path reaching
+    the written store. Raises :class:`KeyError` for a dataset the decorator
+    did not open.
+    """
+    return Path(ds.attrs[INPUT_PATH_ATTR])
 
 
 def restamp_zarr(zarr_path: Path, history: list) -> None:

@@ -164,15 +164,17 @@ Declaration surface (all keyword-only after `name`, `version`):
   dict (supports `positional`, `flag`, `aliases`, `repeat`, and any argparse
   keyword such as `help`). A dest may not reuse a name the decorator
   resolves and passes itself (`start_time`/`end_time`/`date`/`bbox`/
-  `input_paths`/`context`).
+  `context`).
 - `mutex_groups` — named groups of mutually exclusive `extra_args` (see
   below).
-- `input_paths=True` — the function also receives an `input_paths` keyword
-  argument: the CLI-given input path(s) as a list of `pathlib.Path`, in
-  input order. Use it for diagnostics and messages that name the inputs; the
-  datasets still arrive positionally, and the paths never enter the recorded
-  provenance args. This is the supported way to learn an input's path — do
-  not fish it out of `ds.encoding`.
+- input paths — every dataset the decorator opens carries the path it came
+  from; read it with `input_path(ds)` (`from weather_skills_core import
+  input_path`), which returns a `pathlib.Path`. Use it for diagnostics and
+  labels that name the inputs. It rides on the dataset rather than arriving
+  as a parallel list, so it cannot desync from the inputs, and `stamp_zarr`
+  strips it before every write — see "Metadata that must not reach the store"
+  below. This is the supported way to learn an input's path: do not fish it
+  out of `ds.encoding`.
 - Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
   `normalize_args`, `exclude_args`, `reference_args`, `history_labels`,
@@ -231,7 +233,7 @@ Opt in by naming a `context` parameter on any hook (`latest_resolver`,
 `context=`, a `RunContext` carrying:
 
 - `args` — the parsed argparse namespace;
-- `input_paths` / `output_path` — the CLI paths as `pathlib.Path`;
+- `output_path` — the output path as a `pathlib.Path`;
 - `start_time` / `end_time` / `date` — the resolved absolute dates (`None`
   before resolution or when the toggle is off);
 - `state` — a mutable dict reserved for the skill, empty at the start of
@@ -529,6 +531,23 @@ schema those pieces produce. One author-facing consequence:
 an input without it (whatever other attrs it carries) is opaque, and the chain
 starts fresh at your skill's entry.
 
+### Metadata that must not reach the store
+
+Dataset attrs live **inside** the zarr store, and the cache key is a content
+hash over the store's bytes (`hash_zarr` walks the directory and hashes every
+file). So any attr that varies with where a run happened — above all an input
+path — would make the same data hash differently on two machines and turn
+every cache hit into a miss.
+
+`weather_skills_input_path` is therefore a reserved attr with a strict
+lifetime: the decorator sets it on each input it opens, the skill reads it
+with `input_path(ds)`, and `stamp_zarr` drops it before every write (zarr and
+streaming alike). You do not need to strip it yourself, including when you
+carry the input's attrs forward — the decorator merges the first input's attrs
+into your result and the strip runs after that merge. Do not add attrs of your
+own that encode a local path, a hostname, or a timestamp: the same reasoning
+applies to all of them.
+
 ### Raw-string parsers and the schema validator
 
 A skill that reads `weather_skills_history` values itself (a provenance
@@ -660,6 +679,10 @@ parameterized by them. Do not reimplement any of these in a skill body.
   forecast envelope's scalar init `time` — probe by variables alone or write
   a bespoke probe. Write a bespoke probe only when a store needs checks this
   cannot express.
+- `input_path(ds)` — the path the decorator opened this input from, as a
+  `pathlib.Path`. Set on every opened input and stripped before write; raises
+  `KeyError` for a dataset the decorator did not open. Exported at the top
+  level: `from weather_skills_core import input_path`.
 
 ### Runtime checks (`weather_skills_core.util`)
 

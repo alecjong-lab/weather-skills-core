@@ -14,6 +14,7 @@ from weather_skills_core import (
     UsageError,
     WroteSummary,
     envelope,
+    provenance,
     types,
     weather_skill,
 )
@@ -118,8 +119,6 @@ class TestParserConstruction:
             make_identity_skill([], date=True, extra_args={"date": str})
         with pytest.raises(ValueError, match="collide"):
             make_identity_skill([], bbox=types.OPTIONAL, extra_args={"bbox": str})
-        with pytest.raises(ValueError, match="collide"):
-            make_identity_skill([], input_paths=True, extra_args={"input_paths": str})
 
     def test_extra_args_dest_allowed_when_toggle_off(self, tmp_path, gridded_store):
         # Without the corresponding toggle the name is not resolved by the
@@ -2261,23 +2260,28 @@ class TestWriteTail:
         assert "treating input as opaque" in capsys.readouterr().err
 
 
-class TestInputPaths:
-    def test_single_input_receives_path_list(self, tmp_path, gridded_store):
-        calls = []
-        skill = make_identity_skill(calls, input_paths=True)
-        out = tmp_path / "o.zarr"
-        skill(["-i", str(gridded_store), "-o", str(out)])
-        assert calls == [{"input_paths": [gridded_store]}]
-        assert isinstance(calls[0]["input_paths"][0], Path)
-        # The paths never enter the recorded provenance args.
-        assert "input_paths" not in history_of(out)[-1]["args"]
+class TestInputPathAttr:
+    def test_single_input_carries_its_path(self, tmp_path, gridded_store):
+        seen = []
 
-    def test_variadic_inputs_in_repeat_order(self, tmp_path):
+        @weather_skill("identity", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
+        def identity(ds):
+            """Copy the input envelope unchanged."""
+            seen.append(provenance.input_path(ds))
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        identity(["-i", str(gridded_store), "-o", str(out)])
+        assert seen == [gridded_store]
+        # The path is not an argument, so it cannot reach the recorded args.
+        assert "input_path" not in history_of(out)[-1]["args"]
+
+    def test_variadic_inputs_carry_their_own_paths_in_repeat_order(self, tmp_path):
         a = tmp_path / "a.zarr"
         b = tmp_path / "b.zarr"
         make_gridded(fill=1.0).to_zarr(a, mode="w", consolidated=True)
         make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
-        received = {}
+        seen = []
 
         @weather_skill(
             "concat",
@@ -2285,20 +2289,19 @@ class TestInputPaths:
             input_type=types.ALL,
             output_type=types.GRIDDED,
             variadic_input=True,
-            input_paths=True,
         )
-        def concat(datasets, input_paths):
+        def concat(datasets):
             """Concatenate."""
-            received["paths"] = input_paths
+            seen.extend(provenance.input_path(ds) for ds in datasets)
             return datasets[0].copy()
 
         concat(["-i", str(b), "-i", str(a), "-o", str(tmp_path / "o.zarr")])
-        assert received["paths"] == [b, a]
+        assert seen == [b, a]
 
-    def test_named_inputs_in_declaration_order(self, tmp_path, gridded_store):
+    def test_named_inputs_carry_their_own_paths(self, tmp_path, gridded_store):
         other = tmp_path / "mc.zarr"
         make_gridded(fill=3.0).to_zarr(other, mode="w", consolidated=True)
-        received = {}
+        seen = []
 
         @weather_skill(
             "plot-mediogram",
@@ -2306,28 +2309,53 @@ class TestInputPaths:
             input_type=[types.ALL, types.ALL],
             output_type=types.PNG,
             input_names=["forecast", "mclimate"],
-            input_paths=True,
         )
-        def plot_mediogram(forecast_ds, mclimate_ds, input_paths):
+        def plot_mediogram(forecast_ds, mclimate_ds):
             """Mediogram."""
-            received["paths"] = input_paths
+            seen.extend(provenance.input_path(ds) for ds in (forecast_ds, mclimate_ds))
             return FakeFigure()
 
         plot_mediogram(
-            [
-                "--mclimate",
-                str(other),
-                "--forecast",
-                str(gridded_store),
-                "-o",
-                str(tmp_path / "p.png"),
-            ]
+            ["--mclimate", str(other), "--forecast", str(gridded_store), "-o", str(tmp_path / "p")]
         )
-        assert received["paths"] == [gridded_store, other]
+        assert seen == [gridded_store, other]
 
-    def test_requires_declared_input_type(self):
-        with pytest.raises(ValueError, match="input_paths"):
-            weather_skill("x", "0.1.0", output_type=types.GRIDDED, input_paths=True)(lambda: None)
+    def test_identical_data_at_different_paths_hashes_the_same(self, tmp_path):
+        # attrs live inside the store and hash_zarr hashes the store's bytes,
+        # so a surviving input path would make the content hash vary with the
+        # local directory layout. The decorator merges the first input's attrs
+        # into the result, so the attr does reach the write path.
+        stores = []
+        for d in ("dir_a", "dir_b"):
+            store = tmp_path / d / "in.zarr"
+            store.parent.mkdir()
+            make_gridded().to_zarr(store, mode="w", consolidated=True)
+            stores.append(store)
+        skill = make_identity_skill([], input_type=types.ALL)
+        outs = []
+        for i, store in enumerate(stores):
+            out = tmp_path / f"out{i}.zarr"
+            skill(["-i", str(store), "-o", str(out)])
+            outs.append(out)
+
+        for out in outs:
+            attrs = xr.open_zarr(out, consolidated=True).attrs
+            assert provenance.INPUT_PATH_ATTR not in attrs
+            assert not any(str(tmp_path) in str(v) for v in attrs.values())
+        assert provenance.hash_zarr(outs[0]) == provenance.hash_zarr(outs[1])
+
+    def test_streaming_write_strips_the_attr(self, tmp_path, gridded_store):
+        @weather_skill(
+            "stream", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, streaming=True
+        )
+        def stream(ds):
+            """Yield the input back one period at a time."""
+            for i in range(ds.sizes["time"]):
+                yield ds.isel(time=slice(i, i + 1))
+
+        out = tmp_path / "o.zarr"
+        stream(["-i", str(gridded_store), "-o", str(out)])
+        assert provenance.INPUT_PATH_ATTR not in xr.open_zarr(out, consolidated=True).attrs
 
 
 class TestPostWrite:

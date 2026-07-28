@@ -11,6 +11,7 @@ from weather_skills_core.decorator import (
 )
 from weather_skills_core.envelope import validate_type
 from weather_skills_core.errors import DataError, SkillError, UsageError
+from weather_skills_core.provenance import input_path
 
 __all__ = [
     "DataError",
@@ -20,6 +21,7 @@ __all__ = [
     "StandardParameter",
     "UsageError",
     "WroteSummary",
+    "input_path",
     "standard_parameters",
     "types",
     "validate_type",

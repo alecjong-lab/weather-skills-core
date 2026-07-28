@@ -408,7 +408,6 @@ def weather_skill(
     input_names=None,
     input_help=None,
     variadic_input=False,
-    input_paths=False,
     start_time=False,
     end_time=False,
     date=False,
@@ -464,12 +463,13 @@ def weather_skill(
       leaves that flag without help). Otherwise a single string shown on the
       ``--input``/``-i`` flag, replacing the decorator's default help in the
       variadic and fixed-multi cases. Requires a declared ``input_type``.
-    - ``input_paths`` -- with ``True``, the function also receives an
-      ``input_paths`` keyword argument: the CLI-given input path(s) as a list
-      of :class:`~pathlib.Path`, in input order (declaration order for
-      ``input_names``, repeat order otherwise). For diagnostics and messages;
-      the datasets still arrive positionally, and the paths never enter the
-      recorded provenance args. Requires a declared ``input_type``.
+    - input paths: every opened input carries the path it came from under
+      :data:`~weather_skills_core.provenance.INPUT_PATH_ATTR`, read with
+      :func:`weather_skills_core.provenance.input_path`. It rides on the
+      dataset so it cannot desync from the inputs, and
+      :func:`~weather_skills_core.provenance.stamp_zarr` strips it before
+      every write, keeping the output's content hash independent of the local
+      directory layout.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
       a tuple of zarr envelope types (a union), or ``types.PNG`` for a
@@ -511,7 +511,7 @@ def weather_skill(
       literal string choices, a constraint set combining a type with a value
       domain (``{int, range(0, 2)}``), or an argparse-keyword dict. A dest
       may not reuse a name the decorator resolves and passes itself
-      (``start_time``/``end_time``/``date``/``bbox``/``input_paths``, and
+      (``start_time``/``end_time``/``date``/``bbox``, and
       ``context`` when the function opts into the run context): the resolved
       value would clobber the extra argument's.
     - ``mutex_groups`` -- mapping of group name to either a sequence of
@@ -594,8 +594,6 @@ def weather_skill(
             raise ValueError(
                 "without input_names, input_help is a single help string for the --input flag"
             )
-    if input_paths and not input_types:
-        raise ValueError("input_paths=True requires a declared input_type")
     output_union = None
     if isinstance(output_type, list):
         # A list is the one-entry-per-input spelling, and a skill has one
@@ -650,8 +648,6 @@ def weather_skill(
         reserved_dests.add("date")
     if bbox_cfg is not None:
         reserved_dests.add("bbox")
-    if input_paths:
-        reserved_dests.add("input_paths")
     collisions = sorted(reserved_dests & set(extra_args or {}))
     if collisions:
         raise ValueError(
@@ -889,8 +885,6 @@ def weather_skill(
             params["time_dim"] = args.time_dim
         for dest in extra_args or {}:
             params[dest] = getattr(args, dest)
-        if input_paths:
-            params["input_paths"] = list(paths)
         if fn_wants_ctx:
             params["context"] = context
 
@@ -996,6 +990,10 @@ def weather_skill(
                 dims=dims_override,
                 time_dim=time_dim_override,
             )
+            # The path rides on the dataset rather than a parallel argument,
+            # so it cannot desync from the inputs; stamp_zarr strips it before
+            # any write.
+            ds.attrs[_provenance.INPUT_PATH_ATTR] = str(p)
             datasets.append(ds)
         return datasets
 
