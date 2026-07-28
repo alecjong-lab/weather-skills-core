@@ -15,7 +15,7 @@ from weather_skills_core import types, weather_skill
     input_type=types.ALL,
     output_type=types.ALL,
 )
-def no_constant(ds):
+def no_constant(ds, args):
     """Lint fixture; never executed."""
     return ds
 

@@ -42,9 +42,9 @@ def make_identity_skill(calls, **declaration):
     declaration.setdefault("output_type", types.GRIDDED)
 
     @weather_skill("identity", "0.1.0", **declaration)
-    def identity(ds, **params):
+    def identity(ds, args):
         """Copy the input envelope unchanged."""
-        calls.append(params)
+        calls.append(args)
         return ds.copy()
 
     return identity
@@ -78,85 +78,61 @@ class TestParserConstruction:
         args = skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "x", "-v", "y"])
         assert args.variable == ["x", "y"]
 
-    def test_extra_args_bare_type(self):
-        skill = make_identity_skill([], extra_args={"factor": int})
-        args = skill.parser.parse_args(["-i", "a", "-o", "b", "--factor", "3"])
-        assert args.factor == 3
-
-    def test_extra_args_constraint_set_choices(self):
-        skill = make_identity_skill([], extra_args={"interpolation_factor": {int, range(2)}})
-        args = skill.parser.parse_args(["-i", "a", "-o", "b", "--interpolation-factor", "1"])
-        assert args.interpolation_factor == 1
-        with pytest.raises(SystemExit) as exc:
-            skill.parser.parse_args(["-i", "a", "-o", "b", "--interpolation-factor", "5"])
-        assert exc.value.code == 2
-
-    def test_extra_args_top_level_tuple_is_choices(self, tmp_path, gridded_store):
-        calls = []
-        skill = make_identity_skill(calls, extra_args={"method": ("mean", "std")})
-        args = skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "std"])
-        assert args.method == "std"
+    def test_extra_args_kwargs_pass_through_to_argparse(self):
+        skill = make_identity_skill(
+            [],
+            extra_args=[
+                ("--method", {"choices": ["mean", "std"], "required": True}),
+                ("--dim", {"action": "append"}),
+                ("--factor", "-f", {"type": int}),
+            ],
+        )
+        args = skill.parser.parse_args(
+            ["-i", "a", "-o", "b", "--method", "std", "--dim", "x", "--dim", "y", "-f", "3"]
+        )
+        assert (args.method, args.dim, args.factor) == ("std", ["x", "y"], 3)
         with pytest.raises(SystemExit) as exc:
             skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "median"])
         assert exc.value.code == 2
-        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--method", "mean"])
-        assert calls == [{"method": "mean"}]
 
-    def test_extra_args_top_level_list_is_choices(self):
-        skill = make_identity_skill([], extra_args={"method": ["mean", "std"]})
-        assert skill.parser.parse_args(["-i", "a", "-o", "b", "--method", "mean"]).method == "mean"
+    def test_extra_args_entry_needs_no_kwargs(self):
+        skill = make_identity_skill([], extra_args=[("--cc",)])
+        assert skill.parser.parse_args(["-i", "a", "-o", "b"]).cc is None
 
-    def test_extra_args_untyped_choice_set_rejected(self):
-        with pytest.raises(ValueError, match="choices without a type"):
-            make_identity_skill([], extra_args={"level": {range(3)}})
-        with pytest.raises(ValueError, match="choices without a type"):
-            make_identity_skill([], extra_args={"method": {("mean", "std")}})
+    def test_extra_args_positional_is_a_bare_name(self):
+        @weather_skill("resolve-region", "0.1.0", extra_args=[("code", {"metavar": "CODE"})])
+        def resolve_region(args):
+            """Resolve a country code."""
+
+        assert resolve_region.parser.parse_args(["KEN"]).code == "KEN"
+
+    def test_extra_args_dest_keyword_decouples_dest_from_flag(self):
+        skill = make_identity_skill([], extra_args=[("--from", {"dest": "sender"})])
+        assert skill.parser.parse_args(["-i", "a", "-o", "b", "--from", "x"]).sender == "x"
+
+    def test_extra_args_entry_must_be_a_tuple(self):
+        with pytest.raises(ValueError, match="tuple of add_argument arguments"):
+            make_identity_skill([], extra_args=["--factor"])
+
+    def test_extra_args_duplicate_dests_rejected(self):
+        with pytest.raises(ValueError, match="more than once"):
+            make_identity_skill([], extra_args=[("--factor",), ("--factor", "-f")])
 
     def test_extra_args_reserved_dest_collisions_rejected(self):
         with pytest.raises(ValueError, match="collide"):
-            make_identity_skill([], start_time=True, end_time=True, extra_args={"start_time": str})
+            make_identity_skill([], start_time=True, end_time=True, extra_args=[("--start-time",)])
         with pytest.raises(ValueError, match="collide"):
-            make_identity_skill([], date=True, extra_args={"date": str})
+            make_identity_skill([], date=True, extra_args=[("--date",)])
         with pytest.raises(ValueError, match="collide"):
-            make_identity_skill([], bbox=types.OPTIONAL, extra_args={"bbox": str})
+            make_identity_skill([], bbox=types.OPTIONAL, extra_args=[("--bbox",)])
 
     def test_extra_args_dest_allowed_when_toggle_off(self, tmp_path, gridded_store):
         # Without the corresponding toggle the name is not resolved by the
         # decorator, so an extra arg may use it.
         calls = []
-        skill = make_identity_skill(calls, extra_args={"date": str})
+        skill = make_identity_skill(calls, extra_args=[("--date",)])
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--date", "x"])
         assert calls == [{"date": "x"}]
-
-    def test_extra_args_bool_flag(self):
-        skill = make_identity_skill([], extra_args={"align_day_of_year": bool})
-        assert skill.parser.parse_args(["-i", "a", "-o", "b"]).align_day_of_year is False
-        args = skill.parser.parse_args(["-i", "a", "-o", "b", "--align-day-of-year"])
-        assert args.align_day_of_year is True
-
-    def test_extra_args_dict_spec(self):
-        skill = make_identity_skill(
-            [],
-            extra_args={
-                "method": {"choices": ["mean", "std"], "required": True},
-                "dim": {"repeat": True},
-            },
-        )
-        args = skill.parser.parse_args(
-            ["-i", "a", "-o", "b", "--method", "std", "--dim", "x", "--dim", "y"]
-        )
-        assert args.method == "std"
-        assert args.dim == ["x", "y"]
-
-    def test_extra_args_positional(self):
-        @weather_skill(
-            "resolve-region", "0.1.0", extra_args={"code": {"positional": True, "metavar": "CODE"}}
-        )
-        def resolve_region(code):
-            """Resolve a country code."""
-
-        args = resolve_region.parser.parse_args(["KEN"])
-        assert args.code == "KEN"
 
     def test_input_help_on_single_input_flag(self, capsys):
         skill = make_identity_skill([], input_help="Gridded Zarr to copy.")
@@ -172,7 +148,7 @@ class TestParserConstruction:
             output_type=types.GRIDDED,
             input_help="Input Zarr; pass exactly twice, minuend then subtrahend.",
         )
-        def difference(ds_a, ds_b):
+        def difference(ds_a, ds_b, args):
             """A - B."""
 
         with pytest.raises(SystemExit):
@@ -188,7 +164,7 @@ class TestParserConstruction:
             variadic_input=True,
             input_help="Input Zarr; repeat in concatenation order.",
         )
-        def concat(datasets):
+        def concat(datasets, args):
             """Concatenate."""
 
         with pytest.raises(SystemExit):
@@ -204,7 +180,7 @@ class TestParserConstruction:
             input_names=["forecast", "mclimate"],
             input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."],
         )
-        def plot_mediogram(forecast_ds, mclimate_ds):
+        def plot_mediogram(forecast_ds, mclimate_ds, args):
             """Mediogram."""
 
         with pytest.raises(SystemExit):
@@ -222,7 +198,7 @@ class TestParserConstruction:
             input_names=["forecast", "mclimate"],
             input_help=[None, "M-climate ensemble Zarr."],
         )
-        def plot_mediogram(forecast_ds, mclimate_ds):
+        def plot_mediogram(forecast_ds, mclimate_ds, args):
             """Mediogram."""
 
         with pytest.raises(SystemExit):
@@ -327,7 +303,7 @@ class TestTypeUnions:
         @weather_skill(
             "pair", "0.1.0", input_type=[types.GRIDDED, types.FORECAST], output_type=types.GRIDDED
         )
-        def pair(a, b):
+        def pair(a, b, args):
             """Two inputs, one declared type each."""
             seen.append((envelope.detect_type(a), envelope.detect_type(b)))
             return a.copy()
@@ -500,7 +476,7 @@ class TestToggleDictForm:
             output_type=types.GRIDDED,
             date={"context": "single forecast init date"},
         )
-        def fetch(date):
+        def fetch(args):
             """Fetch one init."""
             return make_gridded()
 
@@ -511,8 +487,9 @@ class TestToggleDictForm:
         calls = []
 
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date={"required": False})
-        def fetch(date):
+        def fetch(args):
             """Fetch."""
+            date = args["date"]
             calls.append(date)
             return make_gridded()
 
@@ -548,7 +525,7 @@ class TestMutexGroups:
     def make_select_skill(self, calls, required=True):
         return make_identity_skill(
             calls,
-            extra_args={"index": int, "value": str},
+            extra_args=[("--index", {"type": int}), ("--value",)],
             mutex_groups={"selector": {"args": ("index", "value"), "required": required}},
         )
 
@@ -592,7 +569,7 @@ class TestMutexGroups:
     def test_sequence_shorthand_is_optional_group(self, tmp_path, gridded_store):
         skill = make_identity_skill(
             [],
-            extra_args={"index": int, "value": str},
+            extra_args=[("--index", {"type": int}), ("--value",)],
             mutex_groups={"selector": ("index", "value")},
         )
         with pytest.raises(SystemExit) as exc:
@@ -609,11 +586,11 @@ class TestMutexGroups:
         calls = []
         skill = make_identity_skill(
             calls,
-            extra_args={
-                "factor": {"type": float, "aliases": ["-f"]},
-                "target_resolution": {"type": float},
-                "reference_grid": {},
-            },
+            extra_args=[
+                ("--factor", "-f", {"type": float}),
+                ("--target-resolution", {"type": float}),
+                ("--reference-grid",),
+            ],
             mutex_groups={
                 "target": {
                     "args": ("factor", "target_resolution", "reference_grid"),
@@ -631,31 +608,34 @@ class TestMutexGroups:
             return weather_skill("x", "0.1.0", **kwargs)(lambda: None)
 
         with pytest.raises(ValueError, match="not an extra_args dest"):
-            declare(extra_args={"a": int}, mutex_groups={"g": ("a", "b")})
+            declare(extra_args=[("--a", {"type": int})], mutex_groups={"g": ("a", "b")})
         with pytest.raises(ValueError, match="at least two"):
-            declare(extra_args={"a": int}, mutex_groups={"g": ("a",)})
+            declare(extra_args=[("--a", {"type": int})], mutex_groups={"g": ("a",)})
         with pytest.raises(ValueError, match="both mutex groups"):
             declare(
-                extra_args={"a": int, "b": int, "c": int},
+                extra_args=[("--a", {"type": int}), ("--b", {"type": int}), ("--c", {"type": int})],
                 mutex_groups={"g1": ("a", "b"), "g2": ("a", "c")},
             )
         with pytest.raises(ValueError, match="positional"):
             declare(
-                extra_args={"a": {"positional": True}, "b": int},
+                extra_args=[("a",), ("--b", {"type": int})],
                 mutex_groups={"g": ("a", "b")},
             )
         with pytest.raises(ValueError, match="on the group"):
             declare(
-                extra_args={"a": {"required": True}, "b": int},
+                extra_args=[("--a", {"required": True}), ("--b", {"type": int})],
                 mutex_groups={"g": ("a", "b")},
             )
         with pytest.raises(ValueError, match="unknown keys"):
             declare(
-                extra_args={"a": int, "b": int},
+                extra_args=[("--a", {"type": int}), ("--b", {"type": int})],
                 mutex_groups={"g": {"args": ("a", "b"), "exclusive": True}},
             )
         with pytest.raises(ValueError, match="under 'args'"):
-            declare(extra_args={"a": int, "b": int}, mutex_groups={"g": {"required": True}})
+            declare(
+                extra_args=[("--a", {"type": int}), ("--b", {"type": int})],
+                mutex_groups={"g": {"required": True}},
+            )
 
 
 class TestBboxArgv:
@@ -672,8 +652,9 @@ class TestBboxArgv:
         @weather_skill(
             "clip", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, bbox=types.REQUIRED
         )
-        def clip(ds, bbox):
+        def clip(ds, args):
             """Clip."""
+            bbox = args["bbox"]
             seen["bbox"] = bbox
             return ds.copy()
 
@@ -696,7 +677,7 @@ class TestCacheShortCircuit:
 
     def test_changed_extra_arg_reruns(self, tmp_path, gridded_store):
         calls = []
-        skill = make_identity_skill(calls, extra_args={"factor": int})
+        skill = make_identity_skill(calls, extra_args=[("--factor", {"type": int})])
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out), "--factor", "1"])
         skill(["-i", str(gridded_store), "-o", str(out), "--factor", "2"])
@@ -766,7 +747,9 @@ class TestCacheShortCircuit:
 
     def test_exclude_args(self, tmp_path, gridded_store):
         calls = []
-        skill = make_identity_skill(calls, extra_args={"verbose": bool}, exclude_args=("verbose",))
+        skill = make_identity_skill(
+            calls, extra_args=[("--verbose", {"action": "store_true"})], exclude_args=("verbose",)
+        )
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out)])
         skill(["-i", str(gridded_store), "-o", str(out), "--verbose"])
@@ -807,7 +790,7 @@ class TestCacheShortCircuit:
             output_type=types.GRIDDED,
             completeness_probe=lambda p: False,
         )
-        def difference(ds_a, ds_b):
+        def difference(ds_a, ds_b, args):
             """A - B."""
             calls.append(1)
             return ds_a.copy()
@@ -847,8 +830,9 @@ class TestValidationOverrides:
             bbox=types.REQUIRED,
             dims=True,
         )
-        def clip_region(ds, bbox, dims):
+        def clip_region(ds, args):
             """Clip."""
+            bbox, dims = args["bbox"], args["dims"]
             from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
 
             calls.append(dims)
@@ -952,7 +936,7 @@ class TestAllInputType:
         calls = []
 
         @weather_skill("collapse", "0.1.0", input_type=types.ALL, output_type=types.ALL)
-        def collapse(ds):
+        def collapse(ds, args):
             """Mean over the spatial dims, leaving a series."""
             calls.append(1)
             return ds.mean(dim=["latitude", "longitude"])
@@ -995,8 +979,9 @@ class TestAllInputType:
         @weather_skill(
             "resolve", "0.1.0", input_type=types.ALL, output_type=types.ALL, time_dim=True
         )
-        def resolve(ds, time_dim):
+        def resolve(ds, args):
             """Resolve the time axis in the body."""
+            time_dim = args["time_dim"]
             seen.append(envelope.detect_time_dim(ds, time_dim))
             return ds.copy()
 
@@ -1043,7 +1028,7 @@ class TestShapePreservingTransform:
         # The skill states the claim "same" used to imply, and a transform that
         # silently changes the shape is caught where it happens.
         @weather_skill("collapse", "0.1.0", input_type=types.ALL, output_type=types.ALL)
-        def collapse(ds):
+        def collapse(ds, args):
             """Return a series while claiming to preserve the input's shape."""
             out = ds.mean(dim=["latitude", "longitude"])
             envelope.validate_type(out, ds)
@@ -1064,7 +1049,7 @@ class TestUnionOutputType:
             source="toy",
             **declaration,
         )
-        def fetch(**params):
+        def fetch(args):
             """Fetch a dataset whose shape the source decides."""
             return build()
 
@@ -1108,7 +1093,7 @@ class TestUnionOutputType:
             streaming=True,
             source="toy",
         )
-        def fetch():
+        def fetch(args):
             """Stream."""
             yield make_gridded(n_time=1, start="2026-01-01")
             yield make_station()
@@ -1127,7 +1112,7 @@ class TestUnionOutputType:
             input_type=types.ALL,
             output_type=(types.GRIDDED, types.FORECAST),
         )
-        def transform(ds):
+        def transform(ds, args):
             """Transform."""
             return ds.copy()
 
@@ -1161,9 +1146,9 @@ class TestCacheDisabled:
         calls = []
 
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", cache=False)
-        def fetch(**params):
+        def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(params)
+            calls.append(args)
             return make_gridded()
 
         out = tmp_path / "out.zarr"
@@ -1190,9 +1175,9 @@ class TestCacheDisabled:
 class TestFetcherMode:
     def make_fetcher(self, calls, **declaration):
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
-        def fetch(**params):
+        def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(params)
+            calls.append(args)
             return make_gridded()
 
         return fetch
@@ -1288,9 +1273,9 @@ class TestFetcherMode:
         calls = []
 
         @weather_skill("init-fetch", "0.1.0", output_type=types.GRIDDED, date=True)
-        def fetch(**params):
+        def fetch(args):
             """Fetch one init."""
-            calls.append(params)
+            calls.append(args)
             return make_gridded()
 
         fetch(["--date", "2026-02-03", "-o", str(tmp_path / "o.zarr")])
@@ -1328,7 +1313,7 @@ class TestExitCodes:
 
     def test_data_error_from_function_exits_1(self, tmp_path, gridded_store):
         @weather_skill("boom", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def boom(ds):
+        def boom(ds, args):
             """Fail with a data error."""
             raise DataError("no data in the requested window")
 
@@ -1338,7 +1323,7 @@ class TestExitCodes:
 
     def test_usage_error_from_function_exits_2(self, tmp_path, gridded_store):
         @weather_skill("boom", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def boom(ds):
+        def boom(ds, args):
             """Fail with a usage error."""
             raise UsageError("bad arguments")
 
@@ -1367,7 +1352,7 @@ class TestExitCodes:
             if not args.to_name.strip():
                 raise UsageError("--to-name must be a non-empty variable name.")
 
-        skill = make_identity_skill([], extra_args={"to_name": str}, validate_args=validate)
+        skill = make_identity_skill([], extra_args=[("--to-name",)], validate_args=validate)
         with pytest.raises(SystemExit) as exc:
             skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--to-name", " "])
         assert exc.value.code == 2
@@ -1377,9 +1362,9 @@ class TestExitCodes:
 class TestEmptyStringValues:
     def make_fetcher(self, calls, **declaration):
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
-        def fetch(**params):
+        def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(params)
+            calls.append(args)
             return make_gridded()
 
         return fetch
@@ -1481,8 +1466,8 @@ class TestEmptyStringValues:
 
 class TestUnprefixedErrors:
     def make_skill(self, exc):
-        @weather_skill("submit-feedback", "0.1.0", extra_args={"body": str})
-        def skill(body):
+        @weather_skill("submit-feedback", "0.1.0", extra_args=[("--body",)])
+        def skill(args):
             """Submit a feedback body."""
             raise exc
 
@@ -1513,7 +1498,7 @@ class TestUnprefixedErrors:
 
     def test_unprefixed_error_in_zarr_mode(self, tmp_path, gridded_store, capsys):
         @weather_skill("identity", "0.1.0", input_type=types.GRIDDED, output_type=types.GRIDDED)
-        def skill(ds):
+        def skill(ds, args):
             """Copy the input envelope unchanged."""
             raise DataError("Body too long: 1 character over the limit.", prefix=False)
 
@@ -1536,7 +1521,7 @@ class TestMultiInput:
         @weather_skill(
             "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
         )
-        def difference(ds_a, ds_b):
+        def difference(ds_a, ds_b, args):
             """A - B."""
             received.extend([ds_a, ds_b])
             out = ds_a.copy()
@@ -1556,7 +1541,7 @@ class TestMultiInput:
         @weather_skill(
             "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
         )
-        def difference(ds_a, ds_b):
+        def difference(ds_a, ds_b, args):
             """A - B."""
 
         with pytest.raises(SystemExit) as exc:
@@ -1570,7 +1555,7 @@ class TestMultiInput:
         @weather_skill(
             "concat", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, variadic_input=True
         )
-        def concat(datasets):
+        def concat(datasets, args):
             """Concatenate."""
             return datasets[0].copy()
 
@@ -1585,7 +1570,7 @@ class TestMultiInput:
         @weather_skill(
             "concat", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, variadic_input=True
         )
-        def concat(datasets):
+        def concat(datasets, args):
             """Concatenate."""
 
         with pytest.raises(SystemExit) as exc:
@@ -1602,7 +1587,7 @@ class TestMultiInput:
         @weather_skill(
             "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
         )
-        def difference(ds_a, ds_b):
+        def difference(ds_a, ds_b, args):
             """A - B."""
             calls.append(1)
             return ds_a.copy()
@@ -1627,7 +1612,7 @@ class TestReferenceInputs:
             calls,
             input_type=types.ALL,
             hash_input=False,
-            extra_args={"reference_grid": str},
+            extra_args=[("--reference-grid",)],
             reference_args=("reference_grid",),
         )
         out = tmp_path / "out.zarr"
@@ -1650,7 +1635,7 @@ class TestReferenceInputs:
     def test_missing_reference_exits_2(self, tmp_path, gridded_store):
         skill = make_identity_skill(
             [],
-            extra_args={"reference_grid": str},
+            extra_args=[("--reference-grid",)],
             reference_args=("reference_grid",),
         )
         with pytest.raises(SystemExit) as exc:
@@ -1677,7 +1662,7 @@ class TestStreaming:
             source="toy",
             **declaration,
         )
-        def fetch(**params):
+        def fetch(args):
             """Stream a toy dataset per period."""
             yield from pieces()
 
@@ -1788,7 +1773,7 @@ class TestEntryOverrideStandardMode:
         @weather_skill(
             "effective", "0.1.0", output_type=types.GRIDDED, start_time=True, end_time=True
         )
-        def fetch(start_time, end_time):
+        def fetch(args):
             """Fetch with an effective end."""
             return make_gridded(), EntryOverride({"end": "2026-01-02"})
 
@@ -1802,7 +1787,7 @@ class TestPngMode:
         fig = FakeFigure()
 
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG, title=True)
-        def plot(ds, title):
+        def plot(ds, args):
             """Plot."""
             return fig
 
@@ -1830,7 +1815,7 @@ class TestPngMode:
             output_type=types.PNG,
             history_labels=["a", "b"],
         )
-        def plot_compare(ds_a, ds_b):
+        def plot_compare(ds_a, ds_b, args):
             """Compare."""
             return fig
 
@@ -1853,7 +1838,7 @@ class TestPngMode:
             output_type=types.PNG,
             input_names=["forecast", "mclimate"],
         )
-        def plot_mediogram(forecast_ds, mclimate_ds):
+        def plot_mediogram(forecast_ds, mclimate_ds, args):
             """Mediogram."""
             return fig
 
@@ -1885,7 +1870,7 @@ class TestPngMode:
             output_type=types.PNG,
             savefig_kwargs={"bbox_inches": "tight"},
         )
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             return fig
 
@@ -1896,7 +1881,7 @@ class TestPngMode:
         calls = []
 
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             calls.append(1)
             return FakeFigure()
@@ -1910,7 +1895,7 @@ class TestPngMode:
         calls = []
 
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             calls.append(1)
             return FakeFigure()
@@ -1943,7 +1928,7 @@ class TestPngMode:
         fig = FakeFigure()
 
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             return fig
 
@@ -1961,7 +1946,7 @@ class TestOutputMessages:
             output_type=types.GRIDDED,
             cache_hit_label="clip",
         )
-        def clip_region(ds):
+        def clip_region(ds, args):
             """Clip."""
             return ds.copy()
 
@@ -1981,7 +1966,7 @@ class TestOutputMessages:
 
     def test_wrote_summary_appends_to_default_detail(self, tmp_path, gridded_store, capsys):
         @weather_skill("rename", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def rename(ds):
+        def rename(ds, args):
             """Rename."""
             return ds.copy(), WroteSummary("variable 'precip' -> 'rain'")
 
@@ -1992,7 +1977,7 @@ class TestOutputMessages:
 
     def test_wrote_summary_replaces_default_detail(self, tmp_path, gridded_store, capsys):
         @weather_skill("rename", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def rename(ds):
+        def rename(ds, args):
             """Rename."""
             return ds.copy(), WroteSummary("variable 'precip' -> 'rain'", replace=True)
 
@@ -2003,7 +1988,7 @@ class TestOutputMessages:
 
     def test_wrote_summary_combines_with_entry_override(self, tmp_path, capsys):
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, start_time=True, end_time=True)
-        def fetch(start_time, end_time):
+        def fetch(args):
             """Fetch."""
             return (
                 make_gridded(),
@@ -2018,7 +2003,7 @@ class TestOutputMessages:
 
     def test_unexpected_extra_return_is_type_error(self, tmp_path, gridded_store):
         @weather_skill("bad", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def bad(ds):
+        def bad(ds, args):
             """Bad return."""
             return ds.copy(), "not a marker"
 
@@ -2027,7 +2012,7 @@ class TestOutputMessages:
 
     def test_streaming_yielded_summary(self, tmp_path, capsys):
         @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
-        def fetch():
+        def fetch(args):
             """Stream."""
             yield make_gridded(n_time=1, start="2026-01-01")
             yield WroteSummary("1 gap skipped")
@@ -2038,7 +2023,7 @@ class TestOutputMessages:
 
     def test_png_summary_fills_empty_default(self, tmp_path, gridded_store, capsys):
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             return FakeFigure(), WroteSummary("2 rows, shared scale")
 
@@ -2048,7 +2033,7 @@ class TestOutputMessages:
 
     def test_png_rejects_entry_override(self, tmp_path, gridded_store):
         @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             return FakeFigure(), EntryOverride({"x": 1})
 
@@ -2063,11 +2048,11 @@ class TestNoArtifactMode:
         @weather_skill(
             "resolve-region",
             "0.1.0",
-            extra_args={"code": {"positional": True}, "geojson": str},
+            extra_args=[("code",), ("--geojson",)],
         )
-        def resolve_region(code, geojson):
+        def resolve_region(args):
             """Resolve a country code to a bbox."""
-            received.update(code=code, geojson=geojson)
+            received.update(code=args["code"], geojson=args["geojson"])
             print("1/2/3/4")
 
         resolve_region(["KEN"])
@@ -2075,8 +2060,8 @@ class TestNoArtifactMode:
         assert capsys.readouterr().out == "1/2/3/4\n"
 
     def test_no_output_flag(self):
-        @weather_skill("email-report", "0.1.0", extra_args={"to": str})
-        def email_report(to):
+        @weather_skill("email-report", "0.1.0", extra_args=[("--to",)])
+        def email_report(args):
             """Send a report."""
 
         with pytest.raises(SystemExit) as exc:
@@ -2085,7 +2070,7 @@ class TestNoArtifactMode:
 
     def test_help_epilog(self, capsys):
         @weather_skill("submit-feedback", "0.1.0")
-        def submit_feedback():
+        def submit_feedback(args):
             """Submit feedback."""
 
         with pytest.raises(SystemExit):
@@ -2094,7 +2079,7 @@ class TestNoArtifactMode:
 
     def test_exit_1_on_data_error(self):
         @weather_skill("submit-feedback", "0.1.0")
-        def submit_feedback():
+        def submit_feedback(args):
             """Submit feedback."""
             raise DataError("server rejected the submission; retry")
 
@@ -2123,7 +2108,7 @@ class TestWriteTail:
         ds.to_zarr(src, mode="w", consolidated=True)
 
         @weather_skill("fresh", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def fresh(ds):
+        def fresh(ds, args):
             """Return a dataset built from scratch (no attrs of its own)."""
             return xr.Dataset({"precip": ds["precip"]})
 
@@ -2189,7 +2174,7 @@ class TestWriteTail:
 
     def test_streaming_existing_output_dangling_symlink_replaced(self, tmp_path):
         @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
-        def fetch():
+        def fetch(args):
             """Stream."""
             yield make_gridded(n_time=1)
 
@@ -2202,7 +2187,7 @@ class TestWriteTail:
 
     def test_streaming_existing_output_regular_file_replaced(self, tmp_path):
         @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
-        def fetch():
+        def fetch(args):
             """Stream."""
             yield make_gridded(n_time=1)
 
@@ -2214,7 +2199,7 @@ class TestWriteTail:
 
     def test_failed_write_removes_partial_store(self, tmp_path, gridded_store, capsys):
         @weather_skill("bad-write", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def bad_write(ds):
+        def bad_write(ds, args):
             """Return a dataset zarr cannot serialize."""
             out = ds.copy()
             # Object dtype fails during the write, after the store directory
@@ -2234,7 +2219,7 @@ class TestWriteTail:
         calls = []
 
         @weather_skill("bad-write", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def bad_write(ds):
+        def bad_write(ds, args):
             """Return a dataset zarr cannot serialize."""
             calls.append(1)
             out = ds.copy()
@@ -2265,7 +2250,7 @@ class TestInputPathAttr:
         seen = []
 
         @weather_skill("identity", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def identity(ds):
+        def identity(ds, args):
             """Copy the input envelope unchanged."""
             seen.append(provenance.input_path(ds))
             return ds.copy()
@@ -2290,7 +2275,7 @@ class TestInputPathAttr:
             output_type=types.GRIDDED,
             variadic_input=True,
         )
-        def concat(datasets):
+        def concat(datasets, args):
             """Concatenate."""
             seen.extend(provenance.input_path(ds) for ds in datasets)
             return datasets[0].copy()
@@ -2310,7 +2295,7 @@ class TestInputPathAttr:
             output_type=types.PNG,
             input_names=["forecast", "mclimate"],
         )
-        def plot_mediogram(forecast_ds, mclimate_ds):
+        def plot_mediogram(forecast_ds, mclimate_ds, args):
             """Mediogram."""
             seen.extend(provenance.input_path(ds) for ds in (forecast_ds, mclimate_ds))
             return FakeFigure()
@@ -2348,7 +2333,7 @@ class TestInputPathAttr:
         @weather_skill(
             "stream", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, streaming=True
         )
-        def stream(ds):
+        def stream(ds, args):
             """Yield the input back one period at a time."""
             for i in range(ds.sizes["time"]):
                 yield ds.isel(time=slice(i, i + 1))
@@ -2405,7 +2390,7 @@ class TestPostWrite:
             seen["time"] = xr.open_zarr(path, consolidated=True).sizes["time"]
 
         @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True, post_write=verify)
-        def fetch():
+        def fetch(args):
             """Stream."""
             yield make_gridded(n_time=1, start="2026-01-01")
             yield make_gridded(n_time=1, start="2026-01-02")
@@ -2423,7 +2408,7 @@ class TestPostWrite:
             output_type=types.PNG,
             post_write=lambda p: seen.update(path=p),
         )
-        def plot(ds):
+        def plot(ds, args):
             """Plot."""
             return FakeFigure()
 
@@ -2442,7 +2427,7 @@ class TestPostWrite:
             seen["path"] = path
 
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, source="toy", post_write=verify)
-        def fetch(context):
+        def fetch(args, context):
             """Fetch."""
             context.state["source_calendar"] = "noleap"
             return make_gridded()
@@ -2468,7 +2453,7 @@ class TestRunContext:
             start_time=True,
             end_time=True,
         )
-        def skill(ds, start_time, end_time, context):
+        def skill(ds, args, context):
             """Ctx."""
             seen["context"] = context
             return ds.copy()
@@ -2500,7 +2485,7 @@ class TestRunContext:
         seen = {}
 
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date=True)
-        def fetch(date, context):
+        def fetch(args, context):
             """Fetch one init."""
             seen["context"] = context
             return make_gridded()
@@ -2518,7 +2503,7 @@ class TestRunContext:
 
     def test_context_never_enters_recorded_args(self, tmp_path, gridded_store):
         @weather_skill("ctx", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
-        def skill(ds, context):
+        def skill(ds, args, context):
             """Ctx."""
             return ds.copy()
 
@@ -2549,7 +2534,7 @@ class TestRunContext:
             completeness_probe=probe,
             write_encoding=encode,
         )
-        def fetch(context):
+        def fetch(args, context):
             """Fetch."""
             context.state["body"] = "ran"
             return make_gridded()
@@ -2590,7 +2575,7 @@ class TestRunContext:
             end_time=True,
             latest_resolver=resolver,
         )
-        def fetch(start_time, end_time, context):
+        def fetch(args, context):
             """Fetch."""
             seen["resolved"] = context.state["resolved"]
             return make_gridded()
@@ -2623,14 +2608,14 @@ class TestRunContext:
     def test_context_dest_collision_is_declaration_error(self):
         with pytest.raises(ValueError, match="context"):
 
-            @weather_skill("x", "0.1.0", output_type=types.GRIDDED, extra_args={"context": str})
-            def f(context):
+            @weather_skill("x", "0.1.0", output_type=types.GRIDDED, extra_args=[("--context",)])
+            def f(args, context):
                 """F."""
 
     def test_extra_arg_named_context_without_opt_in(self, tmp_path, gridded_store):
         # Without a named context param, an extra arg dest "context" is untouched.
         calls = []
-        skill = make_identity_skill(calls, extra_args={"context": str})
+        skill = make_identity_skill(calls, extra_args=[("--context",)])
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--context", "v"])
         assert calls[0]["context"] == "v"
 
@@ -2647,8 +2632,9 @@ class TestFunctionParams:
             bbox=types.REQUIRED,
             dims=True,
         )
-        def clip(ds, bbox, dims):
+        def clip(ds, args):
             """Clip to a bbox."""
+            bbox, dims = args["bbox"], args["dims"]
             received.update(bbox=bbox, dims=dims)
             from weather_skills_core import envelope
 
@@ -2671,8 +2657,9 @@ class TestFunctionParams:
         @weather_skill(
             "subset", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, bbox=types.OPTIONAL
         )
-        def subset(ds, bbox):
+        def subset(ds, args):
             """Subset."""
+            bbox = args["bbox"]
             received["bbox"] = bbox
             skill_calls.append(1)
             return ds.copy()
@@ -2684,8 +2671,9 @@ class TestFunctionParams:
         received = {}
 
         @weather_skill("w", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, workers=4)
-        def w(ds, workers):
+        def w(ds, args):
             """Workers."""
+            workers = args["workers"]
             received["workers"] = workers
             return ds.copy()
 
@@ -2704,12 +2692,12 @@ class TestFunctionParams:
             "0.1.0",
             input_type=types.ALL,
             output_type=types.GRIDDED,
-            extra_args={"factor": float},
+            extra_args=[("--factor", {"type": float})],
         )
-        def scale(ds, factor):
+        def scale(ds, args):
             """Scale."""
             out = ds.copy()
-            out["precip"] = ds["precip"] * factor
+            out["precip"] = ds["precip"] * args["factor"]
             return out
 
         out = tmp_path / "o.zarr"

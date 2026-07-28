@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     input_type=types.ALL,
     output_type=types.ALL,
 )
-def literal_version(ds):
+def literal_version(ds, args):
     """Lint fixture; never executed."""
     return ds
 

@@ -41,7 +41,7 @@ DICT_CHOICES = {
     dims=True,
     time_dim="time",
 )
-def probe_all_toggles(**params):
+def probe_all_toggles(args):
     """Probe declaration; never executed."""
 
 
@@ -52,7 +52,7 @@ def probe_all_toggles(**params):
     output_type=types.ALL,
     variable=types.SINGLE,
 )
-def probe_io(ds, **params):
+def probe_io(ds, args):
     """Probe declaration; never executed."""
 
 
@@ -63,7 +63,7 @@ def probe_io(ds, **params):
     output_type=types.ALL,
     variadic_input=True,
 )
-def probe_variadic(datasets, **params):
+def probe_variadic(datasets, args):
     """Probe declaration; never executed."""
 
 

@@ -16,11 +16,9 @@ _SKILL_VERSION = "0.1.0"
     _SKILL_VERSION,
     input_type=types.ALL,
     output_type=types.ALL,
-    extra_args={
-        "method": {"choices": ["p10", "p90"], "required": True, "help": "Percentile."},
-    },
+    extra_args=[("--method", {"choices": ["p10", "p90"], "required": True, "help": "Percentile."})],
 )
-def remote_skill(ds, method):
+def remote_skill(ds, args):
     """Lint fixture; never executed."""
     return ds
 

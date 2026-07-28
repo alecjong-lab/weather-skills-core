@@ -22,12 +22,12 @@ _SKILL_VERSION = "0.1.0"
     _SKILL_VERSION,
     input_type=types.ALL,
     output_type=types.ALL,
-    extra_args={
-        "method": {"choices": ["mean", "sum"], "required": True, "help": "Reducer."},
-        "window": {"type": int, "help": "Window width."},
-    },
+    extra_args=[
+        ("--method", {"choices": ["mean", "sum"], "required": True, "help": "Reducer."}),
+        ("--window", {"type": int, "help": "Window width."}),
+    ],
 )
-def alpha(ds, method, window):
+def alpha(ds, args):
     """Lint fixture; never executed."""
     return ds
 

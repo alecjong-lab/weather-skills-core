@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     input_type=types.ALL,
     output_type=types.ALL,
 )
-def no_manifest(ds):
+def no_manifest(ds, args):
     """Lint fixture; never executed."""
     return ds
 

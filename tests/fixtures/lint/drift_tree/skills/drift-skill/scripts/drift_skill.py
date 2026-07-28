@@ -16,11 +16,9 @@ _SKILL_VERSION = "0.1.0"
     _SKILL_VERSION,
     input_type=types.ALL,
     output_type=types.ALL,
-    extra_args={
-        "window": {"type": int, "help": "Declared but not documented (WSK301)."},
-    },
+    extra_args=[("--window", {"type": int, "help": "Declared but not documented (WSK301)."})],
 )
-def drift_skill(ds, window):
+def drift_skill(ds, args):
     """Lint fixture; never executed."""
     return ds
 

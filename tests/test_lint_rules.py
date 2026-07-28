@@ -79,7 +79,7 @@ class TestShadowRule:
             tmp_path,
             name="no-artifact",
             decorator_head="",
-            extra_args_src="{'input': {'help': 'x'}, 'output': {'help': 'y'}}",
+            extra_args_src="[('--input', {'help': 'x'}), ('--output', {'help': 'y'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -92,7 +92,7 @@ class TestShadowRule:
             tmp_path,
             name="artifact",
             decorator_head="output_type='gridded', ",
-            extra_args_src="{'input': {'help': 'x'}}",
+            extra_args_src="[('--input', {'help': 'x'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -105,7 +105,7 @@ class TestShadowRule:
             tmp_path,
             name="no-artifact-variable",
             decorator_head="",
-            extra_args_src="{'variable': {'help': 'x'}}",
+            extra_args_src="[('--variable', {'help': 'x'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -251,8 +251,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'shared': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'shared': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[('--shared', {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[('--shared', {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--shared"],
         )
@@ -266,8 +266,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[('--foo', {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[('--bar', {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--foo", "--bar"],
         )
@@ -280,8 +280,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[('--foo', {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[('--bar', {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--foo", "--bar", "--ghost"],
         )
@@ -296,8 +296,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("dup", "one", "{'date': {'type': str, 'help': 'x'}}"),
-                "two.py": _script("dup", "two", "{'clean': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("dup", "one", "[('--date', {'type': str, 'help': 'x'})]"),
+                "two.py": _script("dup", "two", "[('--clean', {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--date", "--clean"],
         )

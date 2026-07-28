@@ -15,14 +15,14 @@ _SKILL_VERSION = "0.1.0"
     "shadow-skill",
     _SKILL_VERSION,
     output_type=types.GRIDDED,
-    extra_args={
-        "date": {"help": "Redeclares the standard --date flag (WSK101)."},
-        "dims": {"help": "Redeclares the standard --dims flag (WSK101)."},
-        "title": {},
-        "period": {"choices": ["daily", "weekly"], "help": "A legitimate one-off flag."},
-    },
+    extra_args=[
+        ("--date", {"help": "Redeclares the standard --date flag (WSK101)."}),
+        ("--dims", {"help": "Redeclares the standard --dims flag (WSK101)."}),
+        ("--title",),
+        ("--period", {"choices": ["daily", "weekly"], "help": "A legitimate one-off flag."}),
+    ],
 )
-def shadow_skill(date, dims, title, period):
+def shadow_skill(args):
     """Lint fixture; never executed."""
 
 

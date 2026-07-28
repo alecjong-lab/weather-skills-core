@@ -17,9 +17,9 @@ _SKILL_VERSION = "0.1.0"
     input_type=types.ALL,
     output_type=types.ALL,
     bbox=types.OPTIONAL,
-    extra_args={"smoothing": {"type": int, "help": "Smoothing window width in grid cells."}},
+    extra_args=[("--smoothing", {"type": int, "help": "Smoothing window width in grid cells."})],
 )
-def clean_skill(ds, bbox, smoothing):
+def clean_skill(ds, args):
     """Lint fixture; never executed."""
     return ds
 

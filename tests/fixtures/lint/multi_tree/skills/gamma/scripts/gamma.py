@@ -16,12 +16,12 @@ _SKILL_VERSION = "0.1.0"
     _SKILL_VERSION,
     input_type=types.ALL,
     output_type=types.ALL,
-    extra_args={
-        "method": {"choices": ["nearest", "linear"], "help": "Interpolator."},
-        "window": {"type": float, "help": "Window width in degrees."},
-    },
+    extra_args=[
+        ("--method", {"choices": ["nearest", "linear"], "help": "Interpolator."}),
+        ("--window", {"type": float, "help": "Window width in degrees."}),
+    ],
 )
-def gamma(ds, method, window):
+def gamma(ds, args):
     """Lint fixture; never executed."""
     return ds
 

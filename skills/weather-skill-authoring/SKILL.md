@@ -84,7 +84,7 @@ _SKILL_VERSION = "0.1.0"
 
 
 @weather_skill("my-skill", _SKILL_VERSION, ...)
-def my_skill(ds, ...):
+def my_skill(ds, args):
     """Docstring shown as the CLI description."""
     ...
 
@@ -137,11 +137,11 @@ Declaration surface (all keyword-only after `name`, `version`):
   `types.ALL` and asserts the preservation in its body with `validate_type`
   (below) — the declaration cannot say "the same as the input" because with
   more than one input there is no saying which input that means.
-- Standard flags, enabled by toggles and passed as keyword arguments:
-  `start_time`/`end_time` (`--start`/`--end`), `date` (`--date`), `bbox`
-  (`types.REQUIRED` or `types.OPTIONAL`; the function receives a parsed
-  `(N, W, S, E)` tuple), `variable` (`types.SINGLE` or `types.REPEAT`), `workers`
-  (pass the default int), `title`, `dims`, `time_dim`.
+- Standard flags, enabled by toggles and delivered in the same arguments dict
+  as the extra arguments: `start_time`/`end_time` (`--start`/`--end`), `date`
+  (`--date`), `bbox` (`types.REQUIRED` or `types.OPTIONAL`; the body gets a
+  parsed `(N, W, S, E)` tuple), `variable` (`types.SINGLE` or `types.REPEAT`),
+  `workers` (pass the default int), `title`, `dims`, `time_dim`.
 - Toggle dict form: `start_time`/`end_time`/`date`, `bbox`, `variable`, and
   `workers` also accept a dict overriding the flag's argparse surface —
   `help` replaces the decorator-owned help text, `required` overrides
@@ -157,14 +157,30 @@ Declaration surface (all keyword-only after `name`, `version`):
   Prefer a dict-form standard toggle over redeclaring the same flag under
   `extra_args`: the toggle keeps the date grammar, the bbox parse/argv
   rewrite, and the resolved-provenance behavior.
-- `extra_args` — dest name to a bare type (`int`; `bool` makes a store-true
-  flag), a tuple of literal string choices (`("mean", "std")`), a constraint
-  set combining a type with a value domain (`{int, range(0, 2)}` derives
-  `choices`; the set must name the element type), or an argparse-keyword
-  dict (supports `positional`, `flag`, `aliases`, `repeat`, and any argparse
-  keyword such as `help`). A dest may not reuse a name the decorator
-  resolves and passes itself (`start_time`/`end_time`/`date`/`bbox`/
-  `context`).
+- `extra_args` — a list of `add_argument` calls, one tuple each. Every
+  leading element is a flag (or, with no leading dash, a positional's name);
+  an optional trailing dict carries argparse's own keywords, passed straight
+  through. **There is no Rhiza vocabulary on top of argparse** — if you know
+  `add_argument`, you know this:
+
+  ```python
+  @weather_skill(
+      "my-skill",
+      _SKILL_VERSION,
+      extra_args=[
+          ("--method", {"choices": ["mean", "std"], "required": True}),
+          ("--factor", "-f", {"type": float}),  # an alias is just another flag
+          ("--dim", {"action": "append"}),  # repeatable
+          ("--from", {"dest": "sender"}),  # dest differs from the flag
+          ("code", {"help": "ISO 3166-1 alpha-3"}),  # positional: no dashes
+          ("--cc",),  # no keywords needed
+      ],
+  )
+  ```
+
+  Dests are the ones argparse derives (explicit `dest` wins, else the first
+  long flag underscored), must be unique, and may not reuse a name the
+  decorator resolves itself (`start_time`/`end_time`/`date`/`bbox`/`context`).
 - `mutex_groups` — named groups of mutually exclusive `extra_args` (see
   below).
 - input paths — every dataset the decorator opens carries the path it came
@@ -200,11 +216,11 @@ when required):
 @weather_skill(
     "downscale", _SKILL_VERSION,
     input_type=types.GRIDDED, output_type=types.GRIDDED,
-    extra_args={
-        "factor": {"type": float, "aliases": ["-f"]},
-        "target_resolution": {"type": float},
-        "reference_grid": {},
-    },
+    extra_args=[
+        ("--factor", "-f", {"type": float}),
+        ("--target-resolution", {"type": float}),
+        ("--reference-grid",),
+    ],
     mutex_groups={
         "target": {"args": ("factor", "target_resolution", "reference_grid"),
                    "required": True},
@@ -285,16 +301,34 @@ def _store_is_complete(out, context):
     validate_args=_remember_request,
     completeness_probe=_store_is_complete,
 )
-def fetch(start_time, end_time, variable, context):
+def fetch(args, context):
     """Fetch and write a weather-skills envelope Zarr."""
+    start_time, end_time = args["start_time"], args["end_time"]
     ds = _open_remote(context)
     ...
 ```
 
-The function receives the opened input dataset(s) positionally, then the
-resolved parameters as keyword arguments. Raise
-`weather_skills_core.UsageError` for usage/validation failures (exit 2) and
-`weather_skills_core.DataError` for data-availability or hard failures
+The function receives the opened input dataset(s) positionally, then **one
+dict holding every argument**:
+
+```python
+def transform(ds, args): ...  # one input
+def compare(ds_a, ds_b, args): ...  # two inputs
+def concat(datasets, args): ...  # variadic: one list
+def fetch(args): ...  # no inputs
+def fetch(args, context): ...  # context stays a separate opt-in
+```
+
+The dict is keyed by dest and holds the `extra_args` values **and** every
+enabled standard toggle: `start_time`/`end_time`/`date` already resolved to
+`datetime.date`, `bbox` parsed to an `(N, W, S, E)` tuple, plus
+`variable`/`workers`/`title`/`dims`/`time_dim`. One mechanism, so a date is an
+ordinary entry rather than a special parameter. Bind what the body uses at the
+top — `period, method = args["period"], args["method"]` — and leave the rest in
+the dict.
+
+Raise `weather_skills_core.UsageError` for usage/validation failures (exit 2)
+and `weather_skills_core.DataError` for data-availability or hard failures
 (exit 1). Never call `sys.exit` from the body.
 
 Defer heavy imports (`xarray`, `numpy`, plotting, client libraries) into the
@@ -314,12 +348,12 @@ itself defers them.
     hash_input=False,  # cheap cache check; hash computed only on a miss
     cache_hit_label="clip",  # cache-hit line reads "skipping clip."
 )
-def clip_region(ds, bbox, dims):
+def clip_region(ds, args):
     """Spatially subset a gridded weather-skills envelope Zarr."""
     from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
 
-    lat_dim, lon_dim = detect_spatial_dims(ds, dims)
-    sub = bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
+    lat_dim, lon_dim = detect_spatial_dims(ds, args["dims"])
+    sub = bbox_subset(ds, args["bbox"], lat_dim=lat_dim, lon_dim=lon_dim)
     # Subsetting the spatial axes preserves the envelope shape.
     validate_type(sub, ds)
     return sub
@@ -367,8 +401,9 @@ def _store_is_complete(out):
     latest_resolver=_latest,
     completeness_probe=_store_is_complete,
 )
-def fetch(start_time, end_time, bbox):
+def fetch(args):
     """Fetch daily SST and write a weather-skills envelope Zarr."""
+    start_time, end_time, bbox = args["start_time"], args["end_time"], args["bbox"]
     import xarray as xr
 
     ...
@@ -405,8 +440,9 @@ def _set_write_encoding(ds):
     append_dim="time",
     write_encoding=_set_write_encoding,
 )
-def fetch(start_time, end_time, bbox):
+def fetch(args):
     """Fetch daily SST, one period per yield, bounded memory."""
+    start_time, end_time, bbox = args["start_time"], args["end_time"], args["bbox"]
     days = plan_days(start_time, end_time)
     if days and days[-1] != end_time:
         # Trailing days not yet published: record the effective window.
@@ -434,7 +470,7 @@ chain reflects every override, including one yielded after the final dataset
     title=True,
     savefig_kwargs={"bbox_inches": "tight"},
 )
-def plot_compare(ds_a, ds_b, title):
+def plot_compare(ds_a, ds_b, args):
     """Render two inputs as stacked heatmap rows."""
     import matplotlib
 
@@ -457,9 +493,9 @@ input; `weather_skills_history_<label>` per declared label otherwise, plus a
 @weather_skill(
     "resolve-region",
     _SKILL_VERSION,
-    extra_args={"code": {"positional": True, "metavar": "CODE"}, "geojson": str},
+    extra_args=[("code", {"metavar": "CODE"}), ("--geojson",)],
 )
-def resolve_region(code, geojson):
+def resolve_region(args):
     """Resolve an ISO 3166-1 alpha-3 country code to an N/W/S/E bbox."""
     print("12.0/33.9/-4.7/41.9")  # stdout is load-bearing: callers consume it
 ```

@@ -11,7 +11,7 @@ _SKILL_VERSION = "0.1.0"
     input_type=types.ALL,
     output_type=types.ALL,
 )
-def no_block(ds):
+def no_block(ds, args):
     """Lint fixture; never executed."""
     return ds
 

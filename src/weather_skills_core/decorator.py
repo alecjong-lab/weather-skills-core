@@ -5,8 +5,10 @@ toggles, extra arguments) and keeps only its domain logic; the decorator owns
 argparse construction, input reading, envelope validation, date resolution,
 provenance, the cache-hit short-circuit, and output writing.
 
-The wrapped function receives the input dataset(s) positionally followed by
-the resolved parameters as keyword arguments, and returns its output:
+The wrapped function receives the input dataset(s) positionally, then ONE
+dict holding every argument -- the extra arguments and the standard toggles
+alike, keyed by dest, with the dates already resolved -- and returns its
+output:
 
 - a Dataset for a zarr-writing skill (the decorator stamps provenance,
   writes it, and removes a partial store when the write fails);
@@ -223,57 +225,38 @@ def rewrite_bbox_argv(argv):
     return out
 
 
-def _add_extra_argument(parser, dest, spec):
-    """Add one ``extra_args`` entry to the parser.
+def _split_arg_spec(spec):
+    """Split one ``extra_args`` tuple into ``(add_argument args, kwargs)``.
 
-    ``spec`` is a bare type (``int``; ``bool`` becomes a store-true flag), a
-    tuple/list of literal string choices, a constraint set combining a type
-    with a value domain (``{int, range(0, 2)}`` derives ``choices``; the set
-    must name the element type alongside any choices), or a dict of argparse
-    keywords for full control with the extra keys ``positional``, ``flag``,
-    ``aliases``, and ``repeat``.
+    The tuple IS an ``add_argument`` call: every leading element is a flag
+    (or, without a leading dash, a positional's name) and an optional
+    trailing dict holds argparse's own keywords.
     """
-    flag_name = "--" + dest.replace("_", "-")
-    if isinstance(spec, dict):
-        spec = dict(spec)
-        positional = spec.pop("positional", False)
-        flag = spec.pop("flag", flag_name)
-        aliases = list(spec.pop("aliases", ()))
-        if spec.pop("repeat", False):
-            spec["action"] = "append"
-        if positional:
-            parser.add_argument(dest, **spec)
-        else:
-            parser.add_argument(flag, *aliases, dest=dest, **spec)
-        return
-    kwargs = {}
-    if spec is bool:
-        kwargs["action"] = "store_true"
-    elif isinstance(spec, type):
-        kwargs["type"] = spec
-    elif isinstance(spec, tuple | list):
-        # A top-level tuple/list spec lists the flag's choices literally,
-        # matched against the raw CLI string.
-        kwargs["choices"] = list(spec)
-    elif isinstance(spec, set | frozenset):
-        for element in spec:
-            if element is bool:
-                kwargs["action"] = "store_true"
-            elif isinstance(element, type):
-                kwargs["type"] = element
-            elif isinstance(element, range | tuple | list):
-                kwargs["choices"] = list(element)
-            else:
-                raise ValueError(f"unsupported constraint {element!r} for extra arg {dest!r}")
-        if "choices" in kwargs and "type" not in kwargs:
-            raise ValueError(
-                f"extra arg {dest!r} constrains choices without a type; the raw CLI "
-                "string would never match a typed choice. Add the element type to the "
-                "constraint set, or declare literal string choices as a top-level tuple."
-            )
-    else:
-        raise ValueError(f"unsupported extra_args spec {spec!r} for {dest!r}")
-    parser.add_argument(flag_name, dest=dest, **kwargs)
+    if isinstance(spec, str) or not isinstance(spec, tuple | list):
+        raise ValueError(  # noqa: TRY004 -- every declaration error is a ValueError
+            f"each extra_args entry is a tuple of add_argument arguments, not {spec!r}"
+        )
+    names = list(spec)
+    kwargs = names.pop() if names and isinstance(names[-1], dict) else {}
+    if not names:
+        raise ValueError(f"extra_args entry {spec!r} names no flag or positional")
+    return names, dict(kwargs)
+
+
+def _arg_dest(spec):
+    """The dest argparse will give one ``extra_args`` entry.
+
+    Mirrors argparse's own rule: an explicit ``dest`` wins, a positional is
+    its own name, and a flag uses the first long spelling with the leading
+    dashes stripped and inner dashes underscored.
+    """
+    names, kwargs = _split_arg_spec(spec)
+    if "dest" in kwargs:
+        return kwargs["dest"]
+    if not names[0].startswith("-"):
+        return names[0].replace("-", "_")
+    longs = [n for n in names if n.startswith("--")]
+    return (longs[0] if longs else names[0]).lstrip("-").replace("-", "_")
 
 
 def _normalize_date_toggle(name, value, *, extra_keys=()):
@@ -347,13 +330,14 @@ def _date_toggle_kwargs(cfg, default_help):
     return kwargs
 
 
-def _normalize_mutex_groups(mutex_groups, extra_args):
-    """Validate a ``mutex_groups`` declaration against ``extra_args``.
+def _normalize_mutex_groups(mutex_groups, specs_by_dest):
+    """Validate a ``mutex_groups`` declaration against the declared arguments.
 
-    Returns ``(group_required, dest_to_group)``: the per-group ``required``
-    flag and the dest-to-group-name membership map. Raises :class:`ValueError`
-    for a group naming an undeclared dest, a dest in two groups, a group with
-    fewer than two members, a positional member, or a member carrying its own
+    ``specs_by_dest`` maps each ``extra_args`` dest to its spec. Returns
+    ``(group_required, dest_to_group)``: the per-group ``required`` flag and
+    the dest-to-group-name membership map. Raises :class:`ValueError` for a
+    group naming an undeclared dest, a dest in two groups, a group with fewer
+    than two members, a positional member, or a member carrying its own
     ``required`` (requiredness belongs to the group).
     """
     group_required = {}
@@ -373,7 +357,7 @@ def _normalize_mutex_groups(mutex_groups, extra_args):
         if len(dests) < 2:
             raise ValueError(f"mutex group {group_name!r} needs at least two member dests")
         for dest in dests:
-            if dest not in (extra_args or {}):
+            if dest not in specs_by_dest:
                 raise ValueError(
                     f"mutex group {group_name!r} names {dest!r}, which is not an extra_args dest"
                 )
@@ -382,18 +366,17 @@ def _normalize_mutex_groups(mutex_groups, extra_args):
                     f"extra arg {dest!r} is in both mutex groups "
                     f"{dest_to_group[dest]!r} and {group_name!r}"
                 )
-            spec = extra_args[dest]
-            if isinstance(spec, dict):
-                if spec.get("positional"):
-                    raise ValueError(
-                        f"mutex group {group_name!r} member {dest!r} is positional; "
-                        "mutually exclusive arguments must be flags"
-                    )
-                if spec.get("required"):
-                    raise ValueError(
-                        f"mutex group {group_name!r} member {dest!r} sets required=True; "
-                        "declare requiredness on the group, not the member"
-                    )
+            names, kwargs = _split_arg_spec(specs_by_dest[dest])
+            if not names[0].startswith("-"):
+                raise ValueError(
+                    f"mutex group {group_name!r} member {dest!r} is positional; "
+                    "mutually exclusive arguments must be flags"
+                )
+            if kwargs.get("required"):
+                raise ValueError(
+                    f"mutex group {group_name!r} member {dest!r} sets required=True; "
+                    "declare requiredness on the group, not the member"
+                )
             dest_to_group[dest] = group_name
         group_required[group_name] = required
     return group_required, dest_to_group
@@ -507,13 +490,26 @@ def weather_skill(
       ``workers={"default": 4, ...}`` -- and ``date`` additionally accepts
       ``context``: the parenthetical label on the resolved-date stderr line
       (default ``"single date"``, e.g. ``"single forecast init date"``).
-    - ``extra_args`` -- mapping of dest name to a bare type, a tuple/list of
-      literal string choices, a constraint set combining a type with a value
-      domain (``{int, range(0, 2)}``), or an argparse-keyword dict. A dest
-      may not reuse a name the decorator resolves and passes itself
-      (``start_time``/``end_time``/``date``/``bbox``, and
-      ``context`` when the function opts into the run context): the resolved
-      value would clobber the extra argument's.
+    - ``extra_args`` -- a sequence of ``add_argument`` calls, one tuple each:
+      every leading element is a flag (or, with no leading dash, a
+      positional's name) and an optional trailing dict carries argparse's own
+      keywords, passed through verbatim. ``("--factor", "-f", {"type": int})``
+      is ``add_argument("--factor", "-f", type=int)``; ``("code", {...})`` is
+      a positional; ``("--cc",)`` needs no dict. There is no Rhiza vocabulary
+      on top -- a repeated flag is argparse's ``{"action": "append"}``, a dest
+      that differs from the flag is argparse's ``{"dest": ...}``. Dests are
+      the ones argparse derives, must be unique, and may not reuse a name the
+      decorator resolves itself (``start_time``/``end_time``/``date``/
+      ``bbox``, and ``context`` when the function opts into the run context):
+      the resolved value would clobber the extra argument's.
+    - argument delivery: the function is called as ``fn(*datasets, arguments)``
+      -- one dict keyed by dest, holding every ``extra_args`` value AND every
+      enabled standard toggle (``start_time``/``end_time``/``date`` already
+      resolved to :class:`datetime.date`, ``bbox`` parsed to an (N, W, S, E)
+      tuple, plus ``variable``/``workers``/``title``/``dims``/``time_dim``).
+      One mechanism, so a date is an ordinary entry rather than a special
+      parameter. A variadic skill gets ``fn(datasets, arguments)``. The run
+      context stays a separate ``context=`` keyword, never a dict entry.
     - ``mutex_groups`` -- mapping of group name to either a sequence of
       ``extra_args`` dests (an optional group) or a dict
       ``{"args": (dests...), "required": True}``. Each group becomes a real
@@ -648,7 +644,15 @@ def weather_skill(
         reserved_dests.add("date")
     if bbox_cfg is not None:
         reserved_dests.add("bbox")
-    collisions = sorted(reserved_dests & set(extra_args or {}))
+    # Every argument reaches the function under one key, so the dests argparse
+    # derives must not collide with each other or with a standard parameter's.
+    extra_specs = list(extra_args or ())
+    extra_dests = [_arg_dest(spec) for spec in extra_specs]
+    duplicates = sorted({d for d in extra_dests if extra_dests.count(d) > 1})
+    if duplicates:
+        raise ValueError(f"extra_args declares dest(s) {duplicates} more than once")
+    specs_by_dest = dict(zip(extra_dests, extra_specs, strict=True))
+    collisions = sorted(reserved_dests & set(extra_dests))
     if collisions:
         raise ValueError(
             f"extra_args dest(s) {collisions} collide with standard parameter names "
@@ -669,7 +673,7 @@ def weather_skill(
     input_dests = list(input_names) if input_names else (["input"] if input_types else [])
     input_dests = [d.replace("-", "_") for d in input_dests]
 
-    group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, extra_args)
+    group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, specs_by_dest)
     hit_label = cache_hit_label if cache_hit_label is not None else name
 
     # Per-hook run-context opt-in, resolved once at declaration time.
@@ -682,7 +686,7 @@ def weather_skill(
 
     def decorate(fn):
         fn_wants_ctx = _wants_context(fn)
-        if fn_wants_ctx and "context" in (extra_args or {}):
+        if fn_wants_ctx and "context" in extra_dests:
             raise ValueError(
                 "extra_args may not use the dest 'context' when the wrapped function "
                 "declares a context parameter (the run context would clobber it)"
@@ -796,9 +800,10 @@ def weather_skill(
             group_name: parser.add_mutually_exclusive_group(required=required)
             for group_name, required in group_required.items()
         }
-        for dest, spec in (extra_args or {}).items():
+        for dest, spec in specs_by_dest.items():
             target = groups.get(dest_to_group.get(dest), parser)
-            _add_extra_argument(target, dest, spec)
+            names, kwargs = _split_arg_spec(spec)
+            target.add_argument(*names, **kwargs)
         return parser
 
     def _execute(fn, args, fn_wants_ctx):
@@ -883,21 +888,21 @@ def weather_skill(
             params["dims"] = args.dims
         if time_dim:
             params["time_dim"] = args.time_dim
-        for dest in extra_args or {}:
+        for dest in extra_dests:
             params[dest] = getattr(args, dest)
-        if fn_wants_ctx:
-            params["context"] = context
+        # The run context stays a separate opt-in keyword, never a dict entry.
+        ctx_kwargs = {"context": context} if fn_wants_ctx else {}
 
         if output_type is None:
-            fn(**params)
+            fn(params, **ctx_kwargs)
             return
 
         entry_args = _entry_args(args, resolved_dates, context)
 
         if output_type == _types.PNG:
-            _run_png(fn, args, paths, out, entry_args, params, context)
+            _run_png(fn, args, paths, out, entry_args, params, ctx_kwargs, context)
             return
-        _run_zarr(fn, args, paths, out, entry_args, params, context)
+        _run_zarr(fn, args, paths, out, entry_args, params, ctx_kwargs, context)
 
     def _post_write(out, context):
         """Run the post-write hook, after the artifact write and before the Wrote line."""
@@ -997,10 +1002,11 @@ def weather_skill(
             datasets.append(ds)
         return datasets
 
-    def _call(fn, datasets, params):
+    def _call(fn, datasets, params, ctx_kwargs):
+        # Datasets stay positional; every argument arrives as one dict after them.
         if variadic_input:
-            return fn(datasets, **params)
-        return fn(*datasets, **params)
+            return fn(datasets, params, **ctx_kwargs)
+        return fn(*datasets, params, **ctx_kwargs)
 
     def _reference_inputs(args):
         refs = []
@@ -1013,7 +1019,7 @@ def weather_skill(
                 refs.append(ref_p)
         return _provenance.reference_ref(refs) if refs else None
 
-    def _run_png(fn, args, paths, out, entry_args, params, context):
+    def _run_png(fn, args, paths, out, entry_args, params, ctx_kwargs, context):
         if out.is_dir():
             raise UsageError(
                 f"--output {args.output} exists and is a directory; the png "
@@ -1039,7 +1045,9 @@ def weather_skill(
             chains.append((label, upstream + [entry]))
 
         datasets = _open_inputs(paths, args)
-        fig, _, summary = _split_extras(_call(fn, datasets, params), allow_override=False)
+        fig, _, summary = _split_extras(
+            _call(fn, datasets, params, ctx_kwargs), allow_override=False
+        )
 
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(
@@ -1058,7 +1066,7 @@ def weather_skill(
         _post_write(out, context)
         print(_wrote_line(args.output, "", summary), file=sys.stderr)
 
-    def _run_zarr(fn, args, paths, out, entry_args, params, context):
+    def _run_zarr(fn, args, paths, out, entry_args, params, ctx_kwargs, context):
         # The provenance entry is computed BEFORE the function runs: the entry
         # is the cache key, and a hit returns without calling the function or
         # touching the store.
@@ -1132,7 +1140,7 @@ def weather_skill(
                     )
 
         datasets = _open_inputs(paths, args)
-        result = _call(fn, datasets, params)
+        result = _call(fn, datasets, params, ctx_kwargs)
 
         if streaming:
             _write_streaming(result, out, upstream, entry, args, context)
