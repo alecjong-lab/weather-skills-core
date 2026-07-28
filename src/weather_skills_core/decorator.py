@@ -417,7 +417,6 @@ def weather_skill(
     post_write=None,
     append_dim="time",
     savefig_kwargs=None,
-    cache_hit_label=None,
     software=_provenance.DEFAULT_SOFTWARE,
 ):
     """Declare a weather skill.
@@ -557,11 +556,9 @@ def weather_skill(
     - PNG: ``history_labels`` gives the per-input suffix for the embedded
       history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
       the ``savefig`` call (default ``{"dpi": 150}``).
-    - stderr messages: ``cache_hit_label`` replaces the skill name as the
-      word after "skipping" in the cache-hit line (default: ``name``); the
-      ``Wrote:`` line's detail is customized by returning or yielding a
-      :class:`WroteSummary` (see its docstring). All other decorator-emitted
-      stderr lines are fixed.
+    - stderr messages: the ``Wrote:`` line's detail is customized by
+      returning or yielding a :class:`WroteSummary` (see its docstring).
+      All other decorator-emitted stderr lines are fixed.
     """
     input_types = _normalize_input_types(input_type)
     for declared in input_types:
@@ -674,7 +671,6 @@ def weather_skill(
     input_dests = [d.replace("-", "_") for d in input_dests]
 
     group_required, dest_to_group = _normalize_mutex_groups(mutex_groups, specs_by_dest)
-    hit_label = cache_hit_label if cache_hit_label is not None else name
 
     # Per-hook run-context opt-in, resolved once at declaration time.
     resolver_wants_ctx = latest_resolver is not None and _wants_context(latest_resolver)
@@ -1084,7 +1080,7 @@ def weather_skill(
             entry = _provenance.build_entry(name, version, entry_args, None, reference_inputs)
             if cache and _provenance.cache_hit(out, entry, fetcher=True, completeness_probe=probe):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
                     file=sys.stderr,
                 )
                 return
@@ -1101,7 +1097,7 @@ def weather_skill(
                 out, entry, upstream, compare_hash=hash_input, completeness_probe=probe
             ):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
                     file=sys.stderr,
                 )
                 return
@@ -1127,7 +1123,7 @@ def weather_skill(
             )
             if cache and _provenance.cache_hit(out, entry, upstream, completeness_probe=probe):
                 print(
-                    f"Cache hit: {args.output} already matches requested params; skipping {hit_label}.",
+                    f"Cache hit: {args.output} already matches requested params; skipping {name}.",
                     file=sys.stderr,
                 )
                 return

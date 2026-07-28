@@ -1938,14 +1938,10 @@ class TestPngMode:
 
 
 class TestOutputMessages:
-    def test_cache_hit_label_overrides_skill_word(self, tmp_path, gridded_store, capsys):
-        @weather_skill(
-            "clip-region",
-            "0.1.0",
-            input_type=types.ALL,
-            output_type=types.GRIDDED,
-            cache_hit_label="clip",
-        )
+    def test_cache_hit_names_the_skill(self, tmp_path, gridded_store, capsys):
+        # The line always names the skill, so a pipeline running several can
+        # be read back to the one that was skipped.
+        @weather_skill("clip-region", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def clip_region(ds, args):
             """Clip."""
             return ds.copy()
@@ -1954,7 +1950,7 @@ class TestOutputMessages:
         argv = ["-i", str(gridded_store), "-o", str(out)]
         clip_region(argv)
         clip_region(argv)
-        assert "skipping clip." in capsys.readouterr().err
+        assert "skipping clip-region." in capsys.readouterr().err
 
     def test_cache_hit_defaults_to_skill_name(self, tmp_path, gridded_store, capsys):
         skill = make_identity_skill([])

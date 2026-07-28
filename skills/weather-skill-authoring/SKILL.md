@@ -194,8 +194,7 @@ Declaration surface (all keyword-only after `name`, `version`):
 - Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
   `normalize_args`, `exclude_args`, `reference_args`, `history_labels`,
-  `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`,
-  `cache_hit_label`.
+  `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`.
 - `post_write` — `callable(path)` run after the artifact is written (zarr,
   streaming, or PNG; requires an artifact `output_type`), receiving the
   output path. Use it for read-back verification of the written store (a
@@ -346,7 +345,6 @@ itself defers them.
     bbox=types.REQUIRED,
     dims=True,
     hash_input=False,  # cheap cache check; hash computed only on a miss
-    cache_hit_label="clip",  # cache-hit line reads "skipping clip."
 )
 def clip_region(ds, args):
     """Spatially subset a gridded weather-skills envelope Zarr."""
@@ -844,9 +842,9 @@ own version of any of them:
 
 - the resolved-dates line for relative date tokens
   (`resolved "now-1w".."now" -> ... (7 days; ...)`);
-- `Cache hit: <output> already matches requested params; skipping <label>.`
-  — `<label>` defaults to the skill name; set `cache_hit_label` to change
-  the word (e.g. `cache_hit_label="clip"`);
+- `Cache hit: <output> already matches requested params; skipping <skill>.`
+  — always the skill name, so a pipeline running several skills says which
+  one was skipped;
 - `Wrote: <output> (<detail>)` — the default detail is the output's sizes
   for a standard zarr skill, `<append_dim>=<total>` for a streaming skill,
   and nothing for a PNG skill. To add or replace detail, return
