@@ -30,7 +30,7 @@ body holds only domain logic.
 | Class | Declaration shape | Function returns |
 | --- | --- | --- |
 | Transform | `input_type` + zarr `output_type` | a Dataset |
-| Fetcher | no `input_type`, zarr `output_type`, `source=` | a Dataset |
+| Fetcher | no `input_type`, zarr `output_type`, `set_source()` in the body | a Dataset |
 | Streaming fetcher | fetcher + `streaming=True` | a generator of per-period Datasets |
 | Plot | `input_type` + `output_type=types.PNG` | a matplotlib Figure |
 | No-artifact | no `output_type` | anything (ignored) |
@@ -77,7 +77,7 @@ The script is a PEP 723 single file. Skeleton:
 # ///
 """Module docstring: what the script is. Not read by the decorator."""
 
-from weather_skills_core import types, validate_type, weather_skill
+from weather_skills_core import set_source, types, validate_type, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.1.0"
@@ -192,7 +192,7 @@ Declaration surface (all keyword-only after `name`, `version`):
   strips it before every write — see "Metadata that must not reach the store"
   below. This is the supported way to learn an input's path: do not fish it
   out of `ds.encoding`.
-- Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
+- Hooks and cache behavior: `latest_resolver`, `streaming`,
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
   `normalize_args`, `exclude_args`, `preserve_order`, `reference_args`,
   `history_labels`,
@@ -294,7 +294,6 @@ def _store_is_complete(out, context):
     "my-fetch",
     _SKILL_VERSION,
     output_type=types.GRIDDED,
-    source="my-source",
     start_time=True,
     end_time=True,
     variable=types.SINGLE,
@@ -306,6 +305,7 @@ def fetch(args, context):
     """Fetch and write a weather-skills envelope Zarr."""
     start_time, end_time = args["start_time"], args["end_time"]
     ds = _open_remote(context)
+    set_source(ds, "my-source")
     ...
 ```
 
@@ -394,7 +394,6 @@ def _store_is_complete(out):
     "oisst-fetch",
     _SKILL_VERSION,
     output_type=types.GRIDDED,
-    source="oisst",
     start_time=True,
     end_time=True,
     bbox=types.OPTIONAL,
@@ -404,6 +403,8 @@ def _store_is_complete(out):
 def fetch(args):
     """Fetch daily SST and write a weather-skills envelope Zarr."""
     start_time, end_time, bbox = args["start_time"], args["end_time"], args["bbox"]
+    ...
+    set_source(ds, "oisst")
     import xarray as xr
 
     ...
@@ -432,7 +433,6 @@ def _set_write_encoding(ds):
     "oisst-fetch",
     _SKILL_VERSION,
     output_type=types.GRIDDED,
-    source="oisst",
     start_time=True,
     end_time=True,
     bbox=types.OPTIONAL,
@@ -448,7 +448,7 @@ def fetch(args):
         # Trailing days not yet published: record the effective window.
         yield EntryOverride({"end": days[-1].isoformat()})
     for day in days:
-        yield fetch_one_day(day, bbox)
+        yield set_source(fetch_one_day(day, bbox), "oisst")
 ```
 
 Yield one Dataset per period. The decorator writes the first with
@@ -762,6 +762,13 @@ parameterized by them. Do not reimplement any of these in a skill body.
   forecast envelope's scalar init `time` — probe by variables alone or write
   a bespoke probe. Write a bespoke probe only when a store needs checks this
   cannot express.
+- `set_source(ds, source)` — name the data product on a fetcher's output,
+  returning `ds`. It is the SOURCE's identity, not the skill's (`ecmwf-s2s`,
+  not `ecmwf-fetch`), so renaming the script cannot rewrite provenance; and it
+  is a body call, not a declaration, so the value may be one discovered at run
+  time (`f"dynamical:{dataset}"`). `stamp_zarr` leaves it alone, so it reaches
+  the written store and propagates to whatever a transform carries forward.
+  Exported at the top level. A fetcher that never calls it is WSK102.
 - `input_path(ds)` — the path the decorator opened this input from, as a
   `pathlib.Path`. Set on every opened input and stripped before write; raises
   `KeyError` for a dataset the decorator did not open. Exported at the top
@@ -1045,6 +1052,7 @@ as clean.
 | WSK201 | warning | A one-off flag name is not also declared by another corpus skill. **Advisory: off by default** (CONVENTIONS.md wants a flag doing the same job to share a name, so a shared flag is usually the desired consistency, not a defect; the genuinely-bad case — a shared name with a divergent shape — is WSK202). Opt in with `--extend-select WSK201` to survey shared flags that might be promoted to a core standard parameter. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
 | WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
 | WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |
+| WSK102 | warning | A fetcher-shaped skill (zarr `output_type`, no `input_type`) calls `set_source()`. | Name the data product in the body; nothing upstream can supply it. |
 | WSK401 | error | `_SKILL_VERSION` exists and is passed as the decorator's version argument. | Define the constant at module top and pass it (CI bumps it). |
 | WSK402 | error | The PEP 723 block declares weather-skills-core. | Add the core dependency to the inline script block. |
 

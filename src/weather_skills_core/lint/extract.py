@@ -94,6 +94,8 @@ class SkillDeclaration:
     has_input: bool = False
     input_arity: str = "single"
     has_output: bool = False
+    writes_zarr: bool = False  # output_type is a zarr envelope type, not PNG
+    sets_source: bool = False  # the script calls set_source() somewhere
     version_constant: bool = False
     version_passed: bool = False
     pep723_deps: list[str] | None = None  # None: no parseable script block
@@ -436,6 +438,20 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("output_type is not a literal; treated as artifact-writing")
     else:
         decl.has_output = output_type is not None
+        # A zarr envelope output, as opposed to PNG or no artifact. Unknown
+        # (dynamic) output types stay False: a rule must not fire on a shape
+        # extraction could not read.
+        zarr_types = set(types.ALL)
+        if isinstance(output_type, str):
+            decl.writes_zarr = output_type in zarr_types
+        elif isinstance(output_type, tuple | list | set):
+            decl.writes_zarr = bool(output_type) and all(t in zarr_types for t in output_type)
+
+    decl.sets_source = any(
+        (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "set_source"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    )
 
     decl.extra_args, decl.extra_args_dynamic = _extract_extra_args(
         keywords.get("extra_args"), decl.notes

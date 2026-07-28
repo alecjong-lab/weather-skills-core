@@ -16,6 +16,7 @@ from weather_skills_core import (
     UsageError,
     envelope,
     provenance,
+    set_source,
     types,
     weather_skill,
 )
@@ -1172,7 +1173,6 @@ class TestUnionOutputType:
             "shape-fetch",
             "0.1.0",
             output_type=(types.GRIDDED, types.FORECAST),
-            source="toy",
             **declaration,
         )
         def fetch(args):
@@ -1217,7 +1217,6 @@ class TestUnionOutputType:
             "0.1.0",
             output_type=(types.GRIDDED, types.FORECAST),
             streaming=True,
-            source="toy",
         )
         def fetch(args):
             """Stream."""
@@ -1271,11 +1270,11 @@ class TestCacheDisabled:
     def test_fetcher_always_recomputes(self, tmp_path):
         calls = []
 
-        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", cache=False)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, cache=False)
         def fetch(args):
             """Fetch a toy dataset."""
             calls.append(args)
-            return make_gridded()
+            return set_source(make_gridded(), "toy")
 
         out = tmp_path / "out.zarr"
         fetch(["-o", str(out)])
@@ -1300,11 +1299,11 @@ class TestCacheDisabled:
 
 class TestFetcherMode:
     def make_fetcher(self, calls, **declaration):
-        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, **declaration)
         def fetch(args):
             """Fetch a toy dataset."""
             calls.append(args)
-            return make_gridded()
+            return set_source(make_gridded(), "toy")
 
         return fetch
 
@@ -1487,11 +1486,11 @@ class TestExitCodes:
 
 class TestEmptyStringValues:
     def make_fetcher(self, calls, **declaration):
-        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, **declaration)
         def fetch(args):
             """Fetch a toy dataset."""
             calls.append(args)
-            return make_gridded()
+            return set_source(make_gridded(), "toy")
 
         return fetch
 
@@ -1785,12 +1784,12 @@ class TestStreaming:
             "0.1.0",
             output_type=types.GRIDDED,
             streaming=True,
-            source="toy",
             **declaration,
         )
         def fetch(args):
             """Stream a toy dataset per period."""
-            yield from pieces()
+            for piece in pieces():
+                yield set_source(piece, "toy") if hasattr(piece, "attrs") else piece
 
         return fetch
 
@@ -2541,7 +2540,7 @@ class TestPostWrite:
             seen["calendar"] = context.state["source_calendar"]
             seen["path"] = path
 
-        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, source="toy", post_write=verify)
+        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, post_write=verify)
         def fetch(args, context):
             """Fetch."""
             context.state["source_calendar"] = "noleap"
@@ -2644,7 +2643,6 @@ class TestRunContext:
             "f",
             "0.1.0",
             output_type=types.GRIDDED,
-            source="toy",
             validate_args=validate,
             completeness_probe=probe,
             write_encoding=encode,

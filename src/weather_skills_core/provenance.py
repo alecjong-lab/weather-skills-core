@@ -507,14 +507,16 @@ def make_completeness_probe(variables=None, *, check_time: str | None = None):
     return probe
 
 
-def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
+def stamp_zarr(ds, history: list) -> None:
     """Stamp a dataset for writing: history attr, input-path strip, encoding clear.
 
     Serializes ``history`` (the full chain, oldest first) onto
-    ``weather_skills_history`` with sorted keys, sets ``weather_skills_source``
-    when ``source`` is given (fetchers), drops :data:`INPUT_PATH_ATTR`, and
-    clears every variable's ``encoding`` -- per-variable encoding is not part
-    of the envelope contract, so re-writes must not carry the input's codecs.
+    ``weather_skills_history`` with sorted keys, drops :data:`INPUT_PATH_ATTR`,
+    and clears every variable's ``encoding`` -- per-variable encoding is not
+    part of the envelope contract, so re-writes must not carry the input's
+    codecs. ``weather_skills_source`` is the fetcher's own to set, with
+    :func:`set_source`; it is left untouched here, so it survives the write and
+    propagates to whatever a transform carries forward.
     Skills that need controlled write encodings (time units/calendar,
     ``_FillValue``) set them after this call so the clear cannot drop them.
     Other pre-existing attrs are left untouched.
@@ -526,11 +528,23 @@ def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
     result before stamping, so the attr reaches here on every transform.
     """
     ds.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
-    if source is not None:
-        ds.attrs[SOURCE_ATTR] = source
     ds.attrs.pop(INPUT_PATH_ATTR, None)
     for v in ds.variables:
         ds[v].encoding = {}
+
+
+def set_source(ds, source: str):
+    """Name the data product this dataset came from, returning ``ds``.
+
+    Sets ``weather_skills_source``: the identity of the SOURCE, not of the
+    skill that fetched it (``ecmwf-s2s``, not ``ecmwf-fetch``), so a rename of
+    the script cannot silently rewrite provenance. A fetcher calls this in its
+    body, which lets the value be one discovered at run time. The attr rides on
+    the dataset, so a transform carrying its input's attrs forward propagates
+    it down the pipeline.
+    """
+    ds.attrs[SOURCE_ATTR] = source
+    return ds
 
 
 def input_path(ds) -> Path:

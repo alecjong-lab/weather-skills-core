@@ -405,7 +405,6 @@ def weather_skill(
     extra_args=None,
     mutex_groups=None,
     latest_resolver=None,
-    source=None,
     streaming=False,
     cache=True,
     hash_input=True,
@@ -521,7 +520,6 @@ def weather_skill(
       name labels the declaration only (argparse mutex groups are untitled).
     - ``latest_resolver`` -- ``callable(args) -> date`` resolving the
       ``latest`` token; invoked lazily, at most once per run.
-    - ``source`` -- ``weather_skills_source`` value stamped on fetcher output.
     - ``streaming`` -- the function is a generator yielding per-period
       datasets, written as ``mode="w"`` then appends along ``append_dim``.
     - cache behavior: ``cache=False`` disables the cache check entirely -- the
@@ -1165,7 +1163,7 @@ def weather_skill(
         # under the function's own attrs, then stamp the new chain over both.
         if datasets:
             result.attrs = {**datasets[0].attrs, **result.attrs}
-        _provenance.stamp_zarr(result, upstream + [entry], source=source)
+        _provenance.stamp_zarr(result, upstream + [entry])
         if write_encoding is not None:
             _call_hook(write_encoding, result, wants_context=encoding_wants_ctx, context=context)
         _remove_existing(out)
@@ -1209,7 +1207,7 @@ def weather_skill(
                 piece = item
                 if output_union is not None:
                     _check_output_union(piece, args)
-                _provenance.stamp_zarr(piece, upstream + [entry], source=source)
+                _provenance.stamp_zarr(piece, upstream + [entry])
                 if write_encoding is not None:
                     _call_hook(
                         write_encoding, piece, wants_context=encoding_wants_ctx, context=context

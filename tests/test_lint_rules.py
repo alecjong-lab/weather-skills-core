@@ -38,6 +38,61 @@ class TestCleanSkill:
         assert all("no corpus beyond the target" in s["reason"] for s in report.skipped_rules)
 
 
+class TestSourceRule:
+    """WSK102 keys on fetcher shape: a zarr envelope written from no zarr input."""
+
+    def _skill(self, tmp_path, name, decl, body="    pass\n"):
+        skill = tmp_path / name
+        (skill / "scripts").mkdir(parents=True)
+        (skill / "scripts" / "run.py").write_text(
+            _PEP723
+            + "from weather_skills_core import set_source, types, weather_skill\n"
+            + '_SKILL_VERSION = "0.1.0"\n'
+            + f"@weather_skill({name!r}, _SKILL_VERSION, {decl})\n"
+            + "def run(args):\n"
+            + body
+        )
+        (skill / "SKILL.md").write_text(_manifest([]))
+        return skill
+
+    def codes(self, report):
+        return [f.rule for f in report.findings]
+
+    def test_fetcher_without_a_source_fires(self, tmp_path):
+        skill = self._skill(tmp_path, "toy-fetch", "output_type=types.GRIDDED")
+        report = run_lint(skill, [])
+        assert "WSK102" in self.codes(report)
+        assert "never calls set_source()" in next(
+            f.message for f in report.findings if f.rule == "WSK102"
+        )
+
+    def test_fetcher_calling_set_source_is_clean(self, tmp_path):
+        skill = self._skill(
+            tmp_path,
+            "toy-fetch",
+            "output_type=types.GRIDDED",
+            body='    set_source(args, "toy")\n',
+        )
+        assert "WSK102" not in self.codes(run_lint(skill, []))
+
+    def test_transform_is_not_fetcher_shaped(self, tmp_path):
+        # It inherits the attr from its input, so it owes no source of its own.
+        skill = self._skill(
+            tmp_path, "toy-transform", "input_type=types.ALL, output_type=types.ALL"
+        )
+        assert "WSK102" not in self.codes(run_lint(skill, []))
+
+    def test_png_and_no_artifact_skills_are_not_fetcher_shaped(self, tmp_path):
+        png = self._skill(tmp_path, "toy-plot", "input_type=types.ALL, output_type=types.PNG")
+        assert "WSK102" not in self.codes(run_lint(png, []))
+        bare = self._skill(tmp_path, "toy-report", 'extra_args=[("--to",)]')
+        assert "WSK102" not in self.codes(run_lint(bare, []))
+
+    def test_union_of_zarr_types_is_still_fetcher_shaped(self, tmp_path):
+        skill = self._skill(tmp_path, "toy-fetch", "output_type=(types.GRIDDED, types.FORECAST)")
+        assert "WSK102" in self.codes(run_lint(skill, []))
+
+
 class TestShadowRule:
     def test_each_shadowing_extra_arg_fires_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
@@ -420,10 +475,10 @@ class TestSelectionEndToEnd:
 
 class TestScoreRubric:
     def test_warning_only_rule_scores_half_of_that_rule(self):
-        # shadow-skill: 4 applicable rules (no corpus), one rule at its
-        # warning floor -> (0.5 + 3) / 4 = 87.5, rounded to 88.
+        # shadow-skill: 5 applicable rules (no corpus), one rule at its
+        # warning floor -> (0.5 + 4) / 5 = 90.
         report = run_lint(FIXTURES / "shadow_tree", [])
-        assert score_of(report, "shadow-skill") == 88
+        assert score_of(report, "shadow-skill") == 90
 
     def test_cross_rules_excluded_from_the_denominator_when_skipped(self):
         # Linted alone, clean-skill scores over the 4 per-skill rules only;

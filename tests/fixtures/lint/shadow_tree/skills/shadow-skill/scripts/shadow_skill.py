@@ -6,7 +6,7 @@
 # ///
 """Lint fixture: extra_args entries shadowing standard parameters. Never executed."""
 
-from weather_skills_core import types, weather_skill
+from weather_skills_core import set_source, types, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -24,6 +24,7 @@ _SKILL_VERSION = "0.1.0"
 )
 def shadow_skill(args):
     """Lint fixture; never executed."""
+    set_source(args, "shadow")  # keeps WSK102 quiet: this fixture is about WSK101
 
 
 if __name__ == "__main__":
