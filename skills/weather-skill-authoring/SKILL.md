@@ -845,13 +845,10 @@ own version of any of them:
 - `Cache hit: <output> already matches requested params; skipping <skill>.`
   — always the skill name, so a pipeline running several skills says which
   one was skipped;
-- `Wrote: <output> (<detail>)` — the default detail is the output's sizes
+- `Wrote: <output> (<detail>)` — the detail is the output's dimension sizes
   for a standard zarr skill, `<append_dim>=<total>` for a streaming skill,
-  and nothing for a PNG skill. To add or replace detail, return
-  `weather_skills_core.WroteSummary("...")` alongside the output (a tuple:
-  `return ds, WroteSummary("variable 'precip' -> 'rain'")`; combinable with
-  an `EntryOverride`), or yield it from a streaming generator. The text is
-  appended after the default detail unless `replace=True`;
+  and nothing for a PNG skill. It is not customizable: a skill with more to
+  say prints its own stderr line, which lands before this one;
 - the opaque-input warnings (`no upstream weather_skills_history ...`), the
   incomplete-store re-fetch note, the partial-store removal note, and the
   malformed-history note.

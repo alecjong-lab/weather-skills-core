@@ -19,10 +19,9 @@ output:
   (the decorator saves it with provenance embedded in the PNG metadata);
 - anything (ignored) for a no-artifact skill.
 
-An artifact-writing skill may return a tuple -- the output first, followed by
-marker objects: an :class:`EntryOverride` rewriting the recorded provenance
-args (zarr modes) and/or a :class:`WroteSummary` customizing the ``Wrote:``
-stderr line. A streaming skill yields either marker from its generator.
+A zarr-writing skill may return ``(dataset, EntryOverride)`` instead of a
+bare dataset, rewriting the recorded provenance args; a streaming skill
+yields the override from its generator.
 
 Calling the decorated function runs the CLI on ``sys.argv``; pass ``argv`` to
 run it on an explicit argument list. Usage/validation failures exit 2 and
@@ -114,34 +113,8 @@ def _call_hook(hook, *hook_args, wants_context, context):
     return hook(*hook_args)
 
 
-@dataclass
-class WroteSummary:
-    """Customize the detail of the decorator's ``Wrote:`` stderr line.
-
-    ``detail`` is extra text for the line's parenthetical: appended after the
-    default detail (``"; "``-separated) unless ``replace=True``, which makes
-    it the whole parenthetical. The defaults are the output sizes for a
-    standard zarr skill, ``<append_dim>=<total>`` for a streaming skill, and
-    nothing for a PNG skill.
-
-    A standard-mode skill returns it alongside the dataset -- ``(dataset,
-    WroteSummary(...))``, in any combination with an :class:`EntryOverride`;
-    a PNG skill returns ``(figure, WroteSummary(...))``; a streaming skill
-    yields it from the generator (the last one yielded wins).
-    """
-
-    detail: str
-    replace: bool = False
-
-
-def _wrote_line(output, default_detail, summary):
-    """Compose the ``Wrote:`` stderr line from the default detail and a summary."""
-    if summary is None:
-        detail = default_detail
-    elif summary.replace or not default_detail:
-        detail = summary.detail
-    else:
-        detail = f"{default_detail}; {summary.detail}"
+def _wrote_line(output, detail):
+    """The ``Wrote:`` stderr line, with the write mode's detail parenthesized."""
     suffix = f" ({detail})" if detail else ""
     return f"Wrote: {output}{suffix}"
 
@@ -165,31 +138,23 @@ class EntryOverride:
 
 
 def _split_extras(result, *, allow_override=True):
-    """Unpack a wrapped function's return into ``(primary, override, summary)``.
+    """Unpack a wrapped function's return into ``(primary, override)``.
 
-    A non-tuple return is the primary result alone. A tuple return's first
-    element is the primary result (the dataset or figure); each remaining
-    element must be a marker -- at most one :class:`EntryOverride` (rejected
-    with ``allow_override=False``, i.e. in PNG mode, where the entries are
-    embedded before the function runs) and at most one :class:`WroteSummary`.
-    Anything else raises :class:`TypeError`.
+    A bare return is the primary result (the dataset or figure) alone; the
+    only tuple form is ``(primary, EntryOverride)``, and PNG mode
+    (``allow_override=False``) has no tuple form at all because its entries
+    are embedded before the function runs. Anything else raises
+    :class:`TypeError`.
     """
     if not isinstance(result, tuple):
-        return result, None, None
+        return result, None
     primary, *extras = result
-    override = summary = None
-    for extra in extras:
-        if allow_override and isinstance(extra, EntryOverride) and override is None:
-            override = extra
-        elif isinstance(extra, WroteSummary) and summary is None:
-            summary = extra
-        else:
-            raise TypeError(
-                f"unexpected extra return value {extra!r}: a tuple return holds the "
-                "output first, then at most one EntryOverride (zarr mode only) and "
-                "at most one WroteSummary"
-            )
-    return primary, override, summary
+    if not (allow_override and len(extras) == 1 and isinstance(extras[0], EntryOverride)):
+        raise TypeError(
+            f"unexpected extra return value(s) {extras!r}: a tuple return holds "
+            "the output followed by exactly one EntryOverride (zarr mode only)"
+        )
+    return primary, extras[0]
 
 
 def _remove_existing(path):
@@ -556,9 +521,10 @@ def weather_skill(
     - PNG: ``history_labels`` gives the per-input suffix for the embedded
       history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
       the ``savefig`` call (default ``{"dpi": 150}``).
-    - stderr messages: the ``Wrote:`` line's detail is customized by
-      returning or yielding a :class:`WroteSummary` (see its docstring).
-      All other decorator-emitted stderr lines are fixed.
+    - stderr messages: every decorator-emitted line is fixed. The ``Wrote:``
+      line's detail is the output's dimension sizes for a zarr write,
+      ``<append_dim>=<total>`` for a streaming write, and nothing for a PNG.
+      A skill wanting to say more prints its own stderr line.
     """
     input_types = _normalize_input_types(input_type)
     for declared in input_types:
@@ -1041,9 +1007,7 @@ def weather_skill(
             chains.append((label, upstream + [entry]))
 
         datasets = _open_inputs(paths, args)
-        fig, _, summary = _split_extras(
-            _call(fn, datasets, params, ctx_kwargs), allow_override=False
-        )
+        fig, _ = _split_extras(_call(fn, datasets, params, ctx_kwargs), allow_override=False)
 
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(
@@ -1060,7 +1024,7 @@ def weather_skill(
         else:
             plt.close(fig)
         _post_write(out, context)
-        print(_wrote_line(args.output, "", summary), file=sys.stderr)
+        print(_wrote_line(args.output, ""), file=sys.stderr)
 
     def _run_zarr(fn, args, paths, out, entry_args, params, ctx_kwargs, context):
         # The provenance entry is computed BEFORE the function runs: the entry
@@ -1142,7 +1106,7 @@ def weather_skill(
             _write_streaming(result, out, upstream, entry, args, context)
             return
 
-        result, override, summary = _split_extras(result)
+        result, override = _split_extras(result)
         if output_union is not None:
             _check_output_union(result, args)
         if override is not None:
@@ -1173,7 +1137,7 @@ def weather_skill(
                 )
             raise
         _post_write(out, context)
-        print(_wrote_line(args.output, f"{dict(result.sizes)}", summary), file=sys.stderr)
+        print(_wrote_line(args.output, f"{dict(result.sizes)}"), file=sys.stderr)
 
     def _write_streaming(gen, out, upstream, entry, args, context):
         # First write is mode="w"; later periods append along append_dim.
@@ -1186,15 +1150,11 @@ def weather_skill(
         # flips and so can never be deleted by the rollback.
         store_created = False
         total = 0
-        summary = None
         written_entry = None
         try:
             for item in gen:
                 if isinstance(item, EntryOverride):
                     entry = {**entry, "args": {**entry["args"], **item.args}}
-                    continue
-                if isinstance(item, WroteSummary):
-                    summary = item
                     continue
                 piece = item
                 if output_union is not None:
@@ -1229,7 +1189,7 @@ def weather_skill(
             # the last stamp; correct the persisted chain in place.
             _provenance.restamp_zarr(out, upstream + [entry])
         _post_write(out, context)
-        print(_wrote_line(args.output, f"{append_dim}={total}", summary), file=sys.stderr)
+        print(_wrote_line(args.output, f"{append_dim}={total}"), file=sys.stderr)
 
     return decorate
 
