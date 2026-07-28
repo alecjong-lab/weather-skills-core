@@ -890,6 +890,55 @@ class TestAllInputType:
         assert exc.value.code == 2
         assert "not in dataset dims" in capsys.readouterr().err
 
+    def test_time_dim_default_is_validated_like_a_given_value(self, tmp_path, capsys):
+        # A string time_dim is an argparse DEFAULT, so the dest holds it on
+        # every run and validation cannot tell it from a user-given --time-dim.
+        # A forecast, whose `time` is a scalar coord rather than a dim, is
+        # therefore rejected -- declare time_dim=True unless the skill really
+        # does require that dim on every input.
+        store = tmp_path / "fc.zarr"
+        make_forecast().to_zarr(store, mode="w", consolidated=True)
+        defaulted = make_identity_skill([], input_type=types.ALL, time_dim="time")
+        with pytest.raises(SystemExit) as exc:
+            defaulted(["-i", str(store), "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "--time-dim 'time' not in dataset dims" in capsys.readouterr().err
+
+        toggled = make_identity_skill([], input_type=types.ALL, time_dim=True)
+        toggled(["-i", str(store), "-o", str(tmp_path / "o2.zarr")])
+
+    def test_time_dim_toggle_resolves_lazily_in_the_body(self, tmp_path, capsys):
+        # What a skill does instead of declaring a default: leave the dest None
+        # and resolve when the axis is actually needed, so an input without one
+        # reaches the body and an explicit --time-dim stays authoritative.
+        seen = []
+
+        @weather_skill(
+            "resolve", "0.1.0", input_type=types.ALL, output_type=types.ALL, time_dim=True
+        )
+        def resolve(ds, time_dim):
+            """Resolve the time axis in the body."""
+            seen.append(envelope.detect_time_dim(ds, time_dim))
+            return ds.copy()
+
+        detectable = tmp_path / "detectable.zarr"
+        make_gridded().to_zarr(detectable, mode="w", consolidated=True)
+        resolve(["-i", str(detectable), "-o", str(tmp_path / "a.zarr")])
+        assert seen == ["time"]
+
+        renamed = tmp_path / "renamed.zarr"
+        make_gridded().rename({"time": "t"}).to_zarr(renamed, mode="w", consolidated=True)
+        resolve(["-i", str(renamed), "-o", str(tmp_path / "b.zarr"), "--time-dim", "t"])
+        assert seen == ["time", "t"]
+
+        undetectable = tmp_path / "undetectable.zarr"
+        ds = make_gridded().rename({"time": "record"}).drop_vars("record")
+        ds.to_zarr(undetectable, mode="w", consolidated=True)
+        with pytest.raises(SystemExit) as exc:
+            resolve(["-i", str(undetectable), "-o", str(tmp_path / "c.zarr")])
+        assert exc.value.code == 2
+        assert "Pass --time-dim to override" in capsys.readouterr().err
+
 
 class TestShapePreservingTransform:
     def test_end_to_end(self, tmp_path, gridded_store):
