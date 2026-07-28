@@ -9,6 +9,7 @@ import xarray as xr
 from conftest import make_forecast, make_gridded, make_series, make_station
 
 from weather_skills_core import (
+    DATE_GRAMMAR,
     DataError,
     EntryOverride,
     RunContext,
@@ -344,6 +345,43 @@ class TestTypeUnions:
             weather_skill("x", "0.1.0", input_type="gridded,gridded", output_type=types.GRIDDED)(
                 lambda a, b: None
             )
+
+
+class TestDateGrammarHelp:
+    """Core owns the date grammar, so core puts it in the help."""
+
+    def help_text(self, skill, capsys):
+        with pytest.raises(SystemExit):
+            skill(["--help"])
+        return " ".join(capsys.readouterr().out.split())
+
+    def test_appended_to_start_and_date(self, capsys):
+        grammar = " ".join(DATE_GRAMMAR.split())
+        starter = make_identity_skill([], start_time=True, end_time=True)
+        assert grammar in self.help_text(starter, capsys)
+        dated = make_identity_skill([], date=True)
+        assert grammar in self.help_text(dated, capsys)
+
+    def test_end_cross_references_instead_of_repeating(self, capsys):
+        skill = make_identity_skill([], start_time=True, end_time=True)
+        text = self.help_text(skill, capsys)
+        # Exactly once per --help: --end points at --start rather than
+        # printing the grammar a second time.
+        assert text.count(" ".join(DATE_GRAMMAR.split())) == 1
+        assert "Same date grammar as --start." in text
+
+    def test_a_skill_note_precedes_the_grammar_without_restating_it(self, capsys):
+        # The smallest spelling for source-specific content: override `help`
+        # with the flag's own sentence; core appends the grammar to it.
+        skill = make_identity_skill(
+            [],
+            start_time={"help": "Start date. 'latest' is the current UTC date here."},
+            end_time=True,
+        )
+        text = self.help_text(skill, capsys)
+        note = "Start date. 'latest' is the current UTC date here."
+        assert f"{note} {' '.join(DATE_GRAMMAR.split())}" in text
+        assert text.count(" ".join(DATE_GRAMMAR.split())) == 1
 
 
 class TestToggleDictForm:

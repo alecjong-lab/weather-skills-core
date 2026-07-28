@@ -99,7 +99,9 @@ class TestToggleSurface:
                 continue
             action = action_by_dest(parser, param.dest)
             if param.accepts_help:
-                assert action.help == DICT_HELP, param.name
+                # The declared help leads; a date flag then carries the
+                # decorator-appended grammar.
+                assert action.help.startswith(DICT_HELP), param.name
             else:
                 # No dict form: the decorator-owned help (or none) applies.
                 assert action.help != DICT_HELP, param.name

@@ -2,6 +2,7 @@
 
 from weather_skills_core import types
 from weather_skills_core.decorator import (
+    DATE_GRAMMAR,
     EntryOverride,
     RunContext,
     StandardParameter,
@@ -13,6 +14,7 @@ from weather_skills_core.errors import DataError, SkillError, UsageError
 from weather_skills_core.provenance import input_path
 
 __all__ = [
+    "DATE_GRAMMAR",
     "DataError",
     "EntryOverride",
     "RunContext",

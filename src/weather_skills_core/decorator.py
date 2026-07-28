@@ -45,15 +45,18 @@ from weather_skills_core import provenance as _provenance
 from weather_skills_core import types as _types
 from weather_skills_core.errors import DataError, SkillError, UsageError
 
-_START_HELP = (
-    "Range start, inclusive. Either YYYY-MM-DD, 'now'/'today', 'latest', "
-    "or an offset 'now-<int>{d|w}' / 'latest-<int>{d|w}' (w = 7 days)."
+#: Core owns the date grammar, so core states it: the decorator appends this to
+#: the help of every date flag it registers, whether the help is the default
+#: below or a skill's own sentence. --end cross-references --start instead, so
+#: one --help never prints the grammar twice. Exported for the rare skill whose
+#: date flag is an ``extra_args`` entry rather than a standard toggle.
+DATE_GRAMMAR = (
+    "Either YYYY-MM-DD, 'now'/'today', 'latest', or an offset "
+    "'now-<int>{d|w}' / 'latest-<int>{d|w}' (w = 7 days)."
 )
+_START_HELP = "Range start, inclusive."
 _END_HELP = "Range end, inclusive. Same date grammar as --start."
-_DATE_HELP = (
-    "Date. Either YYYY-MM-DD, 'now'/'today', 'latest', "
-    "or an offset 'now-<int>{d|w}' / 'latest-<int>{d|w}' (w = 7 days)."
-)
+_DATE_HELP = "Date."
 _BBOX_REQUIRED_HELP = (
     "N/W/S/E decimal degrees (use the resolve-region skill to get a country's bbox)"
 )
@@ -287,9 +290,18 @@ def _normalize_workers_toggle(value):
     raise ValueError(f"workers must be an int default or a dict, not {value!r}")
 
 
-def _date_toggle_kwargs(cfg, default_help):
-    """argparse keywords for a standard date toggle from its normalized config."""
-    kwargs = {"required": cfg.get("required", True), "help": cfg.get("help", default_help)}
+def _date_toggle_kwargs(cfg, default_help, *, grammar=True):
+    """argparse keywords for a standard date toggle from its normalized config.
+
+    The flag's own sentence is the default or the toggle's ``help`` override; a
+    skill states only what is source-specific and the date grammar is appended
+    here. ``grammar=False`` is ``--end``, whose default sentence points at
+    ``--start`` rather than repeating it.
+    """
+    help_text = cfg.get("help", default_help)
+    if grammar:
+        help_text = f"{help_text} {DATE_GRAMMAR}"
+    kwargs = {"required": cfg.get("required", True), "help": help_text}
     if "choices" in cfg:
         kwargs["choices"] = cfg["choices"]
     return kwargs
@@ -713,7 +725,7 @@ def weather_skill(
         if start_cfg is not None:
             parser.add_argument("--start", **_date_toggle_kwargs(start_cfg, _START_HELP))
         if end_cfg is not None:
-            parser.add_argument("--end", **_date_toggle_kwargs(end_cfg, _END_HELP))
+            parser.add_argument("--end", **_date_toggle_kwargs(end_cfg, _END_HELP, grammar=False))
         if date_cfg is not None:
             parser.add_argument("--date", **_date_toggle_kwargs(date_cfg, _DATE_HELP))
         if bbox_cfg is not None:

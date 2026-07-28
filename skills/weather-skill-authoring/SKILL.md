@@ -144,7 +144,8 @@ Declaration surface (all keyword-only after `name`, `version`):
   `workers` (pass the default int), `title`, `dims`, `time_dim`.
 - Toggle dict form: `start_time`/`end_time`/`date`, `bbox`, `variable`, and
   `workers` also accept a dict overriding the flag's argparse surface —
-  `help` replaces the decorator-owned help text, `required` overrides
+  `help` replaces the decorator-owned sentence (on a date flag the grammar
+  is still appended; see below), `required` overrides
   requiredness (`--start`/`--end`/`--date` default to required; with
   `"required": False` an omitted value reaches the function as `None` and no
   resolved date is recorded), and `choices` constrains the accepted values.
@@ -512,6 +513,28 @@ offsets, and reversed ranges exit 2 before any network call; relative
 resolutions print a stderr line with the resolved dates. Your only obligation
 is the `latest_resolver` callable for sources that support `latest` — one
 bounded discovery call returning a `datetime.date`.
+
+**You never write the grammar into help text either.** The decorator appends
+it to `--start` and `--date`, and points `--end` at `--start` so one `--help`
+never prints it twice. `start_time=True` is the whole declaration for a plain
+date range.
+
+To add something source-specific, override `help` with **your sentence only**
+— the grammar still follows it:
+
+```python
+start_time = ({"help": "Start date (inclusive). 'latest' resolves to the current UTC date."},)
+end_time = (True,)
+```
+
+renders as `Start date (inclusive). 'latest' resolves to the current UTC
+date. Either YYYY-MM-DD, 'now'/'today', 'latest', or an offset ...`. Restating
+the grammar yourself only duplicates it.
+
+A date flag declared as an `extra_args` entry rather than a toggle (because
+the dataset decides whether a range or a single date applies, say) gets no
+automatic grammar; interpolate `DATE_GRAMMAR` (`from weather_skills_core
+import DATE_GRAMMAR`) instead of retyping the sentence.
 
 ## Provenance and caching
 
