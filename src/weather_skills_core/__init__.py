@@ -9,6 +9,7 @@ from weather_skills_core.decorator import (
     standard_parameters,
     weather_skill,
 )
+from weather_skills_core.envelope import validate_type
 from weather_skills_core.errors import DataError, SkillError, UsageError
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "WroteSummary",
     "standard_parameters",
     "types",
+    "validate_type",
     "weather_skill",
 ]

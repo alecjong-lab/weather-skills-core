@@ -15,7 +15,7 @@ _SKILL_VERSION = "0.1.0"
     "beta",
     _SKILL_VERSION,
     input_type=types.ALL,
-    output_type="same",
+    output_type=types.ALL,
     extra_args={
         "method": {"choices": ["mean", "sum"], "required": True, "help": "Reducer."},
     },

@@ -13,6 +13,7 @@ from weather_skills_core import (
     RunContext,
     UsageError,
     WroteSummary,
+    envelope,
     types,
     weather_skill,
 )
@@ -843,7 +844,7 @@ class TestAllInputType:
         assert calls == [{}]
 
     def test_every_envelope_shape_accepted(self, tmp_path):
-        skill = make_identity_skill([], input_type=types.ALL, output_type="same")
+        skill = make_identity_skill([], input_type=types.ALL, output_type=types.ALL)
         shapes = (make_gridded(), make_forecast(), make_station(), make_series())
         for i, ds in enumerate(shapes):
             store = tmp_path / f"in{i}.zarr"
@@ -890,10 +891,10 @@ class TestAllInputType:
         assert "not in dataset dims" in capsys.readouterr().err
 
 
-class TestOutputTypeSame:
-    def test_shape_preserving_transform_end_to_end(self, tmp_path, gridded_store):
+class TestShapePreservingTransform:
+    def test_end_to_end(self, tmp_path, gridded_store):
         calls = []
-        skill = make_identity_skill(calls, input_type=types.ALL, output_type="same")
+        skill = make_identity_skill(calls, input_type=types.ALL, output_type=types.ALL)
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out)])
         skill(["-i", str(gridded_store), "-o", str(out)])
@@ -901,14 +902,29 @@ class TestOutputTypeSame:
         assert history_of(out)[-1]["skill"] == "identity"
 
     def test_overlap_guard_applies(self, gridded_store):
-        skill = make_identity_skill([], output_type="same")
+        skill = make_identity_skill([], output_type=types.ALL)
         with pytest.raises(SystemExit) as exc:
             skill(["-i", str(gridded_store), "-o", str(gridded_store)])
         assert exc.value.code == 2
 
-    def test_requires_a_declared_input(self):
-        with pytest.raises(ValueError, match="declared zarr input"):
-            weather_skill("x", "0.1.0", output_type="same")(lambda: None)
+    def test_same_sentinel_is_gone(self):
+        with pytest.raises(ValueError, match="unknown output_type"):
+            weather_skill("x", "0.1.0", input_type=types.ALL, output_type="same")(lambda ds: None)
+
+    def test_body_asserts_preservation_and_exits_1_on_drift(self, tmp_path, gridded_store, capsys):
+        # The skill states the claim "same" used to imply, and a transform that
+        # silently changes the shape is caught where it happens.
+        @weather_skill("collapse", "0.1.0", input_type=types.ALL, output_type=types.ALL)
+        def collapse(ds):
+            """Return a series while claiming to preserve the input's shape."""
+            out = ds.mean(dim=["latitude", "longitude"])
+            envelope.validate_type(out, ds)
+            return out
+
+        with pytest.raises(SystemExit) as exc:
+            collapse(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 1
+        assert "expected a gridded envelope, got series" in capsys.readouterr().err
 
 
 class TestUnionOutputType:
@@ -995,7 +1011,7 @@ class TestUnionOutputType:
         with pytest.raises(ValueError, match="only zarr envelope types"):
             weather_skill("x", "0.1.0", output_type=(types.GRIDDED, types.PNG))(lambda: None)
         with pytest.raises(ValueError, match="only zarr envelope types"):
-            weather_skill("x", "0.1.0", output_type=(types.GRIDDED, "same"))(lambda: None)
+            weather_skill("x", "0.1.0", output_type=(types.GRIDDED, "grid"))(lambda: None)
         with pytest.raises(ValueError, match="at least one"):
             weather_skill("x", "0.1.0", output_type=())(lambda: None)
 

@@ -58,8 +58,6 @@ _BBOX_REQUIRED_HELP = (
 )
 _BBOX_OPTIONAL_HELP = "Spatial subset N/W/S/E decimal degrees. Omit for the full grid."
 
-SAME = "same"
-
 
 @dataclass
 class RunContext:
@@ -471,18 +469,16 @@ def weather_skill(
       recorded provenance args. Requires a declared ``input_type``.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
-      a tuple/set of zarr envelope types (a union), ``"same"``, or
-      ``types.PNG`` for a Figure-writing skill. ``"same"`` declares a
-      shape-preserving transform: the output is whatever envelope type the
-      (first) input carries, useful for skills whose ``input_type`` admits
-      several shapes. It requires at least one declared zarr input and is
-      written through the zarr path exactly like an explicit zarr type; it
-      asserts nothing new about the output's shape beyond "the input's shape,
-      preserved". A union (e.g. ``(types.GRIDDED, types.FORECAST)``, for a
-      fetcher whose source decides the shape) VALIDATES rather than selects:
-      the returned dataset's detected shape must be a member, checked before
-      the write (a mismatch exits 1); the declaration never coerces the output
-      toward any member. A single-type declaration stays unchecked.
+      a tuple/set of zarr envelope types (a union), or ``types.PNG`` for a
+      Figure-writing skill. A union (e.g. ``(types.GRIDDED, types.FORECAST)``,
+      for a fetcher whose source decides the shape) VALIDATES rather than
+      selects: the returned dataset's detected shape must be a member, checked
+      before the write (a mismatch exits 1); the declaration never coerces the
+      output toward any member. A single-type declaration stays unchecked. A
+      shape-preserving transform declares ``types.ALL`` and asserts the
+      preservation itself with
+      :func:`weather_skills_core.envelope.validate_type`, which names the
+      input it preserves instead of leaving it to be inferred.
     - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
       relative-or-absolute date grammar; resolved dates are passed to the
       function and recorded in provenance), ``bbox`` (``types.REQUIRED`` or
@@ -608,12 +604,10 @@ def weather_skill(
             )
         output_union = tuple(dict.fromkeys(members))
         zarr_output = True
-    elif output_type not in (None, _types.PNG, SAME, *_types.ALL):
+    elif output_type not in (None, _types.PNG, *_types.ALL):
         raise ValueError(f"unknown output_type {output_type!r}")
     else:
-        zarr_output = output_type in (SAME, *_types.ALL)
-    if output_type == SAME and not input_types:
-        raise ValueError('output_type="same" requires at least one declared zarr input')
+        zarr_output = output_type in _types.ALL
     if streaming and not zarr_output:
         raise ValueError("streaming requires a zarr output_type")
     if cache is False and not zarr_output:

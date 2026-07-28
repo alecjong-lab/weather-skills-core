@@ -15,7 +15,7 @@ _SKILL_VERSION = "0.1.0"
     "clean-skill",
     _SKILL_VERSION,
     input_type=types.ALL,
-    output_type="same",
+    output_type=types.ALL,
     bbox=types.OPTIONAL,
     extra_args={"smoothing": {"type": int, "help": "Smoothing window width in grid cells."}},
 )

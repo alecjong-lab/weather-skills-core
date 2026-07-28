@@ -220,7 +220,7 @@ def _script(skill_name, func_name, extra_args_src):
         + "from weather_skills_core import weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
         + f"@weather_skill({skill_name!r}, _SKILL_VERSION, input_type='any', "
-        + f"output_type='same', extra_args={extra_args_src})\n"
+        + f"output_type=types.ALL, extra_args={extra_args_src})\n"
         + f"def {func_name}(ds):\n    return ds\n"
     )
 
@@ -323,7 +323,7 @@ class TestMultiScriptSkill:
             + '_SKILL_VERSION = "0.1.0"\n'
             + 'SHARED = {"foo": {"type": int}}\n'
             + "@weather_skill('one', _SKILL_VERSION, input_type='any', "
-            + "output_type='same', extra_args=SHARED)\n"
+            + "output_type=types.ALL, extra_args=SHARED)\n"
             + "def one(ds):\n    return ds\n"
         )
         (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))

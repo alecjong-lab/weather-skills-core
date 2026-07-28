@@ -49,7 +49,7 @@ def probe_all_toggles(**params):
     "probe-io",
     "0.0.0",
     input_type=types.ALL,
-    output_type="same",
+    output_type=types.ALL,
     variable=types.SINGLE,
 )
 def probe_io(ds, **params):
@@ -60,7 +60,7 @@ def probe_io(ds, **params):
     "probe-variadic",
     "0.0.0",
     input_type=types.ALL,
-    output_type="same",
+    output_type=types.ALL,
     variadic_input=True,
 )
 def probe_variadic(datasets, **params):

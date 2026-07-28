@@ -29,7 +29,7 @@ body holds only domain logic.
 
 | Class | Declaration shape | Function returns |
 | --- | --- | --- |
-| Transform | `input_type` + zarr `output_type` (or `"same"`) | a Dataset |
+| Transform | `input_type` + zarr `output_type` | a Dataset |
 | Fetcher | no `input_type`, zarr `output_type`, `source=` | a Dataset |
 | Streaming fetcher | fetcher + `streaming=True` | a generator of per-period Datasets |
 | Plot | `input_type` + `output_type=types.PNG` | a matplotlib Figure |
@@ -77,7 +77,7 @@ The script is a PEP 723 single file. Skeleton:
 # ///
 """Module docstring: what the script is. Not read by the decorator."""
 
-from weather_skills_core import types, weather_skill
+from weather_skills_core import types, validate_type, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.1.0"
@@ -116,17 +116,15 @@ Declaration surface (all keyword-only after `name`, `version`):
   otherwise a single string shown on `--input`/`-i`, replacing the
   decorator's default help in the repeated-input cases.
 - `output_type` — `None`, a zarr envelope type, a tuple/set of zarr envelope
-  types (a union), `"same"`, or `types.PNG`. `"same"` declares a
-  shape-preserving transform: the output is whatever envelope type the input
-  carries. Use it (instead of hard-coding one zarr type) when `input_type`
-  admits several shapes and the skill preserves whichever came in. It
-  requires at least one declared zarr input and writes through the zarr path
-  exactly like an explicit zarr type. A union (e.g.
+  types (a union), or `types.PNG`. A union (e.g.
   `(types.GRIDDED, types.FORECAST)`, for a fetcher whose source decides the
   shape) VALIDATES rather than selects: the returned dataset's detected shape must
   be one of the members, checked before the write (a mismatch exits 1); the
   declaration never coerces the output toward any member. A single-type
-  declaration stays unchecked.
+  declaration stays unchecked. A shape-preserving transform declares
+  `types.ALL` and asserts the preservation in its body with `validate_type`
+  (below) — the declaration cannot say "the same as the input" because with
+  more than one input there is no saying which input that means.
 - Standard flags, enabled by toggles and passed as keyword arguments:
   `start_time`/`end_time` (`--start`/`--end`), `date` (`--date`), `bbox`
   (`types.REQUIRED` or `types.OPTIONAL`; the function receives a parsed
@@ -295,8 +293,8 @@ itself defers them.
 @weather_skill(
     "clip-region",
     _SKILL_VERSION,
-    input_type=types.GRIDDED,
-    output_type=types.GRIDDED,
+    input_type=types.ALL,
+    output_type=types.ALL,
     bbox=types.REQUIRED,
     dims=True,
     hash_input=False,  # cheap cache check; hash computed only on a miss
@@ -307,7 +305,10 @@ def clip_region(ds, bbox, dims):
     from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
 
     lat_dim, lon_dim = detect_spatial_dims(ds, dims)
-    return bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
+    sub = bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
+    # Subsetting the spatial axes preserves the envelope shape.
+    validate_type(sub, ds)
+    return sub
 ```
 
 `input_type` composes with `dims=True`: when the caller passes `--dims
@@ -609,6 +610,12 @@ parameterized by them. Do not reimplement any of these in a skill body.
 - `normalize_longitude(ds, lon_dim="longitude")` — maps a 0..360 longitude
   axis onto [-180, 180) and sorts ascending, so N/W/S/E bboxes with negative
   west/east select correctly.
+- `validate_type(ds, expected)` — assert a dataset's envelope type, returning
+  it. `expected` is a type constant, a sequence of them, or another dataset
+  whose type `ds` must match (`validate_type(out_ds, ds)` is how a
+  shape-preserving transform states that claim). Raises `DataError` (exit 1)
+  on a mismatch. Exported at the top level: `from weather_skills_core import
+  validate_type`.
 
 ### Dates (`weather_skills_core.dates`)
 

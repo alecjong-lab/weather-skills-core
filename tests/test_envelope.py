@@ -194,6 +194,29 @@ class TestValidateInput:
             envelope.validate_input(make_series(), types.SERIES, "in.zarr", time_dim="t")
 
 
+class TestValidateType:
+    def test_single_expected_type(self):
+        assert envelope.validate_type(make_gridded(), types.GRIDDED) == types.GRIDDED
+
+    def test_tuple_of_expected_types(self):
+        assert envelope.validate_type(make_forecast(), types.ALL) == types.FORECAST
+
+    def test_reference_dataset_form(self):
+        assert envelope.validate_type(make_gridded(), make_gridded()) == types.GRIDDED
+
+    def test_mismatch_is_a_data_error(self):
+        with pytest.raises(DataError, match="expected a station envelope, got gridded"):
+            envelope.validate_type(make_gridded(), types.STATION)
+
+    def test_reference_dataset_mismatch_names_both_shapes(self):
+        with pytest.raises(DataError, match="expected a gridded envelope, got series"):
+            envelope.validate_type(make_series(), make_gridded())
+
+    def test_unknown_expected_type_is_a_programming_error(self):
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            envelope.validate_type(make_gridded(), "grid")
+
+
 class TestBboxSubset:
     def test_ascending_latitude(self):
         ds = make_gridded(lats=(1.0, 2.0, 3.0), lons=(10.0, 11.0, 12.0, 13.0))

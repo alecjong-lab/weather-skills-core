@@ -192,6 +192,40 @@ def validate_input(
     return actual
 
 
+def validate_type(ds, expected) -> str:
+    """Assert a dataset's envelope type, returning the detected type.
+
+    The explicit form of "this output preserves its input's shape": the skill
+    names what it is asserting and against which dataset, at the point the
+    claim is made.
+
+    Args:
+        ds: the dataset to classify.
+        expected: an envelope type, a sequence of them, or another dataset
+            whose envelope type ``ds`` must match.
+
+    Raises:
+        DataError: ``ds`` is none of the expected types.
+        ValueError: ``expected`` names a type that is not an envelope type.
+    """
+    if isinstance(expected, str):
+        allowed = (expected,)
+    elif isinstance(expected, tuple | list | set | frozenset):
+        allowed = tuple(expected)
+    else:
+        # Anything else is the reference-dataset form: match its own type.
+        allowed = (detect_type(expected),)
+    unknown = [t for t in allowed if t not in ALL]
+    if unknown:
+        raise ValueError(f"unknown envelope type(s) {unknown}; valid types: {list(ALL)}")
+    actual = detect_type(ds)
+    if actual not in allowed:
+        raise DataError(
+            f"expected a {' or '.join(allowed)} envelope, got {actual} (dims: {list(ds.dims)})."
+        )
+    return actual
+
+
 def _shape_detail(ds, allowed) -> str:
     """Describe what the expected shape(s) require and what the dataset has."""
     details = []
