@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_forecast, make_gridded, make_station
+from conftest import make_forecast, make_gridded, make_series, make_station
 
 from weather_skills_core import (
     DataError,
@@ -13,6 +13,7 @@ from weather_skills_core import (
     RunContext,
     UsageError,
     WroteSummary,
+    types,
     weather_skill,
 )
 from weather_skills_core.decorator import rewrite_bbox_argv
@@ -35,8 +36,8 @@ def history_of(store):
 
 
 def make_identity_skill(calls, **declaration):
-    declaration.setdefault("input_type", "gridded")
-    declaration.setdefault("output_type", "gridded")
+    declaration.setdefault("input_type", types.GRIDDED)
+    declaration.setdefault("output_type", types.GRIDDED)
 
     @weather_skill("identity", "0.1.0", **declaration)
     def identity(ds, **params):
@@ -59,7 +60,7 @@ class TestParserConstruction:
 
     def test_standard_flags(self):
         skill = make_identity_skill(
-            [], variable="single", title=True, dims=True, time_dim="time", bbox="optional"
+            [], variable=types.SINGLE, title=True, dims=True, time_dim="time", bbox=types.OPTIONAL
         )
         args = skill.parser.parse_args(
             ["-i", "a", "-o", "b", "-v", "precip", "--title", "T", "--dims", "y,x"]
@@ -71,7 +72,7 @@ class TestParserConstruction:
         assert args.bbox is None
 
     def test_repeatable_variable(self):
-        skill = make_identity_skill([], variable="repeat")
+        skill = make_identity_skill([], variable=types.REPEAT)
         args = skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "x", "-v", "y"])
         assert args.variable == ["x", "y"]
 
@@ -115,7 +116,7 @@ class TestParserConstruction:
         with pytest.raises(ValueError, match="collide"):
             make_identity_skill([], date=True, extra_args={"date": str})
         with pytest.raises(ValueError, match="collide"):
-            make_identity_skill([], bbox="optional", extra_args={"bbox": str})
+            make_identity_skill([], bbox=types.OPTIONAL, extra_args={"bbox": str})
         with pytest.raises(ValueError, match="collide"):
             make_identity_skill([], input_paths=True, extra_args={"input_paths": str})
 
@@ -167,8 +168,8 @@ class TestParserConstruction:
         @weather_skill(
             "difference",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="gridded",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.GRIDDED,
             input_help="Input Zarr; pass exactly twice, minuend then subtrahend.",
         )
         def difference(ds_a, ds_b):
@@ -182,8 +183,8 @@ class TestParserConstruction:
         @weather_skill(
             "concat",
             "0.1.0",
-            input_type="any",
-            output_type="gridded",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
             variadic_input=True,
             input_help="Input Zarr; repeat in concatenation order.",
         )
@@ -198,8 +199,8 @@ class TestParserConstruction:
         @weather_skill(
             "plot-mediogram",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="png",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.PNG,
             input_names=["forecast", "mclimate"],
             input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."],
         )
@@ -216,8 +217,8 @@ class TestParserConstruction:
         @weather_skill(
             "plot-mediogram",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="png",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.PNG,
             input_names=["forecast", "mclimate"],
             input_help=[None, "M-climate ensemble Zarr."],
         )
@@ -230,13 +231,13 @@ class TestParserConstruction:
 
     def test_input_help_declaration_errors(self):
         with pytest.raises(ValueError, match="input_help requires"):
-            weather_skill("x", "0.1.0", output_type="gridded", input_help="h")(lambda: None)
+            weather_skill("x", "0.1.0", output_type=types.GRIDDED, input_help="h")(lambda: None)
         with pytest.raises(ValueError, match="one help string per input flag"):
             weather_skill(
                 "x",
                 "0.1.0",
-                input_type=["any", "any"],
-                output_type="png",
+                input_type=[types.ALL, types.ALL],
+                output_type=types.PNG,
                 input_names=["a", "b"],
                 input_help="one string for two flags",
             )(lambda a, b: None)
@@ -244,8 +245,8 @@ class TestParserConstruction:
             weather_skill(
                 "x",
                 "0.1.0",
-                input_type=["any", "any"],
-                output_type="png",
+                input_type=[types.ALL, types.ALL],
+                output_type=types.PNG,
                 input_names=["a", "b"],
                 input_help=["only one"],
             )(lambda a, b: None)
@@ -253,8 +254,8 @@ class TestParserConstruction:
             weather_skill(
                 "x",
                 "0.1.0",
-                input_type="any",
-                output_type="gridded",
+                input_type=types.ALL,
+                output_type=types.GRIDDED,
                 input_help=["list", "form"],
             )(lambda ds: None)
 
@@ -268,23 +269,25 @@ class TestParserConstruction:
         with pytest.raises(ValueError, match="output_type"):
             weather_skill("x", "0.1.0", output_type="zar")(lambda: None)
         with pytest.raises(ValueError, match="together"):
-            weather_skill("x", "0.1.0", output_type="gridded", start_time=True)(lambda: None)
+            weather_skill("x", "0.1.0", output_type=types.GRIDDED, start_time=True)(lambda: None)
         with pytest.raises(ValueError, match="history label"):
-            weather_skill("x", "0.1.0", input_type=["any", "any"], output_type="png")(
+            weather_skill("x", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.PNG)(
                 lambda a, b: None
             )
 
     def test_unknown_input_type_is_declaration_error(self):
         with pytest.raises(ValueError, match="unknown envelope type"):
-            weather_skill("x", "0.1.0", input_type="grided", output_type="gridded")(lambda ds: None)
-        with pytest.raises(ValueError, match="unknown envelope type"):
-            weather_skill("x", "0.1.0", input_type="gridded|forecst", output_type="gridded")(
+            weather_skill("x", "0.1.0", input_type="grided", output_type=types.GRIDDED)(
                 lambda ds: None
             )
         with pytest.raises(ValueError, match="unknown envelope type"):
-            weather_skill("x", "0.1.0", input_type=["gridded", "statoin"], output_type="gridded")(
-                lambda a, b: None
+            weather_skill("x", "0.1.0", input_type="gridded|forecst", output_type=types.GRIDDED)(
+                lambda ds: None
             )
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill(
+                "x", "0.1.0", input_type=[types.GRIDDED, "statoin"], output_type=types.GRIDDED
+            )(lambda a, b: None)
 
 
 class TestToggleDictForm:
@@ -292,7 +295,7 @@ class TestToggleDictForm:
         skill = make_identity_skill(
             [],
             variable={
-                "mode": "single",
+                "mode": types.SINGLE,
                 "help": "CMIP6 variable_id (e.g. tas, pr).",
                 "required": True,
                 "choices": ["tas", "pr"],
@@ -311,13 +314,15 @@ class TestToggleDictForm:
         assert exc.value.code == 2  # choices
 
     def test_variable_repeat_mode_in_dict_form(self):
-        skill = make_identity_skill([], variable={"mode": "repeat", "help": "Repeatable."})
+        skill = make_identity_skill([], variable={"mode": types.REPEAT, "help": "Repeatable."})
         args = skill.parser.parse_args(["-i", "a", "-o", "b", "-v", "x", "-v", "y"])
         assert args.variable == ["x", "y"]
 
     def test_bbox_dict_help_and_optional_mode(self, tmp_path, gridded_store, capsys):
         calls = []
-        skill = make_identity_skill(calls, bbox={"mode": "optional", "help": "Custom bbox help."})
+        skill = make_identity_skill(
+            calls, bbox={"mode": types.OPTIONAL, "help": "Custom bbox help."}
+        )
         with pytest.raises(SystemExit):
             skill(["--help"])
         assert "Custom bbox help." in capsys.readouterr().out
@@ -326,7 +331,7 @@ class TestToggleDictForm:
 
     def test_bbox_dict_required_mode_still_rewrites_argv(self, tmp_path, gridded_store):
         calls = []
-        skill = make_identity_skill(calls, input_type="any", bbox={"mode": "required"})
+        skill = make_identity_skill(calls, input_type=types.ALL, bbox={"mode": types.REQUIRED})
         skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--bbox", "-1/32/-5/42"])
         assert calls[0]["bbox"] == (-1.0, 32.0, -5.0, 42.0)
 
@@ -412,7 +417,7 @@ class TestToggleDictForm:
         @weather_skill(
             "f",
             "0.1.0",
-            output_type="gridded",
+            output_type=types.GRIDDED,
             date={"context": "single forecast init date"},
         )
         def fetch(date):
@@ -425,7 +430,7 @@ class TestToggleDictForm:
     def test_date_dict_optional_passes_none(self, tmp_path):
         calls = []
 
-        @weather_skill("f", "0.1.0", output_type="gridded", date={"required": False})
+        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date={"required": False})
         def fetch(date):
             """Fetch."""
             calls.append(date)
@@ -438,12 +443,12 @@ class TestToggleDictForm:
 
     def test_declaration_errors(self):
         def declare(**kwargs):
-            return weather_skill("x", "0.1.0", output_type="gridded", **kwargs)(lambda: None)
+            return weather_skill("x", "0.1.0", output_type=types.GRIDDED, **kwargs)(lambda: None)
 
         with pytest.raises(ValueError, match="unknown keys"):
             declare(start_time={"metavar": "S"}, end_time=True)
         with pytest.raises(ValueError, match="unknown keys"):
-            declare(date={"mode": "single"})
+            declare(date={"mode": types.SINGLE})
         with pytest.raises(ValueError, match="context"):
             # `context` is a date-only key; start_time does not accept it.
             declare(start_time={"context": "x"}, end_time=True)
@@ -584,7 +589,9 @@ class TestBboxArgv:
     def test_negative_north_parses_end_to_end(self, tmp_path, gridded_store):
         seen = {}
 
-        @weather_skill("clip", "0.1.0", input_type="any", output_type="gridded", bbox="required")
+        @weather_skill(
+            "clip", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, bbox=types.REQUIRED
+        )
         def clip(ds, bbox):
             """Clip."""
             seen["bbox"] = bbox
@@ -652,7 +659,7 @@ class TestCacheShortCircuit:
                 args["variable"] = sorted(set(args["variable"]))
             return args
 
-        skill = make_identity_skill(calls, variable="repeat", normalize_args=normalize)
+        skill = make_identity_skill(calls, variable=types.REPEAT, normalize_args=normalize)
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a"])
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "a", "-v", "b"])
@@ -670,7 +677,7 @@ class TestCacheShortCircuit:
                 args["variable"] = tuple(sorted(set(args["variable"])))
             return args
 
-        skill = make_identity_skill(calls, variable="repeat", normalize_args=normalize)
+        skill = make_identity_skill(calls, variable=types.REPEAT, normalize_args=normalize)
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a"])
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "a", "-v", "b"])
@@ -716,8 +723,8 @@ class TestCacheShortCircuit:
         @weather_skill(
             "difference",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="gridded",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.GRIDDED,
             completeness_probe=lambda p: False,
         )
         def difference(ds_a, ds_b):
@@ -755,9 +762,9 @@ class TestValidationOverrides:
         @weather_skill(
             "clip-region",
             "0.1.0",
-            input_type="gridded",
-            output_type="gridded",
-            bbox="required",
+            input_type=types.GRIDDED,
+            output_type=types.GRIDDED,
+            bbox=types.REQUIRED,
             dims=True,
         )
         def clip_region(ds, bbox, dims):
@@ -775,7 +782,7 @@ class TestValidationOverrides:
         with pytest.raises(SystemExit) as exc:
             skill(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--bbox", "3/10/1/13"])
         assert exc.value.code == 2
-        assert "Pass --dims" in capsys.readouterr().err
+        assert "pass --dims" in capsys.readouterr().err
 
     def test_dims_override_validates_typed_gridded_input(self, tmp_path, renamed_store):
         calls = []
@@ -826,10 +833,67 @@ class TestValidationOverrides:
         assert calls == [{"time_dim": "time"}]
 
 
+class TestAllInputType:
+    def test_one_input_not_one_per_member(self, tmp_path, gridded_store):
+        # types.ALL is a tuple: one input allowing any of the three types,
+        # not three inputs. A list is what declares one entry per input.
+        calls = []
+        skill = make_identity_skill(calls, input_type=types.ALL)
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
+        assert calls == [{}]
+
+    def test_every_envelope_shape_accepted(self, tmp_path):
+        skill = make_identity_skill([], input_type=types.ALL, output_type="same")
+        shapes = (make_gridded(), make_forecast(), make_station(), make_series())
+        for i, ds in enumerate(shapes):
+            store = tmp_path / f"in{i}.zarr"
+            ds.to_zarr(store, mode="w", consolidated=True)
+            skill(["-i", str(store), "-o", str(tmp_path / f"out{i}.zarr")])
+
+    def test_grid_check_still_runs(self, tmp_path, capsys):
+        # The input is validated as the envelope it is detected to be; ALL
+        # widens what is accepted, not what is checked. A forecast still owes
+        # identifiable spatial dims.
+        store = tmp_path / "renamed.zarr"
+        make_forecast().rename({"latitude": "yy", "longitude": "xx"}).to_zarr(
+            store, mode="w", consolidated=True
+        )
+        skill = make_identity_skill([], input_type=types.ALL)
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(store), "-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+        assert "Pass --dims" in capsys.readouterr().err
+
+    def test_series_output_passes_the_union_check(self, tmp_path):
+        # A skill declaring the ALL union must be able to WRITE a series, not
+        # just read one: collapsing lat/lon is what produces the shape.
+        store = tmp_path / "in.zarr"
+        make_gridded().to_zarr(store, mode="w", consolidated=True)
+        calls = []
+
+        @weather_skill("collapse", "0.1.0", input_type=types.ALL, output_type=types.ALL)
+        def collapse(ds):
+            """Mean over the spatial dims, leaving a series."""
+            calls.append(1)
+            return ds.mean(dim=["latitude", "longitude"])
+
+        out = tmp_path / "o.zarr"
+        collapse(["-i", str(store), "-o", str(out)])
+        assert calls == [1]
+        assert set(xr.open_zarr(out, consolidated=True).sizes) == {"time"}
+
+    def test_time_dim_check_still_runs(self, tmp_path, gridded_store, capsys):
+        skill = make_identity_skill([], input_type=types.ALL, time_dim=True)
+        with pytest.raises(SystemExit) as exc:
+            skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--time-dim", "t"])
+        assert exc.value.code == 2
+        assert "not in dataset dims" in capsys.readouterr().err
+
+
 class TestOutputTypeSame:
     def test_shape_preserving_transform_end_to_end(self, tmp_path, gridded_store):
         calls = []
-        skill = make_identity_skill(calls, input_type="any", output_type="same")
+        skill = make_identity_skill(calls, input_type=types.ALL, output_type="same")
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out)])
         skill(["-i", str(gridded_store), "-o", str(out)])
@@ -852,7 +916,7 @@ class TestUnionOutputType:
         @weather_skill(
             "shape-fetch",
             "0.1.0",
-            output_type=("gridded", "forecast"),
+            output_type=(types.GRIDDED, types.FORECAST),
             source="toy",
             **declaration,
         )
@@ -896,7 +960,7 @@ class TestUnionOutputType:
         @weather_skill(
             "s",
             "0.1.0",
-            output_type=("gridded", "forecast"),
+            output_type=(types.GRIDDED, types.FORECAST),
             streaming=True,
             source="toy",
         )
@@ -916,8 +980,8 @@ class TestUnionOutputType:
         @weather_skill(
             "t",
             "0.1.0",
-            input_type="any",
-            output_type=("gridded", "forecast"),
+            input_type=types.ALL,
+            output_type=(types.GRIDDED, types.FORECAST),
         )
         def transform(ds):
             """Transform."""
@@ -929,9 +993,9 @@ class TestUnionOutputType:
 
     def test_declaration_errors(self):
         with pytest.raises(ValueError, match="only zarr envelope types"):
-            weather_skill("x", "0.1.0", output_type=("gridded", "png"))(lambda: None)
+            weather_skill("x", "0.1.0", output_type=(types.GRIDDED, types.PNG))(lambda: None)
         with pytest.raises(ValueError, match="only zarr envelope types"):
-            weather_skill("x", "0.1.0", output_type=("gridded", "same"))(lambda: None)
+            weather_skill("x", "0.1.0", output_type=(types.GRIDDED, "same"))(lambda: None)
         with pytest.raises(ValueError, match="at least one"):
             weather_skill("x", "0.1.0", output_type=())(lambda: None)
 
@@ -952,7 +1016,7 @@ class TestCacheDisabled:
     def test_fetcher_always_recomputes(self, tmp_path):
         calls = []
 
-        @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", cache=False)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", cache=False)
         def fetch(**params):
             """Fetch a toy dataset."""
             calls.append(params)
@@ -972,7 +1036,7 @@ class TestCacheDisabled:
 
     def test_requires_zarr_output(self):
         with pytest.raises(ValueError, match="cache=False"):
-            weather_skill("x", "0.1.0", input_type="any", output_type="png", cache=False)(
+            weather_skill("x", "0.1.0", input_type=types.ALL, output_type=types.PNG, cache=False)(
                 lambda ds: None
             )
         with pytest.raises(ValueError, match="cache=False"):
@@ -981,7 +1045,7 @@ class TestCacheDisabled:
 
 class TestFetcherMode:
     def make_fetcher(self, calls, **declaration):
-        @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", **declaration)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
         def fetch(**params):
             """Fetch a toy dataset."""
             calls.append(params)
@@ -1079,7 +1143,7 @@ class TestFetcherMode:
     def test_singular_date(self, tmp_path):
         calls = []
 
-        @weather_skill("init-fetch", "0.1.0", output_type="gridded", date=True)
+        @weather_skill("init-fetch", "0.1.0", output_type=types.GRIDDED, date=True)
         def fetch(**params):
             """Fetch one init."""
             calls.append(params)
@@ -1119,7 +1183,7 @@ class TestExitCodes:
         assert exc.value.code == 2
 
     def test_data_error_from_function_exits_1(self, tmp_path, gridded_store):
-        @weather_skill("boom", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("boom", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def boom(ds):
             """Fail with a data error."""
             raise DataError("no data in the requested window")
@@ -1129,7 +1193,7 @@ class TestExitCodes:
         assert exc.value.code == 1
 
     def test_usage_error_from_function_exits_2(self, tmp_path, gridded_store):
-        @weather_skill("boom", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("boom", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def boom(ds):
             """Fail with a usage error."""
             raise UsageError("bad arguments")
@@ -1139,7 +1203,7 @@ class TestExitCodes:
         assert exc.value.code == 2
 
     def test_envelope_mismatch_exits_2(self, tmp_path, gridded_store, capsys):
-        skill = make_identity_skill([], input_type="station")
+        skill = make_identity_skill([], input_type=types.STATION)
         with pytest.raises(SystemExit) as exc:
             skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
         assert exc.value.code == 2
@@ -1168,7 +1232,7 @@ class TestExitCodes:
 
 class TestEmptyStringValues:
     def make_fetcher(self, calls, **declaration):
-        @weather_skill("toy-fetch", "0.1.0", output_type="gridded", source="toy", **declaration)
+        @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, source="toy", **declaration)
         def fetch(**params):
             """Fetch a toy dataset."""
             calls.append(params)
@@ -1232,7 +1296,7 @@ class TestEmptyStringValues:
 
     def test_empty_required_bbox_exits_2(self, tmp_path, capsys):
         calls = []
-        fetch = self.make_fetcher(calls, bbox="required")
+        fetch = self.make_fetcher(calls, bbox=types.REQUIRED)
         with pytest.raises(SystemExit) as exc:
             fetch(["--bbox", "", "-o", str(tmp_path / "o.zarr")])
         assert exc.value.code == 2
@@ -1248,7 +1312,7 @@ class TestEmptyStringValues:
 
         fetch = self.make_fetcher(
             [],
-            bbox="optional",
+            bbox=types.OPTIONAL,
             start_time=True,
             end_time=True,
             latest_resolver=resolver,
@@ -1304,7 +1368,7 @@ class TestUnprefixedErrors:
         assert capsys.readouterr().err == "Error: hard failure\n"
 
     def test_unprefixed_error_in_zarr_mode(self, tmp_path, gridded_store, capsys):
-        @weather_skill("identity", "0.1.0", input_type="gridded", output_type="gridded")
+        @weather_skill("identity", "0.1.0", input_type=types.GRIDDED, output_type=types.GRIDDED)
         def skill(ds):
             """Copy the input envelope unchanged."""
             raise DataError("Body too long: 1 character over the limit.", prefix=False)
@@ -1325,7 +1389,9 @@ class TestMultiInput:
         make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
         received = []
 
-        @weather_skill("difference", "0.1.0", input_type=["any", "any"], output_type="gridded")
+        @weather_skill(
+            "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
+        )
         def difference(ds_a, ds_b):
             """A - B."""
             received.extend([ds_a, ds_b])
@@ -1343,7 +1409,9 @@ class TestMultiInput:
         assert all({"basename", "hash", "history"} <= set(i) for i in inputs)
 
     def test_wrong_input_count_exits_2(self, tmp_path, gridded_store):
-        @weather_skill("difference", "0.1.0", input_type=["any", "any"], output_type="gridded")
+        @weather_skill(
+            "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
+        )
         def difference(ds_a, ds_b):
             """A - B."""
 
@@ -1356,7 +1424,7 @@ class TestMultiInput:
         make_identity_skill([])(["-i", str(gridded_store), "-o", str(upstreamed)])
 
         @weather_skill(
-            "concat", "0.1.0", input_type="any", output_type="gridded", variadic_input=True
+            "concat", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, variadic_input=True
         )
         def concat(datasets):
             """Concatenate."""
@@ -1371,7 +1439,7 @@ class TestMultiInput:
 
     def test_variadic_requires_two_inputs(self, tmp_path, gridded_store):
         @weather_skill(
-            "concat", "0.1.0", input_type="any", output_type="gridded", variadic_input=True
+            "concat", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, variadic_input=True
         )
         def concat(datasets):
             """Concatenate."""
@@ -1387,7 +1455,9 @@ class TestMultiInput:
         make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
         calls = []
 
-        @weather_skill("difference", "0.1.0", input_type=["any", "any"], output_type="gridded")
+        @weather_skill(
+            "difference", "0.1.0", input_type=[types.ALL, types.ALL], output_type=types.GRIDDED
+        )
         def difference(ds_a, ds_b):
             """A - B."""
             calls.append(1)
@@ -1411,7 +1481,7 @@ class TestReferenceInputs:
         calls = []
         skill = make_identity_skill(
             calls,
-            input_type="any",
+            input_type=types.ALL,
             hash_input=False,
             extra_args={"reference_grid": str},
             reference_args=("reference_grid",),
@@ -1458,7 +1528,7 @@ class TestStreaming:
         @weather_skill(
             "stream-fetch",
             "0.1.0",
-            output_type="gridded",
+            output_type=types.GRIDDED,
             streaming=True,
             source="toy",
             **declaration,
@@ -1571,7 +1641,9 @@ class TestStreaming:
 
 class TestEntryOverrideStandardMode:
     def test_tuple_return_rewrites_entry(self, tmp_path):
-        @weather_skill("effective", "0.1.0", output_type="gridded", start_time=True, end_time=True)
+        @weather_skill(
+            "effective", "0.1.0", output_type=types.GRIDDED, start_time=True, end_time=True
+        )
         def fetch(start_time, end_time):
             """Fetch with an effective end."""
             return make_gridded(), EntryOverride({"end": "2026-01-02"})
@@ -1585,7 +1657,7 @@ class TestPngMode:
     def test_single_input_key_and_software(self, tmp_path, gridded_store):
         fig = FakeFigure()
 
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png", title=True)
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG, title=True)
         def plot(ds, title):
             """Plot."""
             return fig
@@ -1610,8 +1682,8 @@ class TestPngMode:
         @weather_skill(
             "plot-compare",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="png",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.PNG,
             history_labels=["a", "b"],
         )
         def plot_compare(ds_a, ds_b):
@@ -1633,8 +1705,8 @@ class TestPngMode:
         @weather_skill(
             "plot-mediogram",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="png",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.PNG,
             input_names=["forecast", "mclimate"],
         )
         def plot_mediogram(forecast_ds, mclimate_ds):
@@ -1665,8 +1737,8 @@ class TestPngMode:
         @weather_skill(
             "plot",
             "0.1.0",
-            input_type="any",
-            output_type="png",
+            input_type=types.ALL,
+            output_type=types.PNG,
             savefig_kwargs={"bbox_inches": "tight"},
         )
         def plot(ds):
@@ -1679,7 +1751,7 @@ class TestPngMode:
     def test_no_cache_always_renders(self, tmp_path, gridded_store):
         calls = []
 
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
         def plot(ds):
             """Plot."""
             calls.append(1)
@@ -1693,7 +1765,7 @@ class TestPngMode:
     def test_output_dir_exits_2(self, tmp_path, gridded_store, capsys):
         calls = []
 
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
         def plot(ds):
             """Plot."""
             calls.append(1)
@@ -1709,15 +1781,15 @@ class TestPngMode:
 
     def test_no_input_is_declaration_error(self):
         with pytest.raises(ValueError, match="at least one declared zarr input"):
-            weather_skill("plot", "0.1.0", output_type="png")(lambda: None)
+            weather_skill("plot", "0.1.0", output_type=types.PNG)(lambda: None)
 
     def test_duplicate_history_labels_is_declaration_error(self):
         with pytest.raises(ValueError, match="unique"):
             weather_skill(
                 "plot-compare",
                 "0.1.0",
-                input_type=["any", "any"],
-                output_type="png",
+                input_type=[types.ALL, types.ALL],
+                output_type=types.PNG,
                 history_labels=["a", "a"],
             )(lambda x, y: None)
 
@@ -1726,7 +1798,7 @@ class TestPngMode:
         make_identity_skill([])(["-i", str(gridded_store), "-o", str(mid)])
         fig = FakeFigure()
 
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
         def plot(ds):
             """Plot."""
             return fig
@@ -1741,8 +1813,8 @@ class TestOutputMessages:
         @weather_skill(
             "clip-region",
             "0.1.0",
-            input_type="any",
-            output_type="gridded",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
             cache_hit_label="clip",
         )
         def clip_region(ds):
@@ -1764,7 +1836,7 @@ class TestOutputMessages:
         assert "skipping identity." in capsys.readouterr().err
 
     def test_wrote_summary_appends_to_default_detail(self, tmp_path, gridded_store, capsys):
-        @weather_skill("rename", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("rename", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def rename(ds):
             """Rename."""
             return ds.copy(), WroteSummary("variable 'precip' -> 'rain'")
@@ -1775,7 +1847,7 @@ class TestOutputMessages:
         assert "; variable 'precip' -> 'rain')" in err
 
     def test_wrote_summary_replaces_default_detail(self, tmp_path, gridded_store, capsys):
-        @weather_skill("rename", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("rename", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def rename(ds):
             """Rename."""
             return ds.copy(), WroteSummary("variable 'precip' -> 'rain'", replace=True)
@@ -1786,7 +1858,7 @@ class TestOutputMessages:
         assert "'time': 2" not in err
 
     def test_wrote_summary_combines_with_entry_override(self, tmp_path, capsys):
-        @weather_skill("f", "0.1.0", output_type="gridded", start_time=True, end_time=True)
+        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, start_time=True, end_time=True)
         def fetch(start_time, end_time):
             """Fetch."""
             return (
@@ -1801,7 +1873,7 @@ class TestOutputMessages:
         assert "; 2 of 31 days)" in capsys.readouterr().err
 
     def test_unexpected_extra_return_is_type_error(self, tmp_path, gridded_store):
-        @weather_skill("bad", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("bad", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def bad(ds):
             """Bad return."""
             return ds.copy(), "not a marker"
@@ -1810,7 +1882,7 @@ class TestOutputMessages:
             bad(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr")])
 
     def test_streaming_yielded_summary(self, tmp_path, capsys):
-        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
         def fetch():
             """Stream."""
             yield make_gridded(n_time=1, start="2026-01-01")
@@ -1821,7 +1893,7 @@ class TestOutputMessages:
         assert "(time=2; 1 gap skipped)" in capsys.readouterr().err
 
     def test_png_summary_fills_empty_default(self, tmp_path, gridded_store, capsys):
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
         def plot(ds):
             """Plot."""
             return FakeFigure(), WroteSummary("2 rows, shared scale")
@@ -1831,7 +1903,7 @@ class TestOutputMessages:
         assert f"Wrote: {out} (2 rows, shared scale)" in capsys.readouterr().err
 
     def test_png_rejects_entry_override(self, tmp_path, gridded_store):
-        @weather_skill("plot", "0.1.0", input_type="any", output_type="png")
+        @weather_skill("plot", "0.1.0", input_type=types.ALL, output_type=types.PNG)
         def plot(ds):
             """Plot."""
             return FakeFigure(), EntryOverride({"x": 1})
@@ -1906,7 +1978,7 @@ class TestWriteTail:
         ds.attrs["Conventions"] = "CF-1.13"
         ds.to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("fresh", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("fresh", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def fresh(ds):
             """Return a dataset built from scratch (no attrs of its own)."""
             return xr.Dataset({"precip": ds["precip"]})
@@ -1925,7 +1997,7 @@ class TestWriteTail:
             [{"skill": "chirps-fetch", "version": "0.1.0", "args": {}, "input": None}]
         )
         ds.to_zarr(src, mode="w", consolidated=True)
-        skill = make_identity_skill([], input_type="any")
+        skill = make_identity_skill([], input_type=types.ALL)
         out = tmp_path / "o.zarr"
         skill(["-i", str(src), "-o", str(out)])
         assert "treating input as opaque" in capsys.readouterr().err
@@ -1972,7 +2044,7 @@ class TestWriteTail:
         assert list(xr.open_zarr(target, consolidated=True).data_vars) == ["other"]
 
     def test_streaming_existing_output_dangling_symlink_replaced(self, tmp_path):
-        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
         def fetch():
             """Stream."""
             yield make_gridded(n_time=1)
@@ -1985,7 +2057,7 @@ class TestWriteTail:
         assert xr.open_zarr(out, consolidated=True).sizes["time"] == 1
 
     def test_streaming_existing_output_regular_file_replaced(self, tmp_path):
-        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True)
+        @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True)
         def fetch():
             """Stream."""
             yield make_gridded(n_time=1)
@@ -1997,7 +2069,7 @@ class TestWriteTail:
         assert xr.open_zarr(out, consolidated=True).sizes["time"] == 1
 
     def test_failed_write_removes_partial_store(self, tmp_path, gridded_store, capsys):
-        @weather_skill("bad-write", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("bad-write", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def bad_write(ds):
             """Return a dataset zarr cannot serialize."""
             out = ds.copy()
@@ -2017,7 +2089,7 @@ class TestWriteTail:
         # clean miss (no truncated store to mistake for a cache hit).
         calls = []
 
-        @weather_skill("bad-write", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("bad-write", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def bad_write(ds):
             """Return a dataset zarr cannot serialize."""
             calls.append(1)
@@ -2065,8 +2137,8 @@ class TestInputPaths:
         @weather_skill(
             "concat",
             "0.1.0",
-            input_type="any",
-            output_type="gridded",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
             variadic_input=True,
             input_paths=True,
         )
@@ -2086,8 +2158,8 @@ class TestInputPaths:
         @weather_skill(
             "plot-mediogram",
             "0.1.0",
-            input_type=["any", "any"],
-            output_type="png",
+            input_type=[types.ALL, types.ALL],
+            output_type=types.PNG,
             input_names=["forecast", "mclimate"],
             input_paths=True,
         )
@@ -2110,7 +2182,7 @@ class TestInputPaths:
 
     def test_requires_declared_input_type(self):
         with pytest.raises(ValueError, match="input_paths"):
-            weather_skill("x", "0.1.0", output_type="gridded", input_paths=True)(lambda: None)
+            weather_skill("x", "0.1.0", output_type=types.GRIDDED, input_paths=True)(lambda: None)
 
 
 class TestPostWrite:
@@ -2159,7 +2231,7 @@ class TestPostWrite:
         def verify(path):
             seen["time"] = xr.open_zarr(path, consolidated=True).sizes["time"]
 
-        @weather_skill("s", "0.1.0", output_type="gridded", streaming=True, post_write=verify)
+        @weather_skill("s", "0.1.0", output_type=types.GRIDDED, streaming=True, post_write=verify)
         def fetch():
             """Stream."""
             yield make_gridded(n_time=1, start="2026-01-01")
@@ -2174,8 +2246,8 @@ class TestPostWrite:
         @weather_skill(
             "plot",
             "0.1.0",
-            input_type="any",
-            output_type="png",
+            input_type=types.ALL,
+            output_type=types.PNG,
             post_write=lambda p: seen.update(path=p),
         )
         def plot(ds):
@@ -2196,7 +2268,7 @@ class TestPostWrite:
             seen["calendar"] = context.state["source_calendar"]
             seen["path"] = path
 
-        @weather_skill("f", "0.1.0", output_type="gridded", source="toy", post_write=verify)
+        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, source="toy", post_write=verify)
         def fetch(context):
             """Fetch."""
             context.state["source_calendar"] = "noleap"
@@ -2218,8 +2290,8 @@ class TestRunContext:
         @weather_skill(
             "ctx",
             "0.1.0",
-            input_type="any",
-            output_type="gridded",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
             start_time=True,
             end_time=True,
         )
@@ -2254,7 +2326,7 @@ class TestRunContext:
     def test_date_toggle_fills_context_date(self, tmp_path):
         seen = {}
 
-        @weather_skill("f", "0.1.0", output_type="gridded", date=True)
+        @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date=True)
         def fetch(date, context):
             """Fetch one init."""
             seen["context"] = context
@@ -2272,7 +2344,7 @@ class TestRunContext:
         assert "context" not in calls[0]
 
     def test_context_never_enters_recorded_args(self, tmp_path, gridded_store):
-        @weather_skill("ctx", "0.1.0", input_type="any", output_type="gridded")
+        @weather_skill("ctx", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED)
         def skill(ds, context):
             """Ctx."""
             return ds.copy()
@@ -2298,7 +2370,7 @@ class TestRunContext:
         @weather_skill(
             "f",
             "0.1.0",
-            output_type="gridded",
+            output_type=types.GRIDDED,
             source="toy",
             validate_args=validate,
             completeness_probe=probe,
@@ -2340,7 +2412,7 @@ class TestRunContext:
         @weather_skill(
             "f",
             "0.1.0",
-            output_type="gridded",
+            output_type=types.GRIDDED,
             start_time=True,
             end_time=True,
             latest_resolver=resolver,
@@ -2378,7 +2450,7 @@ class TestRunContext:
     def test_context_dest_collision_is_declaration_error(self):
         with pytest.raises(ValueError, match="context"):
 
-            @weather_skill("x", "0.1.0", output_type="gridded", extra_args={"context": str})
+            @weather_skill("x", "0.1.0", output_type=types.GRIDDED, extra_args={"context": str})
             def f(context):
                 """F."""
 
@@ -2397,9 +2469,9 @@ class TestFunctionParams:
         @weather_skill(
             "clip",
             "0.1.0",
-            input_type="any",
-            output_type="gridded",
-            bbox="required",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
+            bbox=types.REQUIRED,
             dims=True,
         )
         def clip(ds, bbox, dims):
@@ -2423,7 +2495,9 @@ class TestFunctionParams:
         received = {}
         skill_calls = []
 
-        @weather_skill("subset", "0.1.0", input_type="any", output_type="gridded", bbox="optional")
+        @weather_skill(
+            "subset", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, bbox=types.OPTIONAL
+        )
         def subset(ds, bbox):
             """Subset."""
             received["bbox"] = bbox
@@ -2436,7 +2510,7 @@ class TestFunctionParams:
     def test_workers_passed_but_not_recorded(self, tmp_path, gridded_store):
         received = {}
 
-        @weather_skill("w", "0.1.0", input_type="any", output_type="gridded", workers=4)
+        @weather_skill("w", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, workers=4)
         def w(ds, workers):
             """Workers."""
             received["workers"] = workers
@@ -2453,7 +2527,11 @@ class TestFunctionParams:
 
     def test_numpy_values_survive_roundtrip(self, tmp_path, gridded_store):
         @weather_skill(
-            "scale", "0.1.0", input_type="any", output_type="gridded", extra_args={"factor": float}
+            "scale",
+            "0.1.0",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
+            extra_args={"factor": float},
         )
         def scale(ds, factor):
             """Scale."""

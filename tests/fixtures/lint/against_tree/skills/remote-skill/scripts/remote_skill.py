@@ -6,7 +6,7 @@
 # ///
 """Lint fixture: an --against corpus skill sharing --method at a divergent shape."""
 
-from weather_skills_core import weather_skill
+from weather_skills_core import types, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,7 +14,7 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "remote-skill",
     _SKILL_VERSION,
-    input_type="any",
+    input_type=types.ALL,
     output_type="same",
     extra_args={
         "method": {"choices": ["p10", "p90"], "required": True, "help": "Percentile."},

@@ -41,6 +41,7 @@ from pathlib import Path
 from weather_skills_core import dates as _dates
 from weather_skills_core import envelope as _envelope
 from weather_skills_core import provenance as _provenance
+from weather_skills_core import types as _types
 from weather_skills_core.errors import DataError, SkillError, UsageError
 
 _START_HELP = (
@@ -57,8 +58,6 @@ _BBOX_REQUIRED_HELP = (
 )
 _BBOX_OPTIONAL_HELP = "Spatial subset N/W/S/E decimal degrees. Omit for the full grid."
 
-_ZARR_OUTPUT_TYPES = (_envelope.GRIDDED, _envelope.FORECAST, _envelope.STATION)
-PNG = "png"
 SAME = "same"
 
 
@@ -448,9 +447,12 @@ def weather_skill(
     - ``name`` / ``version`` -- canonical skill name and its version (the
       script's ``_SKILL_VERSION``); the version appears in the argparse epilog
       and every provenance entry.
-    - ``input_type`` -- envelope type(s) of the zarr input(s): ``None`` (no
-      zarr inputs), one type string, or a comma string / list declaring one
-      type per input (each from ``gridded``/``forecast``/``station``/``any``).
+    - ``input_type`` -- envelope type(s) of the zarr input(s), named by the
+      :mod:`weather_skills_core.types` constants: ``None`` (no zarr inputs),
+      one type, a tuple of the types one input may take (``types.ALL`` for
+      all three), or a comma string / list declaring one entry per input.
+      An input is always validated as the type it is detected to be, so a
+      wider declaration accepts more shapes without checking less.
       Inputs arrive via ``--input``/``-i`` (repeated when there are several)
       unless ``input_names`` names a dedicated flag per input (e.g.
       ``["forecast", "mclimate"]``), or ``variadic_input=True`` accepts two or
@@ -469,24 +471,23 @@ def weather_skill(
       recorded provenance args. Requires a declared ``input_type``.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
-      a tuple/set of zarr envelope types (a union), ``"same"``, or ``"png"``
-      for a Figure-writing skill. ``"same"`` declares a shape-preserving
-      transform: the output is whatever envelope type the (first) input
-      carries, useful for skills whose ``input_type`` admits several shapes
-      (``"gridded|forecast"``, ``"any"``, ...). It requires at least one
-      declared zarr input and is written through the zarr path exactly like
-      an explicit zarr type; it asserts nothing new about the output's shape
-      beyond "the input's shape, preserved". A union (e.g. ``("gridded",
-      "forecast")``, for a fetcher whose source decides the shape) VALIDATES
-      rather than selects: the returned dataset's detected shape must be a
-      member, checked before the write (a mismatch exits 1); the declaration
-      never coerces the output toward any member. A single-type declaration
-      stays unchecked.
+      a tuple/set of zarr envelope types (a union), ``"same"``, or
+      ``types.PNG`` for a Figure-writing skill. ``"same"`` declares a
+      shape-preserving transform: the output is whatever envelope type the
+      (first) input carries, useful for skills whose ``input_type`` admits
+      several shapes. It requires at least one declared zarr input and is
+      written through the zarr path exactly like an explicit zarr type; it
+      asserts nothing new about the output's shape beyond "the input's shape,
+      preserved". A union (e.g. ``(types.GRIDDED, types.FORECAST)``, for a
+      fetcher whose source decides the shape) VALIDATES rather than selects:
+      the returned dataset's detected shape must be a member, checked before
+      the write (a mismatch exits 1); the declaration never coerces the output
+      toward any member. A single-type declaration stays unchecked.
     - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
       relative-or-absolute date grammar; resolved dates are passed to the
-      function and recorded in provenance), ``bbox`` (``"required"`` or
-      ``"optional"``; parsed to an (N, W, S, E) tuple), ``variable``
-      (``"single"`` or ``"repeat"``), ``workers`` (an int default; excluded
+      function and recorded in provenance), ``bbox`` (``types.REQUIRED`` or
+      ``types.OPTIONAL``; parsed to an (N, W, S, E) tuple), ``variable``
+      (``types.SINGLE`` or ``types.REPEAT``), ``workers`` (an int default; excluded
       from the cache key), ``title``, ``dims`` (LAT,LON override), and
       ``time_dim`` (pass a string to set a default). A user-supplied
       ``--dims``/``--time-dim`` value is honored during input validation:
@@ -501,7 +502,7 @@ def weather_skill(
       passed to the function as ``None`` and no resolved date is recorded),
       and ``choices`` constrains the accepted values. The string/int forms
       become the dict's ``mode``/``default`` key -- ``bbox={"mode":
-      "optional", ...}``, ``variable={"mode": "repeat", ...}``,
+      types.OPTIONAL, ...}``, ``variable={"mode": types.REPEAT, ...}``,
       ``workers={"default": 4, ...}`` -- and ``date`` additionally accepts
       ``context``: the parenthetical label on the resolved-date stderr line
       (default ``"single date"``, e.g. ``"single forecast init date"``).
@@ -567,13 +568,13 @@ def weather_skill(
     """
     input_types = _normalize_input_types(input_type)
     for declared in input_types:
-        # An input may declare alternatives with "|" (e.g. "gridded|forecast");
-        # every alternative must be a known envelope type, checked at import.
-        unknown = [t for t in (a.strip() for a in declared.split("|")) if t not in _envelope.TYPES]
+        # Every alternative an input allows must be a known envelope type,
+        # checked at import rather than at first run.
+        unknown = [t for t in declared if t not in _types.ALL]
         if unknown:
             raise ValueError(
-                f"unknown envelope type(s) {unknown} in input_type {declared!r}; "
-                f"valid types: {list(_envelope.TYPES)}"
+                f"unknown envelope type(s) {unknown} in input_type {input_type!r}; "
+                f"valid types: {list(_types.ALL)}"
             )
     if variadic_input and len(input_types) != 1:
         raise ValueError("variadic_input requires exactly one declared input type")
@@ -599,18 +600,18 @@ def weather_skill(
         members = list(output_type)
         if not members:
             raise ValueError("a union output_type needs at least one envelope type")
-        bad = [t for t in members if t not in _ZARR_OUTPUT_TYPES]
+        bad = [t for t in members if t not in _types.ALL]
         if bad:
             raise ValueError(
                 f"a union output_type may hold only zarr envelope types "
-                f"{list(_ZARR_OUTPUT_TYPES)}; got {bad}"
+                f"{list(_types.ALL)}; got {bad}"
             )
         output_union = tuple(dict.fromkeys(members))
         zarr_output = True
-    elif output_type not in (None, PNG, SAME, *_ZARR_OUTPUT_TYPES):
+    elif output_type not in (None, _types.PNG, SAME, *_types.ALL):
         raise ValueError(f"unknown output_type {output_type!r}")
     else:
-        zarr_output = output_type in (SAME, *_ZARR_OUTPUT_TYPES)
+        zarr_output = output_type in (SAME, *_types.ALL)
     if output_type == SAME and not input_types:
         raise ValueError('output_type="same" requires at least one declared zarr input')
     if streaming and not zarr_output:
@@ -626,9 +627,9 @@ def weather_skill(
     start_cfg = _normalize_date_toggle("start_time", start_time)
     end_cfg = _normalize_date_toggle("end_time", end_time)
     date_cfg = _normalize_date_toggle("date", date, extra_keys=("context",))
-    bbox_cfg = _normalize_mode_toggle("bbox", bbox, ("optional", "required"))
+    bbox_cfg = _normalize_mode_toggle("bbox", bbox, (_types.OPTIONAL, _types.REQUIRED))
     variable_cfg = _normalize_mode_toggle(
-        "variable", variable, ("single", "repeat"), extra_keys=("required",)
+        "variable", variable, (_types.SINGLE, _types.REPEAT), extra_keys=("required",)
     )
     workers_cfg = _normalize_workers_toggle(workers)
     if (start_cfg is None) != (end_cfg is None):
@@ -653,9 +654,9 @@ def weather_skill(
             "the decorator resolves and passes itself; rename the extra argument(s)"
         )
     png_labels = history_labels if history_labels is not None else input_names
-    if output_type == PNG and not input_types:
-        raise ValueError('output_type="png" requires at least one declared zarr input')
-    if output_type == PNG and len(input_types) > 1:
+    if output_type == _types.PNG and not input_types:
+        raise ValueError("a png output_type requires at least one declared zarr input")
+    if output_type == _types.PNG and len(input_types) > 1:
         if png_labels is None or len(png_labels) != len(input_types):
             raise ValueError("a multi-input PNG skill must declare one history label per input")
         if len(set(png_labels)) != len(png_labels):
@@ -749,7 +750,7 @@ def weather_skill(
         if date_cfg is not None:
             parser.add_argument("--date", **_date_toggle_kwargs(date_cfg, _DATE_HELP))
         if bbox_cfg is not None:
-            required = bbox_cfg["mode"] == "required"
+            required = bbox_cfg["mode"] == _types.REQUIRED
             default_help = _BBOX_REQUIRED_HELP if required else _BBOX_OPTIONAL_HELP
             kwargs = {"help": bbox_cfg.get("help", default_help)}
             if required:
@@ -759,7 +760,7 @@ def weather_skill(
             parser.add_argument("--bbox", **kwargs)
         if variable_cfg is not None:
             kwargs = {}
-            if variable_cfg["mode"] == "repeat":
+            if variable_cfg["mode"] == _types.REPEAT:
                 kwargs.update(action="append", default=None)
             if "help" in variable_cfg:
                 kwargs["help"] = variable_cfg["help"]
@@ -894,7 +895,7 @@ def weather_skill(
 
         entry_args = _entry_args(args, resolved_dates, context)
 
-        if output_type == PNG:
+        if output_type == _types.PNG:
             _run_png(fn, args, paths, out, entry_args, params, context)
             return
         _run_zarr(fn, args, paths, out, entry_args, params, context)
@@ -904,9 +905,10 @@ def weather_skill(
         if post_write is not None:
             _call_hook(post_write, out, wants_context=post_wants_ctx, context=context)
 
-    def _check_output_union(ds):
+    def _check_output_union(ds, args):
         """Validate a returned dataset's detected shape against a union output_type."""
-        detected = _envelope.detect_type(ds)
+        # The --dims override names the run's spatial axes on the way out too.
+        detected = _envelope.detect_type(ds, args.dims if dims else None)
         if detected not in output_union:
             raise DataError(
                 f"{name} returned a {detected} envelope, but its declared "
@@ -982,10 +984,9 @@ def weather_skill(
                 raise UsageError(
                     f"{p} is not a readable Zarr store ({type(exc).__name__}: {exc})."
                 ) from None
-            # An input may declare alternatives with "|" (e.g. "gridded|forecast").
             _envelope.validate_input(
                 ds,
-                [t.strip() for t in declared.split("|")],
+                list(declared),
                 str(p),
                 dims=dims_override,
                 time_dim=time_dim_override,
@@ -1136,7 +1137,7 @@ def weather_skill(
 
         result, override, summary = _split_extras(result)
         if output_union is not None:
-            _check_output_union(result)
+            _check_output_union(result, args)
         if override is not None:
             entry = {**entry, "args": {**entry["args"], **override.args}}
         # Carry the first input's attrs (source metadata, upstream history)
@@ -1190,7 +1191,7 @@ def weather_skill(
                     continue
                 piece = item
                 if output_union is not None:
-                    _check_output_union(piece)
+                    _check_output_union(piece, args)
                 _provenance.stamp_zarr(piece, upstream + [entry], source=source)
                 if write_encoding is not None:
                     _call_hook(
@@ -1227,12 +1228,22 @@ def weather_skill(
 
 
 def _normalize_input_types(input_type):
-    """Normalize the ``input_type`` declaration to a list of per-input types."""
+    """Normalize the ``input_type`` declaration to one allowed-type tuple per input.
+
+    A tuple/set is one input's union of allowed types (``types.ALL``); a list
+    or a comma string declares one input per entry, each entry itself a type,
+    a ``"|"`` alternatives string, or a union tuple.
+    """
     if input_type is None:
         return []
+    if isinstance(input_type, tuple | set | frozenset):
+        return [tuple(input_type)]
     if isinstance(input_type, str):
-        return [t.strip() for t in input_type.split(",")]
-    return list(input_type)
+        input_type = input_type.split(",")
+    return [
+        tuple(t.strip() for t in entry.split("|")) if isinstance(entry, str) else tuple(entry)
+        for entry in input_type
+    ]
 
 
 @dataclass(frozen=True)
@@ -1255,7 +1266,7 @@ class StandardParameter:
       the flags here are the default ``--input``/``-i`` surface.
     - ``arity`` -- ``"single"`` for one value per invocation, or
       ``"single_or_append"`` when a declaration mode selects between one value
-      and a repeatable flag (``variable="repeat"``; a multi-input or variadic
+      and a repeatable flag (``variable=types.REPEAT``; a multi-input or variadic
       ``--input``).
     - ``type_name`` -- the argparse ``type`` callable's name when the flag
       converts its value (``--workers`` parses through ``int``), else ``None``

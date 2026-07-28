@@ -6,7 +6,7 @@
 # ///
 """Lint fixture: extra_args entries shadowing standard parameters. Never executed."""
 
-from weather_skills_core import weather_skill
+from weather_skills_core import types, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,7 +14,7 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "shadow-skill",
     _SKILL_VERSION,
-    output_type="gridded",
+    output_type=types.GRIDDED,
     extra_args={
         "date": {"help": "Redeclares the standard --date flag (WSK101)."},
         "dims": {"help": "Redeclares the standard --dims flag (WSK101)."},

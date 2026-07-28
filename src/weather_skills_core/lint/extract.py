@@ -17,8 +17,13 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from weather_skills_core import types
+
 #: Sentinel for a declaration value that is not a literal in the source.
 DYNAMIC = "<dynamic>"
+
+#: The declaration constants, resolved by name off a ``types.<NAME>`` reference.
+_TYPE_CONSTANTS = {name: value for name, value in vars(types).items() if name.isupper()}
 
 _TOGGLE_KEYWORDS = (
     "start_time",
@@ -127,11 +132,35 @@ class SkillDeclaration:
 
 
 def _literal(node):
-    """The node's literal value, or DYNAMIC when it is not a plain literal."""
+    """The node's literal value, or DYNAMIC when it is not a plain literal.
+
+    A ``types.<NAME>`` declaration constant is as static as the string it
+    holds, so it resolves to its value rather than reading as dynamic --
+    inside a literal tuple/list/dict too (``input_type=[types.ALL, types.ALL]``).
+    """
     try:
         return ast.literal_eval(node)
     except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return _type_constant(node)
+
+
+def _type_constant(node):
+    """Resolve a ``types.<NAME>`` reference, or a literal container of them, else DYNAMIC."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if node.value.id == "types":
+            return _TYPE_CONSTANTS.get(node.attr, DYNAMIC)
         return DYNAMIC
+    if isinstance(node, ast.Tuple | ast.List):
+        values = [_literal(element) for element in node.elts]
+        if DYNAMIC in values:
+            return DYNAMIC
+        return tuple(values) if isinstance(node, ast.Tuple) else values
+    if isinstance(node, ast.Dict) and None not in node.keys:
+        items = [(_literal(k), _literal(v)) for k, v in zip(node.keys, node.values, strict=True)]
+        if any(k is DYNAMIC or not isinstance(k, str) or v is DYNAMIC for k, v in items):
+            return DYNAMIC
+        return dict(items)
+    return DYNAMIC
 
 
 def _find_decorator_calls(tree: ast.Module) -> list[tuple[str, ast.Call]]:
@@ -418,7 +447,10 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.has_input = True
         if isinstance(input_type, str):
             n_inputs = len(input_type.split(","))
-        elif isinstance(input_type, list | tuple):
+        elif isinstance(input_type, tuple):
+            # A tuple is one input's union of allowed types, not one entry per input.
+            n_inputs = 1
+        elif isinstance(input_type, list):
             n_inputs = len(input_type)
         else:
             n_inputs = None

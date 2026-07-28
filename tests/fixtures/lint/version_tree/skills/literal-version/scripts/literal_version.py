@@ -6,7 +6,7 @@
 # ///
 """Lint fixture: _SKILL_VERSION defined but a literal passed instead (WSK401)."""
 
-from weather_skills_core import weather_skill
+from weather_skills_core import types, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,7 +14,7 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "literal-version",
     "0.2.0",
-    input_type="any",
+    input_type=types.ALL,
     output_type="same",
 )
 def literal_version(ds):

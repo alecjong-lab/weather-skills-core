@@ -6,7 +6,7 @@
 # ///
 """Lint fixture: a fully conformant skill declaration. Never executed."""
 
-from weather_skills_core import weather_skill
+from weather_skills_core import types, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,9 +14,9 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "clean-skill",
     _SKILL_VERSION,
-    input_type="any",
+    input_type=types.ALL,
     output_type="same",
-    bbox="optional",
+    bbox=types.OPTIONAL,
     extra_args={"smoothing": {"type": int, "help": "Smoothing window width in grid cells."}},
 )
 def clean_skill(ds, bbox, smoothing):

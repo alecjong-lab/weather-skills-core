@@ -19,6 +19,14 @@ A Zarr v3 store containing one or more data variables. Consumers also read Zarr 
 - 1-D coords `latitude(station_id)` and `longitude(station_id)`.
 - `time` dim as above.
 
+### Series envelope
+- No spatial coords at all — the shape left by collapsing `latitude` and `longitude` (e.g. `reduce --dim latitude --dim longitude`), or by any source that carries no geography.
+- `time` dim as above; other non-spatial dims (`number`, `level`) are preserved.
+
+### Detection
+
+A consumer classifies an input by shape, first match wins: a `station_id` dim is a station; a `step` dim plus a scalar `time` coord is a forecast; identifiable `latitude`/`longitude` coords make it gridded; anything left is a series. "Identifiable" means cf-xarray CF-attr resolution or the `lat`/`lon`/`y`/`x` name heuristics, with an explicit `--dims LAT,LON` override winning over both — so a grid whose axes carry neither CF attrs nor a recognized name reads as a series until `--dims` names them.
+
 ## Attrs
 
 `weather_skills_source` is optional metadata for human readability. `weather_skills_history` is the canonical provenance chain and is set by every zarr-writing skill.

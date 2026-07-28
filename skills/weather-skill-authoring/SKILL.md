@@ -32,16 +32,32 @@ body holds only domain logic.
 | Transform | `input_type` + zarr `output_type` (or `"same"`) | a Dataset |
 | Fetcher | no `input_type`, zarr `output_type`, `source=` | a Dataset |
 | Streaming fetcher | fetcher + `streaming=True` | a generator of per-period Datasets |
-| Plot | `input_type` + `output_type="png"` | a matplotlib Figure |
+| Plot | `input_type` + `output_type=types.PNG` | a matplotlib Figure |
 | No-artifact | no `output_type` | anything (ignored) |
 
 ## The envelope contract
 
 Every zarr input and output is a weather-skills envelope: a CF-compliant Zarr
-store plus the `weather_skills_history` provenance attr, in one of three
-shapes — `gridded`, `forecast`, `station`. Declare each input's shape in
-`input_type` (use `any` to opt out of shape validation); the decorator
-validates on open and exits 2 with a message naming the offending dim.
+store plus the `weather_skills_history` provenance attr, in one of four
+shapes — `types.GRIDDED`, `types.FORECAST`, `types.STATION`, `types.SERIES`.
+Declare each input's shape in `input_type`; the decorator validates on open
+and exits 2 with a message naming the offending dim.
+
+The shape is detected, first match wins: a `station_id` dim is a station; a
+`step` dim with a scalar `time` coord is a forecast; identifiable lat/lon
+coords make it gridded; anything with no spatial coords is a series (what
+collapsing latitude and longitude leaves). Gridded is a positive test rather
+than the fall-through, so every dataset classified gridded satisfies the
+gridded contract. "Identifiable" means cf-xarray's CF-attr resolution or the
+`lat`/`lon`/`y`/`x` name heuristics — a grid whose axes are named something
+else reads as a series until `--dims` names them, which is what `--dims` is
+for.
+
+Declare types and modes with the `weather_skills_core.types` constants, never
+a bare string. `types.ALL` is the tuple of all four shapes: an input declaring
+it accepts any of them and is then validated as whichever shape it is detected
+to be — the grid, station-coordinate, and `--time-dim` checks all run. It
+widens what a skill accepts, not what the decorator checks.
 
 `references/ENVELOPE.md` is authoritative for the rest: the exact dims and
 coords of each shape, the CF-compliance requirement, the write rules
@@ -61,7 +77,7 @@ The script is a PEP 723 single file. Skeleton:
 # ///
 """Module docstring: what the script is. Not read by the decorator."""
 
-from weather_skills_core import weather_skill
+from weather_skills_core import types, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.1.0"
@@ -86,8 +102,11 @@ live in the function docstring — a shortened function docstring shortens
 
 Declaration surface (all keyword-only after `name`, `version`):
 
-- `input_type` — `None`, one type, or a comma string / list with one type per
-  input. Inputs arrive as `--input`/`-i` (repeated for several), or via
+- `input_type` — `None`, one type, a tuple of the types one input may take
+  (`types.ALL` for all four), or a comma string / list with one entry per
+  input (`[types.ALL, types.ALL]` for two inputs of any shape). A tuple is one
+  input's alternatives; a list is one entry per input.
+  Inputs arrive as `--input`/`-i` (repeated for several), or via
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
   receives one list of datasets).
@@ -97,21 +116,21 @@ Declaration surface (all keyword-only after `name`, `version`):
   otherwise a single string shown on `--input`/`-i`, replacing the
   decorator's default help in the repeated-input cases.
 - `output_type` — `None`, a zarr envelope type, a tuple/set of zarr envelope
-  types (a union), `"same"`, or `"png"`. `"same"` declares a shape-preserving
-  transform: the output is whatever envelope type the input carries. Use it
-  (instead of hard-coding one zarr type) when `input_type` admits several
-  shapes (`"gridded|forecast"`, `"any"`) and the skill preserves whichever
-  came in. It requires at least one declared zarr input and writes through
-  the zarr path exactly like an explicit zarr type. A union (e.g.
-  `("gridded", "forecast")`, for a fetcher whose source decides the shape)
-  VALIDATES rather than selects: the returned dataset's detected shape must
+  types (a union), `"same"`, or `types.PNG`. `"same"` declares a
+  shape-preserving transform: the output is whatever envelope type the input
+  carries. Use it (instead of hard-coding one zarr type) when `input_type`
+  admits several shapes and the skill preserves whichever came in. It
+  requires at least one declared zarr input and writes through the zarr path
+  exactly like an explicit zarr type. A union (e.g.
+  `(types.GRIDDED, types.FORECAST)`, for a fetcher whose source decides the
+  shape) VALIDATES rather than selects: the returned dataset's detected shape must
   be one of the members, checked before the write (a mismatch exits 1); the
   declaration never coerces the output toward any member. A single-type
   declaration stays unchecked.
 - Standard flags, enabled by toggles and passed as keyword arguments:
   `start_time`/`end_time` (`--start`/`--end`), `date` (`--date`), `bbox`
-  (`"required"` or `"optional"`; the function receives a parsed
-  `(N, W, S, E)` tuple), `variable` (`"single"` or `"repeat"`), `workers`
+  (`types.REQUIRED` or `types.OPTIONAL`; the function receives a parsed
+  `(N, W, S, E)` tuple), `variable` (`types.SINGLE` or `types.REPEAT`), `workers`
   (pass the default int), `title`, `dims`, `time_dim`.
 - Toggle dict form: `start_time`/`end_time`/`date`, `bbox`, `variable`, and
   `workers` also accept a dict overriding the flag's argparse surface —
@@ -120,7 +139,7 @@ Declaration surface (all keyword-only after `name`, `version`):
   `"required": False` an omitted value reaches the function as `None` and no
   resolved date is recorded), and `choices` constrains the accepted values.
   The string/int forms become the dict's `mode`/`default` key —
-  `bbox={"mode": "optional", ...}`, `variable={"mode": "repeat", ...}`,
+  `bbox={"mode": types.OPTIONAL, ...}`, `variable={"mode": types.REPEAT, ...}`,
   `workers={"default": 4, ...}` — and `date` additionally accepts `context`:
   the parenthetical label on the resolved-date stderr line (default
   `"single date"`; e.g. `date={"context": "single forecast init date"}`
@@ -168,7 +187,7 @@ when required):
 ```python
 @weather_skill(
     "downscale", _SKILL_VERSION,
-    input_type="gridded", output_type="gridded",
+    input_type=types.GRIDDED, output_type=types.GRIDDED,
     extra_args={
         "factor": {"type": float, "aliases": ["-f"]},
         "target_resolution": {"type": float},
@@ -245,11 +264,11 @@ def _store_is_complete(out, context):
 @weather_skill(
     "my-fetch",
     _SKILL_VERSION,
-    output_type="gridded",
+    output_type=types.GRIDDED,
     source="my-source",
     start_time=True,
     end_time=True,
-    variable="single",
+    variable=types.SINGLE,
     latest_resolver=_latest,
     validate_args=_remember_request,
     completeness_probe=_store_is_complete,
@@ -276,9 +295,9 @@ itself defers them.
 @weather_skill(
     "clip-region",
     _SKILL_VERSION,
-    input_type="gridded",
-    output_type="gridded",
-    bbox="required",
+    input_type=types.GRIDDED,
+    output_type=types.GRIDDED,
+    bbox=types.REQUIRED,
     dims=True,
     hash_input=False,  # cheap cache check; hash computed only on a miss
     cache_hit_label="clip",  # cache-hit line reads "skipping clip."
@@ -291,12 +310,12 @@ def clip_region(ds, bbox, dims):
     return bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
 ```
 
-A typed `input_type="gridded"` composes with `dims=True`: when the caller
-passes `--dims LAT,LON`, input validation checks that the overridden names
-exist on the dataset instead of running CF/heuristic detection, so an input
-with nonstandard dim names validates and reaches the body (the same holds
-for `--time-dim`). Overrides participate only in typed validation; an input
-declared `any` skips all shape checks.
+`input_type` composes with `dims=True`: when the caller passes `--dims
+LAT,LON`, those names identify the spatial axes for both classification and
+validation, so a grid with nonstandard dim names classifies as gridded and
+reaches the body (the same holds for `--time-dim`). Without the override that
+grid reads as a series. A skill whose inputs may carry nonstandard dim names
+needs `dims=True` so the caller can name them.
 
 The decorator writes the returned Dataset: it carries the first input's attrs
 forward, stamps the provenance chain, clears encodings, replaces whatever
@@ -325,11 +344,11 @@ def _store_is_complete(out):
 @weather_skill(
     "oisst-fetch",
     _SKILL_VERSION,
-    output_type="gridded",
+    output_type=types.GRIDDED,
     source="oisst",
     start_time=True,
     end_time=True,
-    bbox="optional",
+    bbox=types.OPTIONAL,
     latest_resolver=_latest,
     completeness_probe=_store_is_complete,
 )
@@ -362,11 +381,11 @@ def _set_write_encoding(ds):
 @weather_skill(
     "oisst-fetch",
     _SKILL_VERSION,
-    output_type="gridded",
+    output_type=types.GRIDDED,
     source="oisst",
     start_time=True,
     end_time=True,
-    bbox="optional",
+    bbox=types.OPTIONAL,
     streaming=True,
     append_dim="time",
     write_encoding=_set_write_encoding,
@@ -394,8 +413,8 @@ chain reflects every override, including one yielded after the final dataset
 @weather_skill(
     "plot-compare",
     _SKILL_VERSION,
-    input_type=["any", "any"],
-    output_type="png",
+    input_type=[types.ALL, types.ALL],
+    output_type=types.PNG,
     history_labels=["a", "b"],
     title=True,
     savefig_kwargs={"bbox_inches": "tight"},

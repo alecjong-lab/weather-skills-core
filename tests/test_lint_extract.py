@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from weather_skills_core import types
 from weather_skills_core.lint.extract import (
     extract_script,
     extract_skill,
@@ -33,7 +34,9 @@ class TestDeclarationExtraction:
         assert decl.version_constant and decl.version_passed
         assert decl.has_input and decl.has_output
         assert decl.input_arity == "single"
-        assert decl.toggles["bbox"] == "optional"
+        # The fixture declares the toggle as types.OPTIONAL; extraction
+        # resolves the constant rather than recording it as dynamic.
+        assert decl.toggles["bbox"] == types.OPTIONAL
         shape = decl.extra_args["smoothing"]
         assert shape.flags == ("--smoothing",)
         assert shape.type_name == "int"
@@ -144,7 +147,7 @@ class TestDeclarationExtraction:
             tmp_path,
             '''
             """Doc."""
-            from weather_skills_core import weather_skill
+            from weather_skills_core import types, weather_skill
 
             _SKILL_VERSION = "0.1.0"
 
@@ -152,9 +155,9 @@ class TestDeclarationExtraction:
             @weather_skill(
                 "some-skill",
                 _SKILL_VERSION,
-                input_type=["any", "any"],
+                input_type=[types.ALL, types.ALL],
                 input_names=["forecast", "mclimate"],
-                output_type="png",
+                output_type=types.PNG,
             )
             def some_skill(a, b):
                 """Doc."""

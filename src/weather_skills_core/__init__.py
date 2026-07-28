@@ -1,5 +1,6 @@
 """Core library for weather skills: CLI, envelope, provenance, and caching."""
 
+from weather_skills_core import types
 from weather_skills_core.decorator import (
     EntryOverride,
     RunContext,
@@ -19,5 +20,6 @@ __all__ = [
     "UsageError",
     "WroteSummary",
     "standard_parameters",
+    "types",
     "weather_skill",
 ]
