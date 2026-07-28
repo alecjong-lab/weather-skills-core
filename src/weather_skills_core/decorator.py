@@ -160,6 +160,31 @@ def _split_extras(result, *, allow_override=True):
     return primary, extras[0]
 
 
+def _order_lists(raw, preserve_order=()):
+    """Sort every list-valued entry arg, so flag order cannot cause a cache miss.
+
+    Ordered, never deduped: a value given twice is recorded twice. Runs last,
+    after any ``normalize_args`` hook, so the guarantee holds for a list the
+    hook itself produced.
+
+    ``preserve_order`` names the dests whose order is data -- the skill's
+    output changes with it -- which core cannot infer and sorting would
+    destroy, collapsing two different requests onto one cache key.
+    """
+    ordered = {}
+    for key, value in raw.items():
+        # Tuples count: a hook may return one, and the JSON round-trip below
+        # would turn it into a list that had never been ordered.
+        if isinstance(value, list | tuple) and key not in preserve_order:
+            try:
+                value = sorted(value)
+            except TypeError:
+                # Mixed element types have no total order; keep as given.
+                value = list(value)
+        ordered[key] = value
+    return ordered
+
+
 def _remove_existing(path):
     """Remove whatever occupies an output path before a rewrite.
 
@@ -388,6 +413,7 @@ def weather_skill(
     validate_args=None,
     normalize_args=None,
     exclude_args=(),
+    preserve_order=(),
     reference_args=(),
     history_labels=None,
     write_encoding=None,
@@ -516,6 +542,10 @@ def weather_skill(
       the cache compare and the stamp, so JSON-equivalent containers (a
       tuple vs. the list it serializes to) compare equal;
       ``exclude_args`` drops further dests from the entry args;
+      ``preserve_order`` names dests whose list ORDER is data (the output
+      changes with it), exempting them from the sort every other list-valued
+      entry arg gets -- sorting one of those would give two different requests
+      a single cache key;
       ``write_encoding(ds)`` sets controlled write encodings after the
       encoding clear; ``post_write(path)`` runs after the artifact is written
       (zarr, streaming, or PNG -- requires an artifact output_type),
@@ -632,6 +662,13 @@ def weather_skill(
         raise ValueError(
             f"extra_args dest(s) {collisions} collide with standard parameter names "
             "the decorator resolves and passes itself; rename the extra argument(s)"
+        )
+    orderable = set(extra_dests) | {"variable"}
+    unknown_preserved = sorted(set(preserve_order) - orderable)
+    if unknown_preserved:
+        raise ValueError(
+            f"preserve_order names {unknown_preserved}, which are not list-valued "
+            f"dests of this skill; expected some of {sorted(orderable)}"
         )
     png_labels = history_labels if history_labels is not None else input_names
     if output_type == _types.PNG and not input_types:
@@ -937,6 +974,7 @@ def weather_skill(
             raw = _call_hook(
                 normalize_args, raw, wants_context=normalize_wants_ctx, context=context
             )
+        raw = _order_lists(raw, preserve_order)
         # Canonicalize through a JSON round-trip so the compared entry equals
         # the stamped entry's decoded form: a tuple from a normalize hook
         # serializes as a list, and without the round-trip the stamped store

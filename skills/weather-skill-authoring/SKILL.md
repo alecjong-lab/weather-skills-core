@@ -194,7 +194,8 @@ Declaration surface (all keyword-only after `name`, `version`):
   out of `ds.encoding`.
 - Hooks and cache behavior: `latest_resolver`, `source`, `streaming`,
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
-  `normalize_args`, `exclude_args`, `reference_args`, `history_labels`,
+  `normalize_args`, `exclude_args`, `preserve_order`, `reference_args`,
+  `history_labels`,
   `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`.
 - `post_write` — `callable(path)` run after the artifact is written (zarr,
   streaming, or PNG; requires an artifact `output_type`), receiving the
@@ -544,9 +545,34 @@ hit it returns without calling you or touching the store. What you control:
 
 - The recorded args are the argparse namespace minus input/output path
   strings, with resolved absolute dates (never relative tokens) and
-  `--workers` excluded. Use `normalize_args` to canonicalize (sort a repeated
-  `--variable`, coerce types) so flag order cannot cause spurious misses, and
-  `exclude_args` for any other pure-concurrency or presentation knob.
+  `--workers` excluded. Use `exclude_args` for any other pure-concurrency or
+  presentation knob.
+- **Every list-valued recorded arg is sorted by the decorator**, so flag order
+  alone cannot cause a spurious cache miss — you do not sort `--variable`
+  yourself. Sorted, never deduped: `-v a -v a` records `["a", "a"]`, because
+  the record is a canonical spelling of what was asked for, not a rewrite of
+  it. Sorting runs last, after `normalize_args`, so it also covers a list the
+  hook produced.
+- `preserve_order` — the narrow exception. **If a repeated flag's ORDER changes
+  your output, name its dest here**, and the decorator leaves that list in the
+  order given:
+
+  ```python
+  extra_args = ([("--index", {"action": "append"})],)
+  preserve_order = (("index",),)
+  ```
+
+  Without it, `--index 2 --index 0` and `--index 0 --index 2` record the same
+  sorted list, share a cache key, and the second run takes a wrong cache hit
+  returning the first one's data. Core cannot infer which arguments those are —
+  that the order is data, not spelling, is exactly what this declares. It names
+  dests, like `exclude_args` and `reference_args`, and an unknown name is a
+  declaration error rather than a silent sort. Use it only when the order is
+  genuinely load-bearing; `--variable` and `--dim` are sets and stay sorted.
+- `normalize_args` remains for canonicalization ordering does not cover:
+  filling in a default so an omitted flag and an explicit full list share a
+  key, coercing `"0"` and `"00"` to one value, nulling an argument the chosen
+  style ignores, or folding a resolved lookup into the recorded args.
 - `cache=False` removes the cache check entirely: the function runs and the
   output is rewritten on every invocation, with the provenance entry still
   built and stamped. Declare it when a meaningful cache key does not exist
@@ -952,7 +978,7 @@ Before calling a skill done, confirm:
 - [ ] Written-store verification lives in `post_write`, not in `__main__`
       after the decorated call.
 - [ ] Cache declaration is deliberate: `cache`, `hash_input`,
-      `normalize_args`, `exclude_args`, `reference_args`,
+      `normalize_args`, `exclude_args`, `preserve_order`, `reference_args`,
       `completeness_probe` each considered; fetch-discovered entry values are
       resolved before the cache check, with `EntryOverride` reserved for
       values that only exist after the work.

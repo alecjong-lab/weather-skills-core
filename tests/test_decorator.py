@@ -750,20 +750,108 @@ class TestCacheShortCircuit:
         assert len(calls) == 1
         assert "workers" not in history_of(out)[-1]["args"]
 
-    def test_normalize_args_canonicalizes_cache_key(self, tmp_path, gridded_store):
+    def test_list_args_are_ordered_without_a_hook(self, tmp_path, gridded_store):
+        # Core orders list-valued entry args, so flag order alone cannot cause
+        # a cache miss. No normalize_args hook involved.
         calls = []
-
-        def normalize(args):
-            if args.get("variable"):
-                args["variable"] = sorted(set(args["variable"]))
-            return args
-
-        skill = make_identity_skill(calls, variable=types.REPEAT, normalize_args=normalize)
+        skill = make_identity_skill(calls, variable=types.REPEAT)
         out = tmp_path / "out.zarr"
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a"])
         skill(["-i", str(gridded_store), "-o", str(out), "-v", "a", "-v", "b"])
         assert len(calls) == 1
         assert history_of(out)[-1]["args"]["variable"] == ["a", "b"]
+
+    def test_list_args_are_ordered_but_never_deduped(self, tmp_path, gridded_store):
+        # A value given twice is recorded twice: ordering is a canonical
+        # spelling of what was asked for, not a rewrite of it.
+        calls = []
+        skill = make_identity_skill(calls, variable=types.REPEAT)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a", "-v", "a"])
+        assert history_of(out)[-1]["args"]["variable"] == ["a", "a", "b"]
+
+    def test_ordering_runs_after_the_normalize_hook(self, tmp_path, gridded_store):
+        # The guarantee has to hold for a list the hook itself produced, so
+        # ordering is last. A hook that needs to keep an order records a
+        # string instead, which ordering leaves alone.
+        calls = []
+
+        def normalize(args):
+            args["ordered"] = ",".join(args.get("variable") or ())
+            args["variable"] = ["z", "y"]
+            return args
+
+        skill = make_identity_skill(calls, variable=types.REPEAT, normalize_args=normalize)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out), "-v", "b", "-v", "a"])
+        recorded = history_of(out)[-1]["args"]
+        assert recorded["variable"] == ["y", "z"]
+        assert recorded["ordered"] == "b,a"
+
+    def test_mixed_type_list_keeps_its_given_order(self, tmp_path, gridded_store):
+        # Sorting has no total order across types; recording it unchanged
+        # beats crashing the provenance stamp.
+        calls = []
+
+        def normalize(args):
+            args["mixed"] = [2, "a"]
+            return args
+
+        skill = make_identity_skill(calls, normalize_args=normalize)
+        out = tmp_path / "out.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out)])
+        assert history_of(out)[-1]["args"]["mixed"] == [2, "a"]
+
+    def test_preserve_order_exempts_a_dest_from_the_sort(self, tmp_path, gridded_store):
+        # An argument whose order changes the output must keep the order given:
+        # sorting it would hand two different requests one cache key.
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            extra_args=[("--index", {"action": "append"})],
+            preserve_order=("index",),
+        )
+        out = tmp_path / "a.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out), "--index", "2", "--index", "0"])
+        assert history_of(out)[-1]["args"]["index"] == ["2", "0"]
+
+    def test_preserved_order_keeps_two_orderings_distinct(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            extra_args=[("--index", {"action": "append"})],
+            preserve_order=("index",),
+        )
+        out = tmp_path / "a.zarr"
+        skill(["-i", str(gridded_store), "-o", str(out), "--index", "2", "--index", "0"])
+        skill(["-i", str(gridded_store), "-o", str(out), "--index", "0", "--index", "2"])
+        assert len(calls) == 2  # recomputed, not a cache hit
+        assert history_of(out)[-1]["args"]["index"] == ["0", "2"]
+
+    def test_preserve_order_leaves_other_lists_sorted(self, tmp_path, gridded_store):
+        calls = []
+        skill = make_identity_skill(
+            calls,
+            variable=types.REPEAT,
+            extra_args=[("--index", {"action": "append"})],
+            preserve_order=("index",),
+        )
+        out = tmp_path / "a.zarr"
+        skill(
+            ["-i", str(gridded_store), "-o", str(out)]
+            + ["--index", "2", "--index", "0", "-v", "b", "-v", "a"]
+        )
+        recorded = history_of(out)[-1]["args"]
+        assert recorded["index"] == ["2", "0"]
+        assert recorded["variable"] == ["a", "b"]
+
+    def test_preserve_order_rejects_an_unknown_dest(self):
+        # A typo here would silently sort an order-significant argument, which
+        # is the bug the declaration exists to prevent.
+        with pytest.raises(ValueError, match="preserve_order names"):
+            make_identity_skill(
+                [], extra_args=[("--index", {"action": "append"})], preserve_order=("indices",)
+            )
 
     def test_normalize_args_tuple_still_hits(self, tmp_path, gridded_store):
         # A tuple from the normalize hook stamps as a JSON list; the compared
