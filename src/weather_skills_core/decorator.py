@@ -70,29 +70,21 @@ class RunContext:
     Created once per invocation and passed by keyword (``context=``) to every
     declaration hook whose signature names a ``context`` parameter --
     ``latest_resolver``, ``validate_args``, ``normalize_args``,
-    ``completeness_probe``, and ``write_encoding`` -- and to the wrapped
-    function itself when its signature names one. Callables without the
-    parameter keep their plain call shapes.
+    ``completeness_probe``, ``write_encoding``, and ``post_write`` -- and to
+    the wrapped function itself when its signature names one. Callables
+    without the parameter keep their plain call shapes.
 
-    Fields fill in as the run proceeds: ``args`` (the parsed argparse
-    namespace) and ``output_path`` exist from the start; ``input_paths``
-    holds the CLI-given input paths once collected (before the inputs are
-    opened); ``start_time``/``end_time``/``date`` hold the resolved absolute
-    dates once the date grammar has run, and are ``None`` before that or when
-    the toggle is off.
-
-    ``state`` is a mutable scratch dict reserved for the skill: hooks and the
-    function share it within one run (memoize an opened remote store, stash a
-    value the write-encoding hook needs) and it starts empty on every run.
-    Use it instead of module-level globals for run-scoped side channels.
+    ``args`` is the parsed argparse namespace. ``start_time`` holds the
+    resolved absolute window start once the date grammar has run, and is
+    ``None`` before that or when the toggle is off. ``state`` is a mutable
+    scratch dict reserved for the skill: hooks and the function share it
+    within one run (memoize an opened remote store, stash a value the
+    write-encoding hook needs) and it starts empty on every run. Use it
+    instead of module-level globals for run-scoped side channels.
     """
 
     args: argparse.Namespace
-    output_path: Path | None = None
-    input_paths: list = field(default_factory=list)
     start_time: datetime.date | None = None
-    end_time: datetime.date | None = None
-    date: datetime.date | None = None
     state: dict = field(default_factory=dict)
 
 
@@ -555,9 +547,9 @@ def weather_skill(
       ``completeness_probe``) and the wrapped function itself opt into the
       run context by naming a ``context`` parameter; the decorator then also
       passes ``context=`` -- a :class:`RunContext` carrying the parsed args
-      namespace, the resolved dates, the input/output paths, and a run-scoped
-      ``state`` scratch dict shared across the hooks and the function.
-      Callables without the parameter keep their plain call shapes.
+      namespace, the resolved window start, and a run-scoped ``state`` scratch
+      dict shared across the hooks and the function. Callables without the
+      parameter keep their plain call shapes.
     - PNG: ``history_labels`` gives the per-input suffix for the embedded
       history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
       the ``savefig`` call (default ``{"dpi": 150}``).
@@ -816,22 +808,18 @@ def weather_skill(
         return parser
 
     def _execute(fn, args, fn_wants_ctx):
-        context = RunContext(
-            args=args,
-            output_path=Path(args.output) if output_type is not None else None,
-        )
+        context = RunContext(args=args)
         if workers_cfg is not None and args.workers is not None and args.workers < 1:
             raise UsageError("--workers must be >= 1.")
         if validate_args is not None:
             _call_hook(validate_args, args, wants_context=validate_wants_ctx, context=context)
 
         paths = _input_paths(args)
-        context.input_paths = list(paths)
         for p in paths:
             if not p.exists():
                 raise UsageError(f"{p} not found.")
 
-        out = context.output_path
+        out = Path(args.output) if output_type is not None else None
         if zarr_output:
             _overlap_guard(paths, out, args)
 
@@ -867,7 +855,7 @@ def weather_skill(
                 if log_line is not None:
                     print(log_line, file=sys.stderr)
                 params["start_time"], params["end_time"] = start_d, end_d
-                context.start_time, context.end_time = start_d, end_d
+                context.start_time = start_d
                 resolved_dates["start"] = start_d.isoformat()
                 resolved_dates["end"] = end_d.isoformat()
             elif args.start is not None or args.end is not None:
@@ -883,7 +871,6 @@ def weather_skill(
                 if log_line is not None:
                     print(log_line, file=sys.stderr)
                 params["date"] = date_d
-                context.date = date_d
                 resolved_dates["date"] = date_d.isoformat()
             else:
                 params["date"] = None

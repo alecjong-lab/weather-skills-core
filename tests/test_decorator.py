@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import fields
 from datetime import date
 from pathlib import Path
 
@@ -2588,14 +2589,13 @@ class TestRunContext:
         ctx = seen["context"]
         assert isinstance(ctx, RunContext)
         assert ctx.args.start == "2026-01-01"
-        assert ctx.input_paths == [gridded_store]
-        assert ctx.output_path == out
+        assert ctx.args.end == "2026-01-05"
         assert ctx.start_time == date(2026, 1, 1)
-        assert ctx.end_time == date(2026, 1, 5)
-        assert ctx.date is None
         assert ctx.state == {}
+        # The context carries only these three; everything else is on args.
+        assert {f.name for f in fields(RunContext)} == {"args", "start_time", "state"}
 
-    def test_date_toggle_fills_context_date(self, tmp_path):
+    def test_start_time_is_none_without_the_toggle(self, tmp_path):
         seen = {}
 
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date=True)
@@ -2605,8 +2605,8 @@ class TestRunContext:
             return make_gridded()
 
         fetch(["--date", "2026-02-03", "-o", str(tmp_path / "o.zarr")])
-        assert seen["context"].date == date(2026, 2, 3)
         assert seen["context"].start_time is None
+        assert seen["context"].args.date == "2026-02-03"
 
     def test_kwargs_function_does_not_receive_context(self, tmp_path, gridded_store):
         # A **params catch-all is not an opt-in; only a named context param is.

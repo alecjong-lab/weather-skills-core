@@ -250,9 +250,8 @@ Opt in by naming a `context` parameter on any hook (`latest_resolver`,
 `context=`, a `RunContext` carrying:
 
 - `args` — the parsed argparse namespace;
-- `output_path` — the output path as a `pathlib.Path`;
-- `start_time` / `end_time` / `date` — the resolved absolute dates (`None`
-  before resolution or when the toggle is off);
+- `start_time` — the resolved absolute window start (`None` before resolution
+  or when the toggle is off);
 - `state` — a mutable dict reserved for the skill, empty at the start of
   every run and shared across the hooks and the function within that run.
 
