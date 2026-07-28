@@ -445,10 +445,9 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("input_type is not a literal; input arity unknown")
     elif input_type is not None:
         decl.has_input = True
-        if isinstance(input_type, str):
-            n_inputs = len(input_type.split(","))
-        elif isinstance(input_type, tuple):
-            # A tuple is one input's union of allowed types, not one entry per input.
+        if isinstance(input_type, str | tuple):
+            # A single type or a tuple of them declares one input; only a list
+            # declares one entry per input.
             n_inputs = 1
         elif isinstance(input_type, list):
             n_inputs = len(input_type)

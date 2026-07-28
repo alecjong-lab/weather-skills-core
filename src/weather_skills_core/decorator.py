@@ -446,9 +446,12 @@ def weather_skill(
       script's ``_SKILL_VERSION``); the version appears in the argparse epilog
       and every provenance entry.
     - ``input_type`` -- envelope type(s) of the zarr input(s), named by the
-      :mod:`weather_skills_core.types` constants: ``None`` (no zarr inputs),
-      one type, a tuple of the types one input may take (``types.ALL`` for
-      all three), or a comma string / list declaring one entry per input.
+      :mod:`weather_skills_core.types` constants. ``None`` declares no zarr
+      inputs. Otherwise the shape of the value says how many inputs there are:
+      a single type or a TUPLE of types declares ONE input (the tuple being
+      that input's allowed set, ``types.ALL`` for every shape); a LIST declares
+      one entry per input, each entry a type or a tuple of them
+      (``[types.ALL, types.ALL]`` is two inputs of any shape).
       An input is always validated as the type it is detected to be, so a
       wider declaration accepts more shapes without checking less.
       Inputs arrive via ``--input``/``-i`` (repeated when there are several)
@@ -469,8 +472,10 @@ def weather_skill(
       recorded provenance args. Requires a declared ``input_type``.
     - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
       epilog only: no provenance, no cache, no write), a zarr envelope type,
-      a tuple/set of zarr envelope types (a union), or ``types.PNG`` for a
-      Figure-writing skill. A union (e.g. ``(types.GRIDDED, types.FORECAST)``,
+      a tuple of zarr envelope types (a union), or ``types.PNG`` for a
+      Figure-writing skill. A list is rejected: it is the one-entry-per-input
+      spelling and a skill has one output.
+      A union (e.g. ``(types.GRIDDED, types.FORECAST)``,
       for a fetcher whose source decides the shape) VALIDATES rather than
       selects: the returned dataset's detected shape must be a member, checked
       before the write (a mismatch exits 1); the declaration never coerces the
@@ -592,7 +597,13 @@ def weather_skill(
     if input_paths and not input_types:
         raise ValueError("input_paths=True requires a declared input_type")
     output_union = None
-    if isinstance(output_type, tuple | set | frozenset | list):
+    if isinstance(output_type, list):
+        # A list is the one-entry-per-input spelling, and a skill has one
+        # output; a union is a tuple, the same as on input_type.
+        raise ValueError(  # noqa: TRY004 -- every declaration error is a ValueError
+            f"output_type takes one type or a tuple of them, not a list: {output_type!r}"
+        )
+    if isinstance(output_type, tuple | set | frozenset):
         members = list(output_type)
         if not members:
             raise ValueError("a union output_type needs at least one envelope type")
@@ -1224,20 +1235,17 @@ def weather_skill(
 def _normalize_input_types(input_type):
     """Normalize the ``input_type`` declaration to one allowed-type tuple per input.
 
-    A tuple/set is one input's union of allowed types (``types.ALL``); a list
-    or a comma string declares one input per entry, each entry itself a type,
-    a ``"|"`` alternatives string, or a union tuple.
+    A single type, or a tuple/set of them, declares one input -- the tuple
+    being that input's allowed set. A list declares one entry per input, each
+    entry itself a type or a tuple/set of them.
     """
     if input_type is None:
         return []
+    if isinstance(input_type, str):
+        return [(input_type,)]
     if isinstance(input_type, tuple | set | frozenset):
         return [tuple(input_type)]
-    if isinstance(input_type, str):
-        input_type = input_type.split(",")
-    return [
-        tuple(t.strip() for t in entry.split("|")) if isinstance(entry, str) else tuple(entry)
-        for entry in input_type
-    ]
+    return [(entry,) if isinstance(entry, str) else tuple(entry) for entry in input_type]
 
 
 @dataclass(frozen=True)

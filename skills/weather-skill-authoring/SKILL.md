@@ -102,10 +102,21 @@ live in the function docstring — a shortened function docstring shortens
 
 Declaration surface (all keyword-only after `name`, `version`):
 
-- `input_type` — `None`, one type, a tuple of the types one input may take
-  (`types.ALL` for all four), or a comma string / list with one entry per
-  input (`[types.ALL, types.ALL]` for two inputs of any shape). A tuple is one
-  input's alternatives; a list is one entry per input.
+- `input_type` — `None` for no zarr inputs. Otherwise **the shape of the value
+  says how many inputs there are**:
+
+  | Declaration | Inputs | Each accepts |
+  | --- | --- | --- |
+  | `types.GRIDDED` | one | that one type |
+  | `(types.GRIDDED, types.FORECAST)` | one | either type |
+  | `types.ALL` | one | any shape (it is just the tuple of all four) |
+  | `[types.GRIDDED, types.STATION]` | two | first gridded, second station |
+  | `[types.ALL, (types.GRIDDED, types.FORECAST)]` | two | any shape; gridded or forecast |
+
+  A tuple is **one input's allowed set**; a list is **one entry per input**,
+  and a list entry may itself be a tuple. `types.ALL` is not a wildcard — it
+  is the tuple of every shape, and the input is still validated as whichever
+  shape it turns out to be.
   Inputs arrive as `--input`/`-i` (repeated for several), or via
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
@@ -115,8 +126,9 @@ Declaration surface (all keyword-only after `name`, `version`):
   (`input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."]`);
   otherwise a single string shown on `--input`/`-i`, replacing the
   decorator's default help in the repeated-input cases.
-- `output_type` — `None`, a zarr envelope type, a tuple/set of zarr envelope
-  types (a union), or `types.PNG`. A union (e.g.
+- `output_type` — `None`, a zarr envelope type, a tuple of zarr envelope
+  types (a union), or `types.PNG`. A list is rejected: it is the
+  one-entry-per-input spelling and a skill has one output. A union (e.g.
   `(types.GRIDDED, types.FORECAST)`, for a fetcher whose source decides the
   shape) VALIDATES rather than selects: the returned dataset's detected shape must
   be one of the members, checked before the write (a mismatch exits 1); the

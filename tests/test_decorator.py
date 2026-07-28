@@ -282,13 +282,93 @@ class TestParserConstruction:
                 lambda ds: None
             )
         with pytest.raises(ValueError, match="unknown envelope type"):
-            weather_skill("x", "0.1.0", input_type="gridded|forecst", output_type=types.GRIDDED)(
-                lambda ds: None
-            )
+            weather_skill(
+                "x", "0.1.0", input_type=(types.GRIDDED, "forecst"), output_type=types.GRIDDED
+            )(lambda ds: None)
         with pytest.raises(ValueError, match="unknown envelope type"):
             weather_skill(
                 "x", "0.1.0", input_type=[types.GRIDDED, "statoin"], output_type=types.GRIDDED
             )(lambda a, b: None)
+
+
+class TestTypeUnions:
+    """The shape of the declaration says how many inputs there are."""
+
+    def store(self, tmp_path, ds, name):
+        path = tmp_path / name
+        ds.to_zarr(path, mode="w", consolidated=True)
+        return str(path)
+
+    def test_tuple_is_one_input_accepting_any_member(self, tmp_path):
+        calls = []
+        skill = make_identity_skill(calls, input_type=(types.GRIDDED, types.FORECAST))
+        for i, ds in enumerate((make_gridded(), make_forecast())):
+            skill(
+                ["-i", self.store(tmp_path, ds, f"in{i}.zarr"), "-o", str(tmp_path / f"o{i}.zarr")]
+            )
+        assert len(calls) == 2
+
+    def test_tuple_union_rejects_a_non_member(self, tmp_path, capsys):
+        skill = make_identity_skill([], input_type=(types.GRIDDED, types.FORECAST))
+        with pytest.raises(SystemExit) as exc:
+            skill(
+                [
+                    "-i",
+                    self.store(tmp_path, make_station(), "st.zarr"),
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                ]
+            )
+        assert exc.value.code == 2
+        assert "expects gridded or forecast" in capsys.readouterr().err
+
+    def test_list_is_one_input_per_entry(self, tmp_path):
+        seen = []
+
+        @weather_skill(
+            "pair", "0.1.0", input_type=[types.GRIDDED, types.FORECAST], output_type=types.GRIDDED
+        )
+        def pair(a, b):
+            """Two inputs, one declared type each."""
+            seen.append((envelope.detect_type(a), envelope.detect_type(b)))
+            return a.copy()
+
+        pair(
+            [
+                "-i",
+                self.store(tmp_path, make_gridded(), "a.zarr"),
+                "-i",
+                self.store(tmp_path, make_forecast(), "b.zarr"),
+                "-o",
+                str(tmp_path / "o.zarr"),
+            ]
+        )
+        assert seen == [(types.GRIDDED, types.FORECAST)]
+
+    def test_list_entry_may_itself_be_a_union(self, tmp_path):
+        skill = weather_skill(
+            "pair",
+            "0.1.0",
+            input_type=[types.ALL, (types.GRIDDED, types.FORECAST)],
+            output_type=types.GRIDDED,
+        )(lambda a, b: None)
+        assert len(skill.parser.parse_args(["-i", "x", "-i", "y", "-o", "z"]).input) == 2
+
+    def test_output_type_rejects_a_list(self):
+        with pytest.raises(ValueError, match="not a list"):
+            weather_skill("x", "0.1.0", output_type=[types.GRIDDED, types.FORECAST])(lambda: None)
+
+    def test_pipe_string_is_not_a_union(self):
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill("x", "0.1.0", input_type="gridded|forecast", output_type=types.GRIDDED)(
+                lambda ds: None
+            )
+
+    def test_comma_string_is_not_two_inputs(self):
+        with pytest.raises(ValueError, match="unknown envelope type"):
+            weather_skill("x", "0.1.0", input_type="gridded,gridded", output_type=types.GRIDDED)(
+                lambda a, b: None
+            )
 
 
 class TestToggleDictForm:
