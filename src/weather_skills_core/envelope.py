@@ -21,6 +21,7 @@ FORECAST = "forecast"
 STATION = "station"
 UNSTRUCTURED = "unstructured"
 VISUALIZATION = "visualization"
+ANY = "any"
 
 TYPES = (DATA, FORECAST, STATION)
 

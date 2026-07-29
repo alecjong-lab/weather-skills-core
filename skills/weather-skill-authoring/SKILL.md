@@ -31,9 +31,9 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "my-skill",
     _SKILL_VERSION,
-    inputs=["data"],                 # list; empty = fetcher
-    outputs=["data"],                # data|forecast|station|unstructured|visualization
-    dates="range",                   # None | "single" | "range"
+    inputs=["data"],                 # list; empty = fetcher; "any" / "any+" allowed
+    outputs=["data"],                # data|forecast|station|any|unstructured|visualization
+    dates="range",                   # None | "single" | "range" | "either"
     region="optional",               # None | "required" | "optional" → --bbox
     variable="single_required",      # None | single_*/multiple_*
     extra_args=[
@@ -58,20 +58,32 @@ if __name__ == "__main__":
 | --- | --- | --- |
 | Transform | `inputs=[...]`, `outputs=[zarr type]` | Dataset or Path |
 | Fetcher | `inputs=[]` (or omit), zarr `outputs` | Dataset or Path |
-| Visualization | `outputs=["visualization"]` | Path (skill writes PNG/JPEG/HTML first) |
+| Visualization | `outputs=["visualization"]` | Path (skill writes PNG/JPEG/HTML to `output` kwarg) |
 | Unstructured input | `inputs=["unstructured"]` | skill receives a `Path` |
+| Variadic inputs | `inputs=["any+"]` (or `data+`, …) | skill receives a `list` of opened inputs |
 | No-artifact | omit / empty `outputs` | anything (ignored) |
+
+Variadic form is a **single** `type+` entry (≥1 `--input`). Do not mix fixed and
+variadic slots. Skills that need ≥2 inputs (e.g. concat) enforce that in-body.
 
 ## Types
 
 - `data`, `forecast`, `station` — Zarr envelopes (validated on open)
+- `any` — any Zarr envelope (`data|forecast|station`); valid on inputs and outputs
+  (output `any` means passthrough / shape-preserving write)
 - `unstructured` — opaque file; passed as `Path`
 - `visualization` — output-only; decorator stamps provenance into file metadata
 
 ## Dates
 
-`--start`/`--end` or `--date` take **absolute `YYYY-MM-DD` only**. Relative
-dates belong in a separate resolve-dates skill.
+`--start`/`--end` or `--date` take **absolute `YYYY-MM-DD` only**. Modes:
+
+- `"range"` — required `--start` and `--end`
+- `"single"` — required `--date`
+- `"either"` — `--date` XOR (`--start` + `--end`); skill receives all three kwargs
+  with the unused side `None`
+
+Relative / rolling dates are resolved by the caller before invoking the skill.
 
 ## Provenance
 
@@ -80,6 +92,13 @@ The decorator appends a `weather_skills_history` entry:
 - Dataset return → stamp attrs, then write Zarr to `--output`
 - Path return (Zarr) → reopen and restamp in place
 - Path return (`visualization`) → embed JSON history in PNG/JPEG/HTML metadata
+
+When `outputs` is declared, the decorator passes `--output` path(s) as an
+`output` keyword when the skill function accepts it: a single `Path` when
+there is one output, or a `list[Path]` when there are several. Visualization
+skills must declare `output`, write the file to that path, and return the
+same `Path`. Skills that return a Dataset and let the decorator write Zarr
+may omit `output` from their signature.
 
 Do not clear or rewrite history yourself; set `weather_skills_source` on fetcher
 Datasets before return if needed.

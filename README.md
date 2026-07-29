@@ -8,9 +8,9 @@ provenance stamping (`weather_skills_history`), and output writing.
 @weather_skill(
     "my-fancy-skill",
     "0.1.0",
-    inputs=["forecast", "station"],
-    outputs=["forecast"],
-    dates="range",
+    inputs=["any"],                 # data|forecast|station|any|unstructured; "any+" = variadic
+    outputs=["any"],                # or data|forecast|station|visualization|…
+    dates="range",                  # None | "single" | "range" | "either"
     region="optional",
     variable="single_required",
     extra_args=[
@@ -19,16 +19,18 @@ provenance stamping (`weather_skills_history`), and output writing.
     ],
 )
 def my_fancy_skill(
-    forecast_ds, station_ds, start_time, end_time, bbox, variable,
+    ds, start_time, end_time, bbox, variable,
     corr_coefficient, interpolation_factor,
 ):
     ...
     return result_ds  # or a Path to an already-written file
 ```
 
-The skill receives opened inputs (or `Path` for `unstructured`) plus resolved
-kwargs, and returns an xarray Dataset (decorator stamps provenance and writes
-Zarr) or a Path (decorator stamps provenance on the existing file).
+The skill receives opened inputs (or `Path` for `unstructured`, or a `list` for
+`type+` variadic inputs) plus resolved kwargs, and returns an xarray Dataset
+(decorator stamps provenance and writes Zarr) or a Path (decorator stamps
+provenance on the existing file). Visualization skills that accept an `output`
+parameter receive the `--output` path and must write the file before returning it.
 
 ## Install
 

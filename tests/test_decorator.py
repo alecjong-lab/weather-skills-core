@@ -75,9 +75,9 @@ class TestTransform:
         out = tmp_path / "out.zarr"
 
         @weather_skill("copy", "0.1.0", inputs=["data"], outputs=["data"])
-        def copy(ds):
-            ds.to_zarr(out, mode="w", consolidated=True)
-            return out
+        def copy(ds, output):
+            ds.to_zarr(output, mode="w", consolidated=True)
+            return output
 
         copy(["-i", str(data_store), "-o", str(out)])
         history = load_history(out)
@@ -162,40 +162,87 @@ class TestUnstructured:
 class TestVisualization:
     def test_png_stamp(self, data_store, tmp_path):
         out = tmp_path / "plot.png"
+        seen = {}
 
         @weather_skill("plot", "0.1.0", inputs=["data"], outputs=["visualization"])
-        def plot(ds):
-            Image.new("RGB", (8, 8), color=(255, 0, 0)).save(out)
-            return out
+        def plot(ds, output):
+            seen["output"] = output
+            Image.new("RGB", (8, 8), color=(255, 0, 0)).save(output)
+            return output
 
         plot(["-i", str(data_store), "-o", str(out)])
+        assert seen["output"] == out
         history = load_visualization_history(out)
         assert history[-1]["skill"] == "plot"
 
     def test_html_stamp(self, tmp_path):
         out = tmp_path / "fig.html"
+        seen = {}
 
         @weather_skill("plot", "0.1.0", outputs=["visualization"])
-        def plot():
-            out.write_text("<html><head></head><body>hi</body></html>", encoding="utf-8")
-            return out
+        def plot(output):
+            seen["output"] = output
+            output.write_text("<html><head></head><body>hi</body></html>", encoding="utf-8")
+            return output
 
         plot(["-o", str(out)])
+        assert seen["output"] == out
         history = load_visualization_history(out)
         assert history[-1]["skill"] == "plot"
         assert 'name="weather_skills_history"' in out.read_text(encoding="utf-8")
 
     def test_jpeg_stamp(self, tmp_path):
         out = tmp_path / "fig.jpg"
+        seen = {}
 
         @weather_skill("plot", "0.1.0", outputs=["visualization"])
-        def plot():
-            Image.new("RGB", (8, 8), color=(0, 255, 0)).save(out, quality=90)
-            return out
+        def plot(output):
+            seen["output"] = output
+            Image.new("RGB", (8, 8), color=(0, 255, 0)).save(output, quality=90)
+            return output
 
         plot(["-o", str(out)])
+        assert seen["output"] == out
         history = load_visualization_history(out)
         assert history[-1]["skill"] == "plot"
+
+
+class TestOutputKwarg:
+    def test_single_output_path(self, data_store, tmp_path):
+        out = tmp_path / "out.zarr"
+        seen = {}
+
+        @weather_skill("copy", "0.1.0", inputs=["data"], outputs=["data"])
+        def copy(ds, output):
+            seen["output"] = output
+            return ds
+
+        copy(["-i", str(data_store), "-o", str(out)])
+        assert seen["output"] == out
+
+    def test_multiple_output_paths(self, data_store, tmp_path):
+        out_a = tmp_path / "a.zarr"
+        out_b = tmp_path / "b.zarr"
+        seen = {}
+
+        @weather_skill("split", "0.1.0", inputs=["data"], outputs=["data", "data"])
+        def split(ds, output):
+            seen["output"] = output
+            return [ds, ds]
+
+        split(["-i", str(data_store), "-o", str(out_a), "-o", str(out_b)])
+        assert seen["output"] == [out_a, out_b]
+
+    def test_omitted_when_skill_has_no_output_param(self, data_store, tmp_path):
+        out = tmp_path / "out.zarr"
+
+        @weather_skill("double", "0.1.0", inputs=["data"], outputs=["data"])
+        def double(ds):
+            return ds * 2
+
+        double(["-i", str(data_store), "-o", str(out)])
+        with xr.open_zarr(out, consolidated=True) as ds:
+            assert float(ds["precip"].values.mean()) == 2.0
 
 
 class TestNoArtifact:
@@ -219,3 +266,113 @@ class TestMultiVariable:
 
         skill(["-o", str(out), "-v", "a", "-v", "b"])
         assert seen["variable"] == ["a", "b"]
+
+
+class TestAny:
+    def test_any_input_accepts_data(self, data_store, tmp_path):
+        out = tmp_path / "out.zarr"
+
+        @weather_skill("s", "0.1.0", inputs=["any"], outputs=["any"])
+        def skill(ds):
+            return ds
+
+        skill(["-i", str(data_store), "-o", str(out)])
+        assert out.exists()
+
+    def test_invalid_any_plus_mixed(self):
+        with pytest.raises(ValueError, match="variadic"):
+
+            @weather_skill("s", "0.1.0", inputs=["data", "any+"], outputs=["any"])
+            def skill(dss):
+                return dss[0]
+
+
+class TestVariadic:
+    def test_passes_list(self, data_store, tmp_path):
+        out = tmp_path / "out.zarr"
+        seen = {}
+
+        @weather_skill("cat", "0.1.0", inputs=["any+"], outputs=["any"])
+        def cat(dss):
+            seen["n"] = len(dss)
+            return dss[0]
+
+        cat(["-i", str(data_store), "-i", str(data_store), "-o", str(out)])
+        assert seen["n"] == 2
+        assert load_history(out)[-1]["skill"] == "cat"
+
+    def test_arity_at_least_one(self, tmp_path):
+        @weather_skill("cat", "0.1.0", inputs=["any+"], outputs=["any"])
+        def cat(dss):
+            return dss[0]
+
+        with pytest.raises(SystemExit) as exc:
+            cat(["-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2
+
+
+class TestDatesEither:
+    def test_date_mode(self, tmp_path):
+        out = tmp_path / "out.zarr"
+        seen = {}
+
+        @weather_skill("fetch", "0.1.0", outputs=["data"], dates="either")
+        def fetch(date, start_time, end_time):
+            seen["date"] = date
+            seen["start"] = start_time
+            seen["end"] = end_time
+            return make_data()
+
+        fetch(["-o", str(out), "--date", "2026-03-01"])
+        assert seen["date"].isoformat() == "2026-03-01"
+        assert seen["start"] is None and seen["end"] is None
+        args = load_history(out)[-1]["args"]
+        assert args["date"] == "2026-03-01"
+        assert "start" not in args
+
+    def test_range_mode(self, tmp_path):
+        out = tmp_path / "out.zarr"
+        seen = {}
+
+        @weather_skill("fetch", "0.1.0", outputs=["data"], dates="either")
+        def fetch(date, start_time, end_time):
+            seen["date"] = date
+            seen["start"] = start_time.isoformat()
+            seen["end"] = end_time.isoformat()
+            return make_data()
+
+        fetch(["-o", str(out), "--start", "2026-01-01", "--end", "2026-01-10"])
+        assert seen["date"] is None
+        assert seen["start"] == "2026-01-01"
+        args = load_history(out)[-1]["args"]
+        assert args["start"] == "2026-01-01"
+        assert "date" not in args
+
+    def test_both_modes_exit(self, tmp_path):
+        @weather_skill("fetch", "0.1.0", outputs=["data"], dates="either")
+        def fetch(date, start_time, end_time):
+            return make_data()
+
+        with pytest.raises(SystemExit) as exc:
+            fetch(
+                [
+                    "-o",
+                    str(tmp_path / "o.zarr"),
+                    "--date",
+                    "2026-01-01",
+                    "--start",
+                    "2026-01-01",
+                    "--end",
+                    "2026-01-02",
+                ]
+            )
+        assert exc.value.code == 2
+
+    def test_neither_mode_exit(self, tmp_path):
+        @weather_skill("fetch", "0.1.0", outputs=["data"], dates="either")
+        def fetch(date, start_time, end_time):
+            return make_data()
+
+        with pytest.raises(SystemExit) as exc:
+            fetch(["-o", str(tmp_path / "o.zarr")])
+        assert exc.value.code == 2

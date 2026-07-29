@@ -12,8 +12,8 @@ The conformance linter checks naming (WSK101 / WSK201 / WSK202).
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. |
-| Outputs | `--output` / `-o`, repeated | Exactly `len(outputs)` paths, in order. |
+| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `type+` entry means ≥1 paths (variadic). |
+| Outputs | `--output` / `-o`, repeated | Exactly `len(outputs)` paths, in order. Passed as `output` (`Path` or `list[Path]`) when the skill accepts it. |
 
 ### Region
 
@@ -29,9 +29,10 @@ The conformance linter checks naming (WSK101 / WSK201 / WSK202).
 | --- | --- | --- |
 | Date range | `--start` / `--end` | Absolute `YYYY-MM-DD`; both ends inclusive; `start <= end`. |
 | Single date | `--date` | Absolute `YYYY-MM-DD`. |
+| Either | `--date` XOR `--start`/`--end` | From `dates="either"`. |
 
-Relative / rolling dates (`now`, `latest`, offsets) are resolved by a separate
-skill before calling weather skills.
+Relative / rolling dates (`now`, `latest`, offsets) are resolved by the caller
+before invoking weather skills.
 
 ### Variable
 
