@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 
 
-def make_gridded(
+def make_data(
     n_time=2,
     lats=(1.0, 2.0, 3.0),
     lons=(10.0, 11.0, 12.0, 13.0),
@@ -21,6 +21,10 @@ def make_gridded(
             "longitude": list(lons),
         },
     )
+
+
+# Back-compat alias for older test names during migration
+make_gridded = make_data
 
 
 def make_forecast(n_number=3, n_step=4):
@@ -54,7 +58,12 @@ def make_station(n_station=3, n_time=2):
 
 
 @pytest.fixture
-def gridded_store(tmp_path):
+def data_store(tmp_path):
     path = tmp_path / "in.zarr"
-    make_gridded().to_zarr(path, mode="w", consolidated=True)
+    make_data().to_zarr(path, mode="w", consolidated=True)
     return path
+
+
+@pytest.fixture
+def gridded_store(data_store):
+    return data_store

@@ -21,18 +21,10 @@ from pathlib import Path
 DYNAMIC = "<dynamic>"
 
 _TOGGLE_KEYWORDS = (
-    "start_time",
-    "end_time",
-    "date",
-    "bbox",
+    "dates",
+    "region",
     "variable",
-    "workers",
-    "title",
-    "dims",
-    "time_dim",
 )
-
-_BARE_TYPE_NAMES = {"int", "float", "str", "bool"}
 
 # The PEP 723 inline-metadata block grammar (the regular expression given by
 # the specification, anchored to the "script" block type by the extractor).
@@ -155,21 +147,44 @@ def _find_decorator_calls(tree: ast.Module) -> list[tuple[str, ast.Call]]:
     return calls
 
 
-def _default_flag(dest: str) -> str:
-    return "--" + dest.replace("_", "-")
+def _dest_from_option_strings(flags: tuple[str, ...], kwargs: dict) -> str:
+    if isinstance(kwargs.get("dest"), str):
+        return kwargs["dest"]
+    flag = next((f for f in flags if f.startswith("--")), flags[0] if flags else "arg")
+    return flag.lstrip("-").replace("-", "_")
 
 
-def _shape_from_dict_spec(dest: str, node: ast.Dict, notes: list[str]) -> ArgShape:
+def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> ArgShape | None:
+    """Build an ArgShape from one ``(option_strings, kwargs)`` extra_args entry."""
+    flags_val = _literal(option_strings) if not isinstance(option_strings, list | tuple) else None
+    if isinstance(option_strings, ast.Tuple | ast.List):
+        flags = []
+        for elt in option_strings.elts:
+            v = _literal(elt)
+            if not isinstance(v, str):
+                notes.append("extra_args: a non-literal option string was skipped")
+                return None
+            flags.append(v)
+        flags = tuple(flags)
+    elif isinstance(flags_val, tuple | list) and all(isinstance(f, str) for f in flags_val):
+        flags = tuple(flags_val)
+    else:
+        notes.append("extra_args: option_strings is not a literal sequence of strings")
+        return None
+
+    if not isinstance(kwargs_node, ast.Dict):
+        notes.append(f"extra_args {flags[0]!r}: kwargs is not a literal dict; recorded as dynamic")
+        dest = _dest_from_option_strings(flags, {})
+        return ArgShape(dest=dest, flags=flags, dynamic=True)
+
     spec = {}
     dynamic_keys = []
-    for key_node, value_node in zip(node.keys, node.values, strict=True):
+    for key_node, value_node in zip(kwargs_node.keys, kwargs_node.values, strict=True):
         key = _literal(key_node) if key_node is not None else DYNAMIC
         if key is DYNAMIC or not isinstance(key, str):
-            notes.append(f"extra_args {dest!r}: a non-literal spec key was skipped")
+            notes.append(f"extra_args {flags[0]!r}: a non-literal kwargs key was skipped")
             continue
         if key == "type":
-            # A type value is a callable (``int``, ``float``), never a literal;
-            # a plain name is the recognized form.
             if isinstance(value_node, ast.Name):
                 spec["type"] = value_node.id
             else:
@@ -181,44 +196,34 @@ def _shape_from_dict_spec(dest: str, node: ast.Dict, notes: list[str]) -> ArgSha
             continue
         spec[key] = value
 
-    positional = bool(spec.get("positional", False))
+    positional = bool(flags) and not any(f.startswith("-") for f in flags)
     if positional:
-        flags = ()
+        flag_tuple = ()
+        dest = spec.get("dest") or (flags[0] if flags else "arg")
     else:
-        flag = spec.get("flag", _default_flag(dest))
-        if not isinstance(flag, str):
-            notes.append(f"extra_args {dest!r}: 'flag' is not a string; using the default flag")
-            flag = _default_flag(dest)
-        aliases = spec.get("aliases", ())
-        if isinstance(aliases, str) or not isinstance(aliases, list | tuple):
-            notes.append(f"extra_args {dest!r}: 'aliases' is not a list of strings; ignored")
-            aliases = ()
-        elif any(not isinstance(a, str) for a in aliases):
-            notes.append(f"extra_args {dest!r}: non-string alias(es) ignored")
-            aliases = tuple(a for a in aliases if isinstance(a, str))
-        flags = (flag, *aliases)
+        flag_tuple = flags
+        dest = _dest_from_option_strings(flags, spec)
+
     if spec.get("action") == "store_true":
         arity = "store_true"
-    elif spec.get("repeat", False) or spec.get("action") == "append":
+    elif spec.get("action") == "append":
         arity = "append"
     else:
         arity = "single"
     choices = spec.get("choices")
-    if choices is not None:
-        if isinstance(choices, list | tuple | set):
-            choices = tuple(choices)
-        else:
-            notes.append(f"extra_args {dest!r}: 'choices' is not a list; ignored")
-            choices = None
+    if choices is not None and isinstance(choices, list | tuple | set):
+        choices = tuple(choices)
+    elif choices is not None:
+        notes.append(f"extra_args {dest!r}: 'choices' is not a list; ignored")
+        choices = None
     if dynamic_keys:
         notes.append(
             f"extra_args {dest!r}: non-literal value(s) for "
-            f"{', '.join(sorted(dynamic_keys))} recorded as dynamic and skipped "
-            "from shape comparison"
+            f"{', '.join(sorted(dynamic_keys))} recorded as dynamic"
         )
     return ArgShape(
         dest=dest,
-        flags=flags,
+        flags=flag_tuple,
         positional=positional,
         arity=arity,
         nargs=spec.get("nargs"),
@@ -229,100 +234,28 @@ def _shape_from_dict_spec(dest: str, node: ast.Dict, notes: list[str]) -> ArgSha
     )
 
 
-def _shape_from_set_spec(dest: str, node: ast.Set, notes: list[str]) -> ArgShape:
-    type_name = None
-    choices = None
-    arity = "single"
-    dynamic_keys = []
-    for element in node.elts:
-        if isinstance(element, ast.Name) and element.id in _BARE_TYPE_NAMES:
-            if element.id == "bool":
-                arity = "store_true"
-            else:
-                type_name = element.id
-        elif (
-            isinstance(element, ast.Call)
-            and isinstance(element.func, ast.Name)
-            and element.func.id == "range"
-        ):
-            args = [_literal(a) for a in element.args]
-            if DYNAMIC in args:
-                dynamic_keys.append("choices")
-            else:
-                choices = tuple(range(*args))
-        else:
-            value = _literal(element)
-            if value is DYNAMIC:
-                dynamic_keys.append("choices")
-            elif isinstance(value, tuple | list):
-                choices = tuple(value)
-    if dynamic_keys:
-        notes.append(
-            f"extra_args {dest!r}: non-literal constraint-set element(s) recorded "
-            "as dynamic and skipped from shape comparison"
-        )
-    return ArgShape(
-        dest=dest,
-        flags=(_default_flag(dest),),
-        arity=arity,
-        type_name=type_name,
-        choices=choices,
-        dynamic_keys=tuple(sorted(set(dynamic_keys))),
-    )
-
-
-def _shape_from_spec(dest: str, node, notes: list[str]) -> ArgShape:
-    if isinstance(node, ast.Dict):
-        return _shape_from_dict_spec(dest, node, notes)
-    if isinstance(node, ast.Set):
-        return _shape_from_set_spec(dest, node, notes)
-    if isinstance(node, ast.Name) and node.id in _BARE_TYPE_NAMES:
-        if node.id == "bool":
-            return ArgShape(dest=dest, flags=(_default_flag(dest),), arity="store_true")
-        return ArgShape(dest=dest, flags=(_default_flag(dest),), type_name=node.id)
-    value = _literal(node)
-    if isinstance(value, tuple | list):
-        return ArgShape(dest=dest, flags=(_default_flag(dest),), choices=tuple(value))
-    notes.append(
-        f"extra_args {dest!r}: spec is not a recognized literal form; recorded as "
-        "dynamic and skipped from shape comparison"
-    )
-    return ArgShape(dest=dest, flags=(_default_flag(dest),), dynamic=True)
-
-
 def _extract_extra_args(node, notes: list[str]) -> tuple[dict[str, ArgShape], bool]:
-    """Extract ``extra_args`` shapes and whether the declared-flag set is dynamic.
-
-    The second return is True when the full set of declared flags cannot be
-    determined statically -- ``extra_args`` is not a literal dict (a name
-    reference, a call), merges ``**kwargs``, or carries a non-literal dest key.
-    The caller suppresses the SKILL.md reverse check for such a declaration,
-    which would otherwise flag every documented argument as undeclared.
-    """
+    """Extract ``extra_args`` from a list of ``(option_strings, kwargs)`` tuples."""
     if node is None:
         return {}, False
-    if not isinstance(node, ast.Dict):
+    if not isinstance(node, ast.List | ast.Tuple):
         notes.append(
-            "extra_args is not a literal dict; the declared-flag set is unknown, so the "
+            "extra_args is not a literal list; the declared-flag set is unknown, so the "
             "SKILL.md reverse check is suppressed for this script"
         )
         return {}, True
-    dynamic = False
     shapes = {}
-    for key_node, value_node in zip(node.keys, node.values, strict=True):
-        if key_node is None:
-            notes.append(
-                "extra_args merges **kwargs; the declared-flag set is incomplete, so the "
-                "SKILL.md reverse check is suppressed for this script"
-            )
+    dynamic = False
+    for i, elt in enumerate(node.elts):
+        if not isinstance(elt, ast.Tuple | ast.List) or len(elt.elts) != 2:
+            notes.append(f"extra_args[{i}]: expected a (option_strings, kwargs) pair; skipped")
             dynamic = True
             continue
-        dest = _literal(key_node)
-        if dest is DYNAMIC or not isinstance(dest, str):
-            notes.append("extra_args: a non-literal dest name was skipped")
+        shape = _shape_from_add_argument(elt.elts[0], elt.elts[1], notes)
+        if shape is None:
             dynamic = True
             continue
-        shapes[dest] = _shape_from_spec(dest, value_node, notes)
+        shapes[shape.dest] = shape
     return shapes, dynamic
 
 
@@ -410,41 +343,26 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         if keyword in keywords:
             decl.toggles[keyword] = _literal(keywords[keyword])
 
-    input_type = _literal(keywords["input_type"]) if "input_type" in keywords else None
-    if input_type is DYNAMIC:
+    inputs_val = _literal(keywords["inputs"]) if "inputs" in keywords else None
+    if inputs_val is DYNAMIC:
         decl.has_input = True
-        decl.notes.append("input_type is not a literal; input arity unknown")
-    elif input_type is not None:
-        decl.has_input = True
-        if isinstance(input_type, str):
-            n_inputs = len(input_type.split(","))
-        elif isinstance(input_type, list | tuple):
-            n_inputs = len(input_type)
-        else:
-            n_inputs = None
-            decl.notes.append(
-                f"input_type is a {type(input_type).__name__} literal, not a string or "
-                "sequence; input arity unknown"
-            )
-        if n_inputs is not None:
-            variadic = (
-                _literal(keywords["variadic_input"]) if "variadic_input" in keywords else False
-            )
-            decl.input_arity = "append" if (variadic is True or n_inputs > 1) else "single"
+        decl.notes.append("inputs is not a literal; input arity unknown")
+    elif isinstance(inputs_val, list | tuple):
+        decl.has_input = len(inputs_val) > 0
+        decl.input_arity = "append" if len(inputs_val) > 1 else "single"
+    elif inputs_val is not None:
+        decl.notes.append(
+            f"inputs is a {type(inputs_val).__name__} literal, not a sequence; input arity unknown"
+        )
 
-    if "input_names" in keywords:
-        input_names = _literal(keywords["input_names"])
-        if isinstance(input_names, list | tuple):
-            decl.input_names = [str(n) for n in input_names]
-        else:
-            decl.notes.append("input_names is not a literal list; dedicated input flags unknown")
-
-    output_type = _literal(keywords["output_type"]) if "output_type" in keywords else None
-    if output_type is DYNAMIC:
+    outputs_val = _literal(keywords["outputs"]) if "outputs" in keywords else None
+    if outputs_val is DYNAMIC:
         decl.has_output = True
-        decl.notes.append("output_type is not a literal; treated as artifact-writing")
+        decl.notes.append("outputs is not a literal; treated as artifact-writing")
+    elif isinstance(outputs_val, list | tuple):
+        decl.has_output = len(outputs_val) > 0
     else:
-        decl.has_output = output_type is not None
+        decl.has_output = outputs_val is not None
 
     decl.extra_args, decl.extra_args_dynamic = _extract_extra_args(
         keywords.get("extra_args"), decl.notes

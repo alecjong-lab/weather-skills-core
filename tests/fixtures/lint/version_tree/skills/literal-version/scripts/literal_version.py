@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
-"""Lint fixture: _SKILL_VERSION defined but a literal passed instead (WSK401)."""
+"""Lint fixture: version passed as a string literal. Never executed."""
 
 from weather_skills_core import weather_skill
 
@@ -13,9 +13,9 @@ _SKILL_VERSION = "0.1.0"
 
 @weather_skill(
     "literal-version",
-    "0.2.0",
-    input_type="any",
-    output_type="same",
+    "0.1.0",
+    inputs=["data"],
+    outputs=["data"],
 )
 def literal_version(ds):
     """Lint fixture; never executed."""

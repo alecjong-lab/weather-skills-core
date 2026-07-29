@@ -74,7 +74,7 @@ class TestDetectTimeDim:
 
 class TestDetectType:
     def test_gridded(self):
-        assert envelope.detect_type(make_gridded()) == envelope.GRIDDED
+        assert envelope.detect_type(make_gridded()) == envelope.DATA
 
     def test_forecast(self):
         assert envelope.detect_type(make_forecast()) == envelope.FORECAST
@@ -88,21 +88,16 @@ class TestDetectType:
         ds = make_forecast()
         ds = ds.drop_vars("time")
         ds = ds.expand_dims(time=np.array(["2026-01-01"], dtype="datetime64[ns]"))
-        assert envelope.detect_type(ds) == envelope.GRIDDED
+        assert envelope.detect_type(ds) == envelope.DATA
 
 
 class TestValidateInput:
     def test_matching_type_passes(self):
-        assert envelope.validate_input(make_gridded(), "gridded", "in.zarr") == "gridded"
-
-    def test_any_passes_everything(self):
-        for ds in (make_gridded(), make_forecast(), make_station()):
-            envelope.validate_input(ds, "any", "in.zarr")
+        assert envelope.validate_input(make_gridded(), "data", "in.zarr") == "data"
 
     def test_list_of_alternatives(self):
         assert (
-            envelope.validate_input(make_forecast(), ["gridded", "forecast"], "in.zarr")
-            == "forecast"
+            envelope.validate_input(make_forecast(), ["data", "forecast"], "in.zarr") == "forecast"
         )
 
     def test_gridded_rejected_when_forecast_expected(self):
@@ -135,23 +130,19 @@ class TestValidateInput:
     def test_dims_override_validates_undetectable_gridded(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
         with pytest.raises(UsageError, match="Pass --dims"):
-            envelope.validate_input(ds, "gridded", "in.zarr")
-        assert envelope.validate_input(ds, "gridded", "in.zarr", dims="yy,xx") == "gridded"
+            envelope.validate_input(ds, "data", "in.zarr")
+        assert envelope.validate_input(ds, "data", "in.zarr", dims="yy,xx") == "data"
 
     def test_dims_override_names_must_exist(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
         with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.validate_input(ds, "gridded", "in.zarr", dims="a,b")
+            envelope.validate_input(ds, "data", "in.zarr", dims="a,b")
 
     def test_time_dim_override_must_exist(self):
         with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.validate_input(make_gridded(), "gridded", "in.zarr", time_dim="t")
+            envelope.validate_input(make_gridded(), "data", "in.zarr", time_dim="t")
         ds = make_gridded().rename({"time": "t"})
-        assert envelope.validate_input(ds, "gridded", "in.zarr", time_dim="t") == "gridded"
-
-    def test_any_skips_override_checks(self):
-        ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        assert envelope.validate_input(ds, "any", "in.zarr", dims="a,b", time_dim="t") == "gridded"
+        assert envelope.validate_input(ds, "data", "in.zarr", time_dim="t") == "data"
 
 
 class TestBboxSubset:
@@ -674,6 +665,10 @@ class TestVerifyCfDsg:
 
 
 class TestUdunitsError:
+    @pytest.fixture(autouse=True)
+    def _require_cf_units(self):
+        pytest.importorskip("cf_units")
+
     @pytest.mark.parametrize("units", ["mm", "degC", "kg m-3", "mm day-1", "1"])
     def test_valid_units_return_none(self, units):
         assert envelope.udunits_error(units) is None

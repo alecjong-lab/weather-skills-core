@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "weather-skills-core"
 version = "0.1.0"
-description = "Core library for weather skills: the @weather_skill decorator owning CLI construction, envelope validation, provenance, cache short-circuit, and output writing."
+description = "Core library for weather skills: the @weather_skill decorator owning CLI construction, envelope validation, provenance, and output writing."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -14,6 +14,7 @@ dependencies = [
     "cf-xarray>=0.11",
     "cftime>=1.6",
     "numpy>=2.5",
+    "pillow>=10",
     "xarray>=2026.7",
     "zarr>=3.2",
 ]

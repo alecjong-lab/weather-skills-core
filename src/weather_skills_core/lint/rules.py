@@ -106,13 +106,8 @@ def _standard_lookup() -> dict[str, StandardParameter]:
 
 def _shadow_remedy(param: StandardParameter) -> str:
     if param.kind == "io":
-        return f"declare input_type/output_type so the decorator owns {'/'.join(param.flags)}"
-    if param.accepts_help:
-        return (
-            f"declare the standard toggle {param.name}= instead (its dict form takes "
-            "help/choices overrides)"
-        )
-    return f"declare the standard toggle {param.name}=True instead"
+        return f"declare inputs=/outputs= so the decorator owns {'/'.join(param.flags)}"
+    return f"declare the standard toggle {param.name}= instead"
 
 
 def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
@@ -129,11 +124,6 @@ def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
         if param is None:
             continue
         if not decl.has_output and param.kind == "io":
-            # A no-artifact skill (output_type is None) is forbidden from
-            # declaring input_type and owns no decorator --output, so --input
-            # and --output can only be reached through extra_args. Declaring
-            # them there is the only option, not a shadow of the standard
-            # surface. Other standard parameters are still flagged.
             continue
         findings.append(
             _finding(
@@ -205,20 +195,27 @@ def _declared_flags(decl: SkillDeclaration) -> tuple[dict[str, str], set[str]]:
             continue
         primary.setdefault(shape.primary_flag, f"extra_args {shape.dest!r}")
         all_spellings.update(shape.flags)
-    for param in standard_parameters():
-        if param.kind == "toggle" and decl.toggle_enabled(param.name):
-            primary.setdefault(param.flags[0], f"standard toggle {param.name}")
-            all_spellings.update(param.flags)
+
+    dates_mode = decl.toggles.get("dates")
+    if dates_mode == "range":
+        primary.setdefault("--start", "dates=range")
+        primary.setdefault("--end", "dates=range")
+        all_spellings.update(("--start", "--end"))
+    elif dates_mode == "single":
+        primary.setdefault("--date", "dates=single")
+        all_spellings.add("--date")
+    if decl.toggle_enabled("region"):
+        primary.setdefault("--bbox", "region")
+        all_spellings.add("--bbox")
+    if decl.toggle_enabled("variable"):
+        primary.setdefault("--variable", "variable")
+        all_spellings.update(("--variable", "-v"))
+
     if decl.has_input:
-        if decl.input_names:
-            for name in decl.input_names:
-                primary.setdefault(f"--{name}", "input_names")
-                all_spellings.add(f"--{name}")
-        else:
-            primary.setdefault("--input", "input_type")
-            all_spellings.update(("--input", "-i"))
+        primary.setdefault("--input", "inputs")
+        all_spellings.update(("--input", "-i"))
     if decl.has_output:
-        primary.setdefault("--output", "output_type")
+        primary.setdefault("--output", "outputs")
         all_spellings.update(("--output", "-o"))
     return primary, all_spellings
 

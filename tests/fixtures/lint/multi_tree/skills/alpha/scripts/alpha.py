@@ -4,13 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
-"""Lint fixture: one-off flags shared with sibling skills. Never executed.
-
-The unresolvable import below proves declaration extraction is AST-only: the
-linter must analyze this script without importing it (an import would fail).
-"""
-
-import fixture_module_that_must_never_be_imported  # noqa: F401
+"""Lint fixture. Never executed."""
 
 from weather_skills_core import weather_skill
 
@@ -20,12 +14,12 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "alpha",
     _SKILL_VERSION,
-    input_type="any",
-    output_type="same",
-    extra_args={
-        "method": {"choices": ["mean", "sum"], "required": True, "help": "Reducer."},
-        "window": {"type": int, "help": "Window width."},
-    },
+    inputs=["data"],
+    outputs=["data"],
+    extra_args=[
+        (("--method",), {"type": str, "help": "Aggregation method.", "default": "mean"}),
+        (("--window",), {"type": int, "help": "Window width."}),
+    ],
 )
 def alpha(ds, method, window):
     """Lint fixture; never executed."""

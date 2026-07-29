@@ -42,15 +42,15 @@ class TestShadowRule:
     def test_each_shadowing_extra_arg_fires_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         shadow_findings = [f for f in report.findings if f.rule == "WSK101"]
-        assert {f.flag for f in shadow_findings} == {"--date", "--dims", "--title"}
+        assert {f.flag for f in shadow_findings} == {"--date", "--bbox"}
         assert all(f.severity == "warning" for f in shadow_findings)
 
     def test_remediation_names_the_standard_toggle(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         by_flag = {f.flag: f.message for f in report.findings if f.rule == "WSK101"}
-        assert "standard date parameter" in by_flag["--date"]
-        assert "date=" in by_flag["--date"]
-        assert "dims=True" in by_flag["--dims"]
+        assert "standard dates parameter" in by_flag["--date"]
+        assert "dates=" in by_flag["--date"]
+        assert "standard region parameter" in by_flag["--bbox"]
 
     def test_non_shadowing_extra_arg_does_not_fire(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
@@ -72,40 +72,33 @@ class TestShadowRule:
         return skill
 
     def test_no_artifact_skill_may_declare_input_output_without_wsk101(self, tmp_path):
-        # output_type is absent (no-artifact): the skill cannot declare
-        # input_type and owns no decorator --output, so declaring --input and
-        # --output through extra_args is the only option, not a shadow.
         skill = self._single_skill(
             tmp_path,
             name="no-artifact",
             decorator_head="",
-            extra_args_src="{'input': {'help': 'x'}, 'output': {'help': 'y'}}",
+            extra_args_src="[(('--input',), {'help': 'x'}), (('--output',), {'help': 'y'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert shadow == []
 
     def test_artifact_skill_declaring_input_still_fires_wsk101(self, tmp_path):
-        # output_type is set (artifact-writing): --input belongs to input_type,
-        # so declaring it as an extra_arg is still a shadow.
         skill = self._single_skill(
             tmp_path,
             name="artifact",
-            decorator_head="output_type='gridded', ",
-            extra_args_src="{'input': {'help': 'x'}}",
+            decorator_head="outputs=['data'], ",
+            extra_args_src="[(('--input',), {'help': 'x'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert {f.flag for f in shadow} == {"--input"}
 
     def test_no_artifact_skill_still_fires_wsk101_for_non_io_shadow(self, tmp_path):
-        # The exemption is input/output-only: a no-artifact skill shadowing a
-        # toggle parameter (variable) is still flagged.
         skill = self._single_skill(
             tmp_path,
             name="no-artifact-variable",
             decorator_head="",
-            extra_args_src="{'variable': {'help': 'x'}}",
+            extra_args_src="[(('--variable',), {'help': 'x'})]",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -219,8 +212,8 @@ def _script(skill_name, func_name, extra_args_src):
         _PEP723
         + "from weather_skills_core import weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
-        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, input_type='any', "
-        + f"output_type='same', extra_args={extra_args_src})\n"
+        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, inputs=['data'], "
+        + f"outputs=['data'], extra_args={extra_args_src})\n"
         + f"def {func_name}(ds):\n    return ds\n"
     )
 
@@ -251,8 +244,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'shared': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'shared': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[(('--shared',), {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[(('--shared',), {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--shared"],
         )
@@ -266,8 +259,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[(('--foo',), {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[(('--bar',), {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--foo", "--bar"],
         )
@@ -280,8 +273,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "{'foo': {'type': int, 'help': 'x'}}"),
-                "two.py": _script("two", "two", "{'bar': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("one", "one", "[(('--foo',), {'type': int, 'help': 'x'})]"),
+                "two.py": _script("two", "two", "[(('--bar',), {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--foo", "--bar", "--ghost"],
         )
@@ -296,8 +289,8 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("dup", "one", "{'date': {'type': str, 'help': 'x'}}"),
-                "two.py": _script("dup", "two", "{'clean': {'type': int, 'help': 'x'}}"),
+                "one.py": _script("dup", "one", "[(('--date',), {'type': str, 'help': 'x'})]"),
+                "two.py": _script("dup", "two", "[(('--clean',), {'type': int, 'help': 'x'})]"),
             },
             manifest_flags=["--date", "--clean"],
         )
@@ -321,9 +314,9 @@ class TestMultiScriptSkill:
             _PEP723
             + "from weather_skills_core import weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
-            + 'SHARED = {"foo": {"type": int}}\n'
-            + "@weather_skill('one', _SKILL_VERSION, input_type='any', "
-            + "output_type='same', extra_args=SHARED)\n"
+            + 'SHARED = [(("--foo",), {"type": int})]\n'
+            + "@weather_skill('one', _SKILL_VERSION, inputs=['data'], "
+            + "outputs=['data'], extra_args=SHARED)\n"
             + "def one(ds):\n    return ds\n"
         )
         (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))

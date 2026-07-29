@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
-"""Lint fixture: SKILL.md drift in both directions. Never executed."""
+"""Lint fixture. Never executed."""
 
 from weather_skills_core import weather_skill
 
@@ -14,11 +14,11 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "drift-skill",
     _SKILL_VERSION,
-    input_type="any",
-    output_type="same",
-    extra_args={
-        "window": {"type": int, "help": "Declared but not documented (WSK301)."},
-    },
+    inputs=["data"],
+    outputs=["data"],
+    extra_args=[
+        (("--window",), {"type": int, "help": "Window width."}),
+    ],
 )
 def drift_skill(ds, window):
     """Lint fixture; never executed."""

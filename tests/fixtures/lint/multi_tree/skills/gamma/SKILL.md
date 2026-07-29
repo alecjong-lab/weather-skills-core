@@ -10,5 +10,5 @@ metadata:
 ### Arguments
 - `--input`, `-i` — input Zarr.
 - `--output`, `-o` — output Zarr.
-- `--method` — interpolator.
+- `--method` — aggregation method with divergent choices.
 - `--window` — window width in degrees.
