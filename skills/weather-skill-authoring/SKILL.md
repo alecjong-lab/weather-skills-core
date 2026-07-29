@@ -142,8 +142,8 @@ Declaration surface (all keyword-only after `name`, `version`):
   `types.ALL` and asserts the preservation in its body with `validate_type`
   (below) — the declaration cannot say "the same as the input" because with
   more than one input there is no saying which input that means.
-- Standard flags, enabled by toggles and delivered in the same arguments dict
-  as the extra arguments: `start_time`/`end_time` (`--start`/`--end`), `date`
+- Standard flags, enabled by toggles and delivered on the same arguments
+  namespace as the extra arguments: `start_time`/`end_time` (`--start`/`--end`), `date`
   (`--date`), `bbox` (`types.REQUIRED` or `types.OPTIONAL`; the body gets a
   parsed `(N, W, S, E)` tuple), `variable` (`types.SINGLE` or `types.REPEAT`),
   `workers` (pass the default int), `title`, `dims`, `time_dim`.
@@ -309,14 +309,13 @@ def _store_is_complete(out, context):
 )
 def fetch(args, context):
     """Fetch and write a weather-skills envelope Zarr."""
-    start_time, end_time = args["start_time"], args["end_time"]
     ds = _open_remote(context)
     set_source(ds, "my-source")
     ...
 ```
 
 The function receives the opened input dataset(s) positionally, then **one
-dict holding every argument**:
+namespace holding every argument**:
 
 ```python
 def transform(ds, args): ...  # one input
@@ -326,13 +325,18 @@ def fetch(args): ...  # no inputs
 def fetch(args, context): ...  # context stays a separate opt-in
 ```
 
-The dict is keyed by dest and holds the `extra_args` values **and** every
-enabled standard toggle: `start_time`/`end_time`/`date` already resolved to
-`datetime.date`, `bbox` parsed to an `(N, W, S, E)` tuple, plus
+It is an `argparse.Namespace` whose attributes are the dests: every
+`extra_args` value **and** every enabled standard toggle —
+`start_time`/`end_time`/`date` already resolved to `datetime.date`, `bbox`
+parsed to an `(N, W, S, E)` tuple, plus
 `variable`/`workers`/`title`/`dims`/`time_dim`. One mechanism, so a date is an
-ordinary entry rather than a special parameter. Bind what the body uses at the
-top — `period, method = args["period"], args["method"]` — and leave the rest in
-the dict.
+ordinary attribute rather than a special parameter. **Read each value where
+you use it** — `ds.resample(time=args.period).sum()` — and bind a local only
+when the value is used repeatedly or the name earns its line; a block of
+`a, b, c = args.a, args.b, args.c` at the top of the body is noise that
+rebinds by position. The namespace is built from the resolved values, not from
+the parsed argparse namespace, which keeps the raw `--bbox` string and date
+tokens the provenance entry records.
 
 Raise `weather_skills_core.UsageError` for usage/validation failures (exit 2)
 and `weather_skills_core.DataError` for data-availability or hard failures
@@ -358,10 +362,10 @@ def clip_region(ds, args):
     """Spatially subset a gridded weather-skills envelope Zarr."""
     from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
 
-    lat_dim, lon_dim = detect_spatial_dims(ds, args["dims"])
-    sub = bbox_subset(ds, args["bbox"], lat_dim=lat_dim, lon_dim=lon_dim)
+    lat_dim, lon_dim = detect_spatial_dims(ds, args.dims)
+    sub = bbox_subset(ds, args.bbox, lat_dim=lat_dim, lon_dim=lon_dim)
     # Subsetting the spatial axes preserves the envelope shape.
-    validate_type(sub, ds, args["dims"])
+    validate_type(sub, ds, args.dims)
     return sub
 ```
 
@@ -380,7 +384,7 @@ reaches the body (the same holds for `--time-dim`). Without the override that
 grid reads as a series. A skill whose inputs may carry nonstandard dim names
 needs `dims=True` so the caller can name them. Input validation and the
 `output_type` union check classify by those names, so a body asserting its own
-shape passes `args["dims"]` to `validate_type` — as the example does — and
+shape passes `args.dims` to `validate_type` — as the example does — and
 compares the shapes the decorator saw; WSK103 flags a `dims=True` skill that
 omits it. The names win on a dataset that has them and CF attrs/heuristics
 decide on one that does not, so a transform that renames its axes to canonical
@@ -422,7 +426,6 @@ def _store_is_complete(out):
 )
 def fetch(args):
     """Fetch daily SST and write a weather-skills envelope Zarr."""
-    start_time, end_time, bbox = args["start_time"], args["end_time"], args["bbox"]
     ...
     set_source(ds, "oisst")
     import xarray as xr
@@ -462,9 +465,8 @@ def _set_write_encoding(ds):
 )
 def fetch(args):
     """Fetch daily SST, one period per yield, bounded memory."""
-    start_time, end_time, bbox = args["start_time"], args["end_time"], args["bbox"]
-    days = plan_days(start_time, end_time)
-    if days and days[-1] != end_time:
+    days = plan_days(args.start_time, args.end_time)
+    if days and days[-1] != args.end_time:
         # Trailing days not yet published: record the effective window.
         yield EntryOverride({"end": days[-1].isoformat()})
     for day in days:
@@ -768,7 +770,7 @@ parameterized by them. Do not reimplement any of these in a skill body.
   dataset whose type `ds` must match (`validate_type(out_ds, ds)` is how a
   shape-preserving transform states that claim). Raises `DataError` (exit 1)
   on a mismatch. `dims` classifies both sides; a skill declaring `dims=True`
-  passes `args["dims"]` so the assertion reads the shapes the decorator
+  passes `args.dims` so the assertion reads the shapes the decorator
   validated, and a skill that omits it is WSK103. Exported at the top level:
   `from weather_skills_core import validate_type`.
 
@@ -1094,7 +1096,7 @@ as clean.
 | WSK001 | error | The script parses and contains a `@weather_skill` call. | Fix the syntax error or declare the skill through the decorator. |
 | WSK101 | warning | No `extra_args` entry shadows a standard flag or dest (`--input`, `--output`, `--start`, `--end`, `--date`, `--bbox`, `--variable`, `--workers`, `--title`, `--dims`, `--time-dim`). | Declare the standard toggle instead; its dict form covers help/required/choices overrides. |
 | WSK102 | warning | A fetcher-shaped skill (zarr `output_type`, no `input_type`) calls `set_source()`. | Name the data product in the body; nothing upstream can supply it. |
-| WSK103 | warning | A skill declaring `dims=True` passes `dims` to every `validate_type()` call. | Pass `args["dims"]`; without it the assertion classifies by CF attrs and heuristics while the decorator classified by the override. |
+| WSK103 | warning | A skill declaring `dims=True` passes `dims` to every `validate_type()` call. | Pass `args.dims`; without it the assertion classifies by CF attrs and heuristics while the decorator classified by the override. |
 | WSK201 | warning | A one-off flag name is not also declared by another corpus skill. **Advisory: off by default** (CONVENTIONS.md wants a flag doing the same job to share a name, so a shared flag is usually the desired consistency, not a defect; the genuinely-bad case — a shared name with a divergent shape — is WSK202). Opt in with `--extend-select WSK201` to survey shared flags that might be promoted to a core standard parameter. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
 | WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
 | WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |

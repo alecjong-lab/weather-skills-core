@@ -418,12 +418,15 @@ def weather_skill(
     """Declare a weather skill: its CLI, its envelope contract, its cache, and its write.
 
     The wrapped function is called as ``fn(*datasets, arguments)`` -- the
-    opened inputs positionally, then one dict keyed by dest holding every
-    ``extra_args`` value and every enabled toggle (dates already resolved to
-    :class:`datetime.date`, ``bbox`` to an (N, W, S, E) tuple). A variadic
-    skill gets ``fn(datasets, arguments)``. The function and every hook below
-    opt into the :class:`RunContext` by naming a ``context`` parameter, which
-    the decorator then passes as a separate keyword.
+    opened inputs positionally, then one :class:`argparse.Namespace` holding
+    every ``extra_args`` value and every enabled toggle under its dest, read
+    as ``arguments.start_time`` (dates already resolved to
+    :class:`datetime.date`, ``bbox`` to an (N, W, S, E) tuple). It is built
+    from the resolved values, not from the parsed namespace, which keeps the
+    raw tokens the provenance entry records. A variadic skill gets
+    ``fn(datasets, arguments)``. The function and every hook below opt into
+    the :class:`RunContext` by naming a ``context`` parameter, which the
+    decorator then passes as a separate keyword.
 
     ``skills/weather-skill-authoring/SKILL.md`` is the authoring guide: worked
     examples per skill class, the date grammar, cache semantics, and the
@@ -824,7 +827,8 @@ def weather_skill(
         ctx_kwargs = {"context": context} if fn_wants_ctx else {}
 
         if output_type is None:
-            fn(params, **ctx_kwargs)
+            # No inputs to pass: a no-artifact skill may not declare any.
+            _call(fn, [], params, ctx_kwargs)
             return
 
         entry_args = _entry_args(args, resolved_dates, context)
@@ -934,10 +938,14 @@ def weather_skill(
         return datasets
 
     def _call(fn, datasets, params, ctx_kwargs):
-        # Datasets stay positional; every argument arrives as one dict after them.
+        # Datasets stay positional; every argument arrives as one namespace
+        # after them. It is built HERE, from params, and never from the parsed
+        # namespace: that one keeps the raw --bbox string and the raw date
+        # tokens, and _entry_args records it verbatim.
+        arguments = argparse.Namespace(**params)
         if variadic_input:
-            return fn(datasets, params, **ctx_kwargs)
-        return fn(*datasets, params, **ctx_kwargs)
+            return fn(datasets, arguments, **ctx_kwargs)
+        return fn(*datasets, arguments, **ctx_kwargs)
 
     def _reference_inputs(args):
         refs = []

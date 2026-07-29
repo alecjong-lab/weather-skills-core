@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 from dataclasses import fields
@@ -47,7 +48,9 @@ def make_identity_skill(calls, **declaration):
     @weather_skill("identity", "0.1.0", **declaration)
     def identity(ds, args):
         """Copy the input envelope unchanged."""
-        calls.append(args)
+        # vars() records the delivered namespace as a dict for comparison, and
+        # raises on a plain dict, so the recording pins the delivery type too.
+        calls.append(vars(args))
         return ds.copy()
 
     return identity
@@ -540,8 +543,7 @@ class TestToggleDictForm:
         @weather_skill("f", "0.1.0", output_type=types.GRIDDED, date={"required": False})
         def fetch(args):
             """Fetch."""
-            date = args["date"]
-            calls.append(date)
+            calls.append(args.date)
             return make_gridded()
 
         out = tmp_path / "o.zarr"
@@ -705,12 +707,89 @@ class TestBboxArgv:
         )
         def clip(ds, args):
             """Clip."""
-            bbox = args["bbox"]
-            seen["bbox"] = bbox
+            seen["bbox"] = args.bbox
             return ds.copy()
 
         clip(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--bbox", "-1/32/-5/42"])
         assert seen["bbox"] == (-1.0, 32.0, -5.0, 42.0)
+
+
+class TestArgumentDelivery:
+    def test_arguments_arrive_as_a_namespace(self, tmp_path, gridded_store):
+        seen = {}
+
+        @weather_skill(
+            "deliver",
+            "0.1.0",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
+            bbox=types.REQUIRED,
+            variable=types.SINGLE,
+            extra_args=[("--factor", {"type": float})],
+        )
+        def deliver(ds, args):
+            """Read every argument off the namespace."""
+            seen["type"] = type(args)
+            seen["values"] = (args.bbox, args.variable, args.factor)
+            return ds.copy()
+
+        deliver(
+            [
+                "-i",
+                str(gridded_store),
+                "-o",
+                str(tmp_path / "o.zarr"),
+                "--bbox",
+                "3/10/1/13",
+                "-v",
+                "precip",
+                "--factor",
+                "2.5",
+            ]
+        )
+        assert seen["type"] is argparse.Namespace
+        assert seen["values"] == ((3.0, 10.0, 1.0, 13.0), "precip", 2.5)
+
+    def test_delivery_does_not_touch_the_recorded_entry(self, tmp_path, gridded_store):
+        # The namespace is built from the resolved params, never by writing
+        # them back onto the parsed args: the entry records the raw --bbox
+        # string and the raw date tokens. A 4-tuple here would be sorted by
+        # _order_lists, giving two different spatial subsets one cache key.
+        @weather_skill(
+            "record",
+            "0.1.0",
+            input_type=types.ALL,
+            output_type=types.GRIDDED,
+            bbox=types.REQUIRED,
+            start_time=True,
+            end_time=True,
+        )
+        def record(ds, args):
+            """Touch every resolved value, then return the input."""
+            assert args.bbox == (3.0, 10.0, 1.0, 13.0)
+            assert args.start_time == date(2026, 1, 1)
+            return ds.copy()
+
+        out = tmp_path / "o.zarr"
+        record(
+            [
+                "-i",
+                str(gridded_store),
+                "-o",
+                str(out),
+                "--bbox",
+                "3/10/1/13",
+                "--start",
+                "2026-01-01",
+                "--end",
+                "2026-01-05",
+            ]
+        )
+        assert history_of(out)[0]["args"] == {
+            "bbox": "3/10/1/13",
+            "start": "2026-01-01",
+            "end": "2026-01-05",
+        }
 
 
 class TestCacheShortCircuit:
@@ -971,12 +1050,11 @@ class TestValidationOverrides:
         )
         def clip_region(ds, args):
             """Clip."""
-            bbox, dims = args["bbox"], args["dims"]
             from weather_skills_core.envelope import bbox_subset, detect_spatial_dims
 
-            calls.append(dims)
-            lat_dim, lon_dim = detect_spatial_dims(ds, dims)
-            return bbox_subset(ds, bbox, lat_dim=lat_dim, lon_dim=lon_dim)
+            calls.append(args.dims)
+            lat_dim, lon_dim = detect_spatial_dims(ds, args.dims)
+            return bbox_subset(ds, args.bbox, lat_dim=lat_dim, lon_dim=lon_dim)
 
         return clip_region
 
@@ -1034,7 +1112,7 @@ class TestValidationOverrides:
         def assert_shape(ds, args):
             """Copy the input, asserting the copy preserves its shape."""
             out = ds.copy()
-            seen.append(envelope.validate_type(out, ds, args["dims"]))
+            seen.append(envelope.validate_type(out, ds, args.dims))
             return out
 
         assert_shape(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--dims", "yy,xx"])
@@ -1048,7 +1126,7 @@ class TestValidationOverrides:
         def collapse(ds, args):
             """Collapse the named spatial axes, then claim the shape is preserved."""
             out = ds.mean(dim=["yy", "xx"])
-            envelope.validate_type(out, ds, args["dims"])
+            envelope.validate_type(out, ds, args.dims)
             return out
 
         with pytest.raises(SystemExit) as exc:
@@ -1065,7 +1143,7 @@ class TestValidationOverrides:
         def canonicalize(ds, args):
             """Rename the named spatial axes to their canonical names."""
             out = ds.rename({"yy": "latitude", "xx": "longitude"})
-            envelope.validate_type(out, ds, args["dims"])
+            envelope.validate_type(out, ds, args.dims)
             return out
 
         out = tmp_path / "o.zarr"
@@ -1078,7 +1156,7 @@ class TestValidationOverrides:
         @weather_skill("classify", "0.1.0", input_type=types.ALL, output_type=types.ALL, dims=True)
         def classify(ds, args):
             """Record how the run classifies its input."""
-            seen.append(envelope.detect_type(ds, args["dims"]))
+            seen.append(envelope.detect_type(ds, args.dims))
             return ds.copy()
 
         classify(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--dims", "yy,xx"])
@@ -1187,8 +1265,7 @@ class TestAllInputType:
         )
         def resolve(ds, args):
             """Resolve the time axis in the body."""
-            time_dim = args["time_dim"]
-            seen.append(envelope.detect_time_dim(ds, time_dim))
+            seen.append(envelope.detect_time_dim(ds, args.time_dim))
             return ds.copy()
 
         detectable = tmp_path / "detectable.zarr"
@@ -1352,7 +1429,7 @@ class TestCacheDisabled:
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, cache=False)
         def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(args)
+            calls.append(vars(args))
             return set_source(make_gridded(), "toy")
 
         out = tmp_path / "out.zarr"
@@ -1381,7 +1458,7 @@ class TestFetcherMode:
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, **declaration)
         def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(args)
+            calls.append(vars(args))
             return set_source(make_gridded(), "toy")
 
         return fetch
@@ -1479,7 +1556,7 @@ class TestFetcherMode:
         @weather_skill("init-fetch", "0.1.0", output_type=types.GRIDDED, date=True)
         def fetch(args):
             """Fetch one init."""
-            calls.append(args)
+            calls.append(vars(args))
             return make_gridded()
 
         fetch(["--date", "2026-02-03", "-o", str(tmp_path / "o.zarr")])
@@ -1568,7 +1645,7 @@ class TestEmptyStringValues:
         @weather_skill("toy-fetch", "0.1.0", output_type=types.GRIDDED, **declaration)
         def fetch(args):
             """Fetch a toy dataset."""
-            calls.append(args)
+            calls.append(vars(args))
             return set_source(make_gridded(), "toy")
 
         return fetch
@@ -2245,7 +2322,7 @@ class TestNoArtifactMode:
         )
         def resolve_region(args):
             """Resolve a country code to a bbox."""
-            received.update(code=args["code"], geojson=args["geojson"])
+            received.update(code=args.code, geojson=args.geojson)
             print("1/2/3/4")
 
         resolve_region(["KEN"])
@@ -2825,11 +2902,10 @@ class TestFunctionParams:
         )
         def clip(ds, args):
             """Clip to a bbox."""
-            bbox, dims = args["bbox"], args["dims"]
-            received.update(bbox=bbox, dims=dims)
+            received.update(bbox=args.bbox, dims=args.dims)
             from weather_skills_core import envelope
 
-            return envelope.bbox_subset(ds, bbox)
+            return envelope.bbox_subset(ds, args.bbox)
 
         out = tmp_path / "o.zarr"
         clip(["-i", str(gridded_store), "-o", str(out), "--bbox", "2.5/10.5/0.5/12.5"])
@@ -2850,8 +2926,7 @@ class TestFunctionParams:
         )
         def subset(ds, args):
             """Subset."""
-            bbox = args["bbox"]
-            received["bbox"] = bbox
+            received["bbox"] = args.bbox
             skill_calls.append(1)
             return ds.copy()
 
@@ -2864,8 +2939,7 @@ class TestFunctionParams:
         @weather_skill("w", "0.1.0", input_type=types.ALL, output_type=types.GRIDDED, workers=4)
         def w(ds, args):
             """Workers."""
-            workers = args["workers"]
-            received["workers"] = workers
+            received["workers"] = args.workers
             return ds.copy()
 
         w(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "--workers", "2"])
@@ -2888,7 +2962,7 @@ class TestFunctionParams:
         def scale(ds, args):
             """Scale."""
             out = ds.copy()
-            out["precip"] = ds["precip"] * args["factor"]
+            out["precip"] = ds["precip"] * args.factor
             return out
 
         out = tmp_path / "o.zarr"

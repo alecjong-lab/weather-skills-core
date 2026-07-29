@@ -29,15 +29,14 @@ _SKILL_VERSION = "0.1.0"
 )
 def my_fancy_skill(forecast_ds, station_ds, args):
     """Correct a forecast against station observations."""
-    start, end = args["start_time"], args["end_time"]
-    factor = args["interpolation_factor"]
+    window = forecast_ds.sel(time=slice(args.start_time, args.end_time))
     ...
     return corrected_ds
 ```
 
 The wrapped function receives the opened input dataset(s) positionally, then
-one dict holding every argument keyed by dest, and returns the output; the
-decorator does everything else, including skipping the call entirely on a
+one namespace holding every argument under its dest, and returns the output;
+the decorator does everything else, including skipping the call entirely on a
 cache hit. `skills/weather-skill-authoring/SKILL.md` is the authoring guide.
 
 ## Install
