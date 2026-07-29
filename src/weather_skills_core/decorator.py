@@ -415,155 +415,82 @@ def weather_skill(
     savefig_kwargs=None,
     software=_provenance.DEFAULT_SOFTWARE,
 ):
-    """Declare a weather skill.
+    """Declare a weather skill: its CLI, its envelope contract, its cache, and its write.
 
-    Declaration surface:
+    The wrapped function is called as ``fn(*datasets, arguments)`` -- the
+    opened inputs positionally, then one dict keyed by dest holding every
+    ``extra_args`` value and every enabled toggle (dates already resolved to
+    :class:`datetime.date`, ``bbox`` to an (N, W, S, E) tuple). A variadic
+    skill gets ``fn(datasets, arguments)``. The function and every hook below
+    opt into the :class:`RunContext` by naming a ``context`` parameter, which
+    the decorator then passes as a separate keyword.
 
-    - ``name`` / ``version`` -- canonical skill name and its version (the
-      script's ``_SKILL_VERSION``); the version appears in the argparse epilog
-      and every provenance entry.
-    - ``input_type`` -- envelope type(s) of the zarr input(s), named by the
-      :mod:`weather_skills_core.types` constants. ``None`` declares no zarr
-      inputs. Otherwise the shape of the value says how many inputs there are:
-      a single type or a TUPLE of types declares ONE input (the tuple being
-      that input's allowed set, ``types.ALL`` for every shape); a LIST declares
-      one entry per input, each entry a type or a tuple of them
-      (``[types.ALL, types.ALL]`` is two inputs of any shape).
-      An input is always validated as the type it is detected to be, so a
-      wider declaration accepts more shapes without checking less.
-      Inputs arrive via ``--input``/``-i`` (repeated when there are several)
-      unless ``input_names`` names a dedicated flag per input (e.g.
-      ``["forecast", "mclimate"]``), or ``variadic_input=True`` accepts two or
-      more ``--input`` repeats of a single declared type (the function then
-      receives one list of datasets).
-    - ``input_help`` -- help text for the input flag(s). With ``input_names``,
-      a sequence giving one help string per named flag (a ``None`` entry
-      leaves that flag without help). Otherwise a single string shown on the
-      ``--input``/``-i`` flag, replacing the decorator's default help in the
-      variadic and fixed-multi cases. Requires a declared ``input_type``.
-    - input paths: every opened input carries the path it came from under
-      :data:`~weather_skills_core.provenance.INPUT_PATH_ATTR`, read with
-      :func:`weather_skills_core.provenance.input_path`. It rides on the
-      dataset so it cannot desync from the inputs, and
-      :func:`~weather_skills_core.provenance.stamp_zarr` strips it before
-      every write, keeping the output's content hash independent of the local
-      directory layout.
-    - ``output_type`` -- ``None`` for a no-artifact skill (argparse + version
-      epilog only: no provenance, no cache, no write), a zarr envelope type,
-      a tuple of zarr envelope types (a union), or ``types.PNG`` for a
-      Figure-writing skill. A list is rejected: it is the one-entry-per-input
-      spelling and a skill has one output.
-      A union (e.g. ``(types.GRIDDED, types.FORECAST)``,
-      for a fetcher whose source decides the shape) VALIDATES rather than
-      selects: the returned dataset's detected shape must be a member, checked
-      before the write (a mismatch exits 1); the declaration never coerces the
-      output toward any member. A single-type declaration stays unchecked. A
-      shape-preserving transform declares ``types.ALL`` and asserts the
-      preservation itself with
-      :func:`weather_skills_core.envelope.validate_type`, which names the
-      input it preserves instead of leaving it to be inferred.
-    - standard parameter toggles: ``start_time``/``end_time``/``date`` (the
-      relative-or-absolute date grammar; resolved dates are passed to the
-      function and recorded in provenance), ``bbox`` (``types.REQUIRED`` or
-      ``types.OPTIONAL``; parsed to an (N, W, S, E) tuple), ``variable``
-      (``types.SINGLE`` or ``types.REPEAT``), ``workers`` (an int default; excluded
-      from the cache key), ``title``, ``dims`` (LAT,LON override), and
-      ``time_dim`` (pass a string to set a default). A user-supplied
-      ``--dims``/``--time-dim`` value is honored during input validation:
-      typed inputs are validated against the overridden dim names instead of
-      relying on CF/heuristic detection (see
-      :func:`weather_skills_core.envelope.validate_input`), and the output
-      union check classifies by them too. A body that asserts its own shape
-      passes ``args["dims"]`` to
-      :func:`weather_skills_core.envelope.validate_type` so the assertion
-      classifies by the same axis names; the WSK103 lint rule flags a
-      ``dims=True`` skill that omits it.
-    - toggle dict form: ``start_time``/``end_time``/``date``, ``bbox``,
-      ``variable``, and ``workers`` also accept a dict overriding the flag's
-      argparse surface -- ``help`` replaces the decorator-owned help text,
-      ``required`` overrides requiredness (``--start``/``--end``/``--date``
-      default to required; with ``"required": False`` an omitted value is
-      passed to the function as ``None`` and no resolved date is recorded),
-      and ``choices`` constrains the accepted values. The string/int forms
-      become the dict's ``mode``/``default`` key -- ``bbox={"mode":
-      types.OPTIONAL, ...}``, ``variable={"mode": types.REPEAT, ...}``,
-      ``workers={"default": 4, ...}`` -- and ``date`` additionally accepts
-      ``context``: the parenthetical label on the resolved-date stderr line
-      (default ``"single date"``, e.g. ``"single forecast init date"``).
-    - ``extra_args`` -- a sequence of ``add_argument`` calls, one tuple each:
-      every leading element is a flag (or, with no leading dash, a
-      positional's name) and an optional trailing dict carries argparse's own
-      keywords, passed through verbatim. ``("--factor", "-f", {"type": int})``
-      is ``add_argument("--factor", "-f", type=int)``; ``("code", {...})`` is
-      a positional; ``("--cc",)`` needs no dict. There is no Rhiza vocabulary
-      on top -- a repeated flag is argparse's ``{"action": "append"}``, a dest
-      that differs from the flag is argparse's ``{"dest": ...}``. Dests are
-      the ones argparse derives, must be unique, and may not reuse a name the
-      decorator resolves itself (``start_time``/``end_time``/``date``/
-      ``bbox``, and ``context`` when the function opts into the run context):
-      the resolved value would clobber the extra argument's.
-    - argument delivery: the function is called as ``fn(*datasets, arguments)``
-      -- one dict keyed by dest, holding every ``extra_args`` value AND every
-      enabled standard toggle (``start_time``/``end_time``/``date`` already
-      resolved to :class:`datetime.date`, ``bbox`` parsed to an (N, W, S, E)
-      tuple, plus ``variable``/``workers``/``title``/``dims``/``time_dim``).
-      One mechanism, so a date is an ordinary entry rather than a special
-      parameter. A variadic skill gets ``fn(datasets, arguments)``. The run
-      context stays a separate ``context=`` keyword, never a dict entry.
-    - ``mutex_groups`` -- mapping of group name to either a sequence of
-      ``extra_args`` dests (an optional group) or a dict
-      ``{"args": (dests...), "required": True}``. Each group becomes a real
-      argparse mutually exclusive group: at most one member may be given, and
-      ``required=True`` demands exactly one. Members must be non-positional
-      ``extra_args`` entries that do not set their own ``required``; the group
-      name labels the declaration only (argparse mutex groups are untitled).
-    - ``latest_resolver`` -- ``callable(args) -> date`` resolving the
-      ``latest`` token; invoked lazily, at most once per run.
-    - ``streaming`` -- the function is a generator yielding per-period
-      datasets, written as ``mode="w"`` then appends along ``append_dim``.
-    - cache behavior: ``cache=False`` disables the cache check entirely -- the
-      function runs and the output is rewritten on every invocation, with the
-      provenance entry still built and stamped (for skills whose recompute is
-      cheaper than a meaningful cache key); ``hash_input`` compares the
-      input's content hash in the cache key (``False`` defers the expensive
-      hash until after a cheap check); ``completeness_probe`` (``callable(Path) -> bool``) verifies a
-      candidate cache hit actually reads back -- it receives the output store's
-      path and applies to fetcher and chained (transform) checks alike;
-      ``reference_args`` names
-      arg dests holding secondary reference-store paths, content-hashed into
-      the entry's ``reference_inputs``.
-    - hooks: ``validate_args(args)`` for pre-cache argument validation (raise
-      ``UsageError``); ``normalize_args(dict) -> dict`` canonicalizes the
-      recorded entry args (sort/dedupe) so flag order cannot cause spurious
-      misses -- the returned dict is passed through a JSON round-trip before
-      the cache compare and the stamp, so JSON-equivalent containers (a
-      tuple vs. the list it serializes to) compare equal;
-      ``exclude_args`` drops further dests from the entry args;
-      ``preserve_order`` names dests whose list ORDER is data (the output
-      changes with it), exempting them from the sort every other list-valued
-      entry arg gets -- sorting one of those would give two different requests
-      a single cache key;
-      ``write_encoding(ds)`` sets controlled write encodings after the
-      encoding clear; ``post_write(path)`` runs after the artifact is written
-      (zarr, streaming, or PNG -- requires an artifact output_type),
-      receiving the output path, and may fail the run by raising a
-      ``SkillError`` (which maps to the usual exit codes) -- use it for
-      read-back verification of the written store. It runs before the
-      ``Wrote:`` line, and a cache hit skips it (nothing was written).
-    - run context: every hook above (plus ``latest_resolver`` and
-      ``completeness_probe``) and the wrapped function itself opt into the
-      run context by naming a ``context`` parameter; the decorator then also
-      passes ``context=`` -- a :class:`RunContext` carrying the parsed args
-      namespace, the resolved window start, and a run-scoped ``state`` scratch
-      dict shared across the hooks and the function. Callables without the
-      parameter keep their plain call shapes.
-    - PNG: ``history_labels`` gives the per-input suffix for the embedded
-      history keys (defaults to ``input_names``); ``savefig_kwargs`` extends
-      the ``savefig`` call (default ``{"dpi": 150}``).
-    - stderr messages: every decorator-emitted line is fixed. The ``Wrote:``
-      line's detail is the output's dimension sizes for a zarr write,
-      ``<append_dim>=<total>`` for a streaming write, and nothing for a PNG.
-      A skill wanting to say more prints its own stderr line.
+    ``skills/weather-skill-authoring/SKILL.md`` is the authoring guide: worked
+    examples per skill class, the date grammar, cache semantics, and the
+    envelope contract in full. Every parameter after ``version`` is
+    keyword-only.
+
+    Args:
+        name: canonical skill name; recorded in every provenance entry.
+        version: the script's ``_SKILL_VERSION``; shown in the ``--help`` epilog and recorded.
+        input_type: envelope type(s) of the zarr input(s), from
+            :mod:`weather_skills_core.types`. A type or a tuple of them declares ONE input
+            (the tuple its allowed set); a LIST declares one entry per input; ``None``
+            declares no zarr input. Each input is validated as the type it is detected to
+            be, so a wider declaration accepts more shapes without checking less.
+        output_type: ``None`` for a no-artifact skill (CLI only: no provenance, cache, or
+            write), a zarr envelope type, a tuple of them (a union the returned shape must
+            be a member of, checked before the write), or ``types.PNG``. A list is rejected:
+            a skill has one output. A single type is unchecked; a shape-preserving transform
+            declares ``types.ALL`` and asserts the preservation itself with
+            :func:`weather_skills_core.envelope.validate_type`.
+        input_names: one dedicated input flag per declared input, replacing ``--input``.
+        input_help: help for the input flag(s): one string, or one per ``input_names`` entry.
+        variadic_input: accept two or more ``--input`` repeats of the one declared type.
+        start_time: enable ``--start``; ``True``, or a dict overriding ``help``/``required``/
+            ``choices``.
+        end_time: enable ``--end``; same forms as ``start_time``.
+        date: enable ``--date``; same forms, plus ``context``, the resolved-date log label.
+        bbox: enable ``--bbox``: ``types.REQUIRED`` or ``types.OPTIONAL``, or a dict.
+        variable: enable ``--variable``: ``types.SINGLE`` or ``types.REPEAT``, or a dict.
+        workers: enable ``--workers`` with this int default; excluded from the cache key.
+        title: enable ``--title``.
+        dims: enable ``--dims LAT,LON``, naming the spatial axes for input validation and the
+            output union check; the body passes it to ``validate_type`` (WSK103).
+        time_dim: enable ``--time-dim``; a string sets its default.
+        extra_args: a sequence of ``add_argument`` calls, one tuple each -- leading strings
+            are the flags (or a positional's name), an optional trailing dict is argparse's
+            own keywords, verbatim. Dests are the ones argparse derives, must be unique, and
+            may not reuse a name the decorator resolves itself.
+        mutex_groups: group name to its member dests, or to ``{"args": (...), "required":
+            True}``; each becomes an argparse mutually exclusive group.
+        latest_resolver: ``callable(args) -> date`` resolving the ``latest`` token, invoked
+            lazily and at most once per run.
+        streaming: the function is a generator of per-period datasets, written then appended.
+        cache: ``False`` skips the cache check -- the function runs and the output is
+            rewritten every invocation, provenance still stamped.
+        hash_input: ``False`` defers the input's content hash until after the cheap check.
+        completeness_probe: ``callable(Path) -> bool`` confirming a candidate cache hit reads
+            back; receives the output store's path.
+        validate_args: ``callable(args)`` validating arguments before the cache check.
+        normalize_args: ``callable(dict) -> dict`` canonicalizing the recorded entry args.
+        exclude_args: dests dropped from the recorded entry args.
+        preserve_order: dests whose list ORDER is data, exempt from the entry-arg sort.
+        reference_args: dests holding secondary store paths, content-hashed into the entry's
+            ``reference_inputs``.
+        history_labels: per-input suffix for a PNG's embedded history keys (defaults to
+            ``input_names``).
+        write_encoding: ``callable(ds)`` setting write encodings, after the encoding clear.
+        post_write: ``callable(path)`` run after the artifact is written and before the
+            ``Wrote:`` line; raising a ``SkillError`` fails the run.
+        append_dim: the dim a streaming write appends along.
+        savefig_kwargs: extends the PNG ``savefig`` call (default ``{"dpi": 150}``).
+        software: the ``Software`` key stamped into a PNG's metadata.
+
+    Raises:
+        ValueError: the declaration is malformed -- an unknown envelope type, a list
+            ``output_type``, colliding or unknown dests, a toggle whose value is not one of
+            its modes, or a combination the decorator cannot build a parser from.
     """
     input_types = _normalize_input_types(input_type)
     for declared in input_types:

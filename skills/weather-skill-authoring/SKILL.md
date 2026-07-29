@@ -125,11 +125,12 @@ Declaration surface (all keyword-only after `name`, `version`):
   `input_names=["forecast", "mclimate"]` for dedicated flags, or
   `variadic_input=True` for two-or-more `--input` repeats (the function then
   receives one list of datasets).
-- `input_help` — help text for the input flag(s). With `input_names`, a list
-  giving one help string per named flag
-  (`input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."]`);
-  otherwise a single string shown on `--input`/`-i`, replacing the
-  decorator's default help in the repeated-input cases.
+- `input_help` — help text for the input flag(s); requires a declared
+  `input_type`. With `input_names`, a list giving one help string per named
+  flag (`input_help=["Forecast ensemble Zarr.", "M-climate ensemble Zarr."]`),
+  where a `None` entry leaves that flag without help; otherwise a single
+  string shown on `--input`/`-i`, replacing the decorator's default help in
+  the repeated-input cases.
 - `output_type` — `None`, a zarr envelope type, a tuple of zarr envelope
   types (a union), or `types.PNG`. A list is rejected: it is the
   one-entry-per-input spelling and a skill has one output. A union (e.g.
@@ -200,7 +201,7 @@ Declaration surface (all keyword-only after `name`, `version`):
   `cache`, `hash_input`, `completeness_probe`, `validate_args`,
   `normalize_args`, `exclude_args`, `preserve_order`, `reference_args`,
   `history_labels`,
-  `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`.
+  `write_encoding`, `post_write`, `append_dim`, `savefig_kwargs`, `software`.
 - `post_write` — `callable(path)` run after the artifact is written (zarr,
   streaming, or PNG; requires an artifact `output_type`), receiving the
   output path. Use it for read-back verification of the written store (a
@@ -235,7 +236,9 @@ when required):
 
 Members must be non-positional `extra_args` entries that do not set their own
 `required` (requiredness belongs to the group); a dest may belong to at most
-one group, and a group needs at least two members. Declare groups here —
+one group, and a group needs at least two members. The group name labels the
+declaration only — argparse mutex groups are untitled and it reaches no help
+text. Declare groups here —
 never assemble them by reaching into `wrapper.parser._actions` after
 decoration.
 
@@ -361,6 +364,14 @@ def clip_region(ds, args):
     validate_type(sub, ds, args["dims"])
     return sub
 ```
+
+This is the shipped `clip-region` declaration, and its `input_type` is wider
+than its body: `types.ALL` accepts a station or series envelope, and
+`detect_spatial_dims` then fails inside the function rather than at the
+argparse boundary. Read it as a live tension, not a pattern to copy — declare
+the shapes your body actually handles (`(types.GRIDDED, types.FORECAST)` here)
+unless you have a reason to accept more, and the decorator rejects the rest
+with a message naming the offending dim before your code runs.
 
 `input_type` composes with `dims=True`: when the caller passes `--dims
 LAT,LON`, those names identify the spatial axes for both classification and
@@ -494,7 +505,8 @@ def plot_compare(ds_a, ds_b, args):
 Return the Figure; the decorator saves it with each input branch's full
 history embedded in the PNG metadata (`weather_skills_history` for a single
 input; `weather_skills_history_<label>` per declared label otherwise, plus a
-`Software` key). Plot skills have no cache: they always render.
+`Software` key, `"forecasting-skills"` unless the declaration overrides it
+with `software=`). Plot skills have no cache: they always render.
 
 ### Worked example: no-artifact
 
@@ -533,8 +545,15 @@ To add something source-specific, override `help` with **your sentence only**
 — the grammar still follows it:
 
 ```python
-start_time = ({"help": "Start date (inclusive). 'latest' resolves to the current UTC date."},)
-end_time = (True,)
+@weather_skill(
+    "my-fetch",
+    _SKILL_VERSION,
+    output_type=types.GRIDDED,
+    start_time={"help": "Start date (inclusive). 'latest' resolves to the current UTC date."},
+    end_time=True,
+)
+def fetch(args):
+    """Fetch and write a weather-skills envelope Zarr."""
 ```
 
 renders as `Start date (inclusive). 'latest' resolves to the current UTC
@@ -567,8 +586,16 @@ hit it returns without calling you or touching the store. What you control:
   order given:
 
   ```python
-  extra_args = ([("--index", {"action": "append"})],)
-  preserve_order = (("index",),)
+  @weather_skill(
+      "select",
+      _SKILL_VERSION,
+      input_type=types.ALL,
+      output_type=types.ALL,
+      extra_args=[("--index", {"action": "append"}), ("--value", {"action": "append"})],
+      preserve_order=("index", "value"),
+  )
+  def select(ds, args):
+      """Select entries along one named dimension."""
   ```
 
   Without it, `--index 2 --index 0` and `--index 0 --index 2` record the same
@@ -581,7 +608,10 @@ hit it returns without calling you or touching the store. What you control:
 - `normalize_args` remains for canonicalization ordering does not cover:
   filling in a default so an omitted flag and an explicit full list share a
   key, coercing `"0"` and `"00"` to one value, nulling an argument the chosen
-  style ignores, or folding a resolved lookup into the recorded args.
+  style ignores, or folding a resolved lookup into the recorded args. The
+  dict it returns goes through a JSON round-trip before both the cache
+  compare and the stamp, so JSON-equivalent containers (a tuple and the list
+  it serializes to) compare equal and a hook may return either.
 - `cache=False` removes the cache check entirely: the function runs and the
   output is rewritten on every invocation, with the provenance entry still
   built and stamped. Declare it when a meaningful cache key does not exist
@@ -773,6 +803,9 @@ parameterized by them. Do not reimplement any of these in a skill body.
   forecast envelope's scalar init `time` — probe by variables alone or write
   a bespoke probe. Write a bespoke probe only when a store needs checks this
   cannot express.
+
+### Provenance metadata (`weather_skills_core.provenance`)
+
 - `set_source(ds, source)` — name the data product on a fetcher's output,
   returning `ds`. It is the SOURCE's identity, not the skill's (`ecmwf-s2s`,
   not `ecmwf-fetch`), so renaming the script cannot rewrite provenance; and it
@@ -1060,11 +1093,11 @@ as clean.
 | --- | --- | --- | --- |
 | WSK001 | error | The script parses and contains a `@weather_skill` call. | Fix the syntax error or declare the skill through the decorator. |
 | WSK101 | warning | No `extra_args` entry shadows a standard flag or dest (`--input`, `--output`, `--start`, `--end`, `--date`, `--bbox`, `--variable`, `--workers`, `--title`, `--dims`, `--time-dim`). | Declare the standard toggle instead; its dict form covers help/required/choices overrides. |
+| WSK102 | warning | A fetcher-shaped skill (zarr `output_type`, no `input_type`) calls `set_source()`. | Name the data product in the body; nothing upstream can supply it. |
+| WSK103 | warning | A skill declaring `dims=True` passes `dims` to every `validate_type()` call. | Pass `args["dims"]`; without it the assertion classifies by CF attrs and heuristics while the decorator classified by the override. |
 | WSK201 | warning | A one-off flag name is not also declared by another corpus skill. **Advisory: off by default** (CONVENTIONS.md wants a flag doing the same job to share a name, so a shared flag is usually the desired consistency, not a defect; the genuinely-bad case — a shared name with a divergent shape — is WSK202). Opt in with `--extend-select WSK201` to survey shared flags that might be promoted to a core standard parameter. | Rename it, or propose promoting it to a weather-skills-core standard parameter. Findings name each skill and corpus holding the collision. |
 | WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
 | WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |
-| WSK102 | warning | A fetcher-shaped skill (zarr `output_type`, no `input_type`) calls `set_source()`. | Name the data product in the body; nothing upstream can supply it. |
-| WSK103 | warning | A skill declaring `dims=True` passes `dims` to every `validate_type()` call. | Pass `args["dims"]`; without it the assertion classifies by CF attrs and heuristics while the decorator classified by the override. |
 | WSK401 | error | `_SKILL_VERSION` exists and is passed as the decorator's version argument. | Define the constant at module top and pass it (CI bumps it). |
 | WSK402 | error | The PEP 723 block declares weather-skills-core. | Add the core dependency to the inline script block. |
 
@@ -1077,8 +1110,8 @@ which rules run.
 ### Rule selection
 
 The **default rule set** is every rule above except WSK201: WSK001, WSK101,
-WSK202, WSK301, WSK401, and WSK402 run when you pass no selection flag (this
-is what CI invokes). WSK201 is off by default.
+WSK102, WSK103, WSK202, WSK301, WSK401, and WSK402 run when you pass no
+selection flag (this is what CI invokes). WSK201 is off by default.
 
 Three repeatable flags choose the rules to run, with the same semantics as
 ruff's `select`/`extend-select`/`ignore`:

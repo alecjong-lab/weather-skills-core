@@ -31,7 +31,7 @@ Gridded and forecast are positive tests, not fall-throughs: every store classifi
 
 ## Attrs
 
-`weather_skills_source` is optional metadata for human readability. `weather_skills_history` is the canonical provenance chain and is set by every zarr-writing skill.
+`weather_skills_source` names the data product a fetcher originated; every fetcher sets it (the WSK102 conformance rule requires it) and transforms carry it forward from their input. `weather_skills_history` is the canonical provenance chain and is set by every zarr-writing skill.
 
 | Attr | Set by | Meaning |
 |---|---|---|
