@@ -123,8 +123,8 @@ def weather_skill(
     source: str | None = None,
     hash_input: bool = True,
 ):
-    input_specs = normalize_io_list(inputs, name="inputs")
-    output_specs = normalize_io_list(outputs, name="outputs")
+    input_specs, input_variadic_min = normalize_io_list(inputs, name="inputs", allow_variadic=True)
+    output_specs, _ = normalize_io_list(outputs, name="outputs")
     required, optional = _check_catalog(required_args, optional_args)
     catalog = required + optional
     exclude_args = tuple(exclude_args or ())
@@ -158,10 +158,15 @@ def weather_skill(
 
             p = argparse.ArgumentParser(prog=name, description=fn.__doc__, epilog=f"{name} {version}")
             ni, no = len(input_specs), len(output_specs)
-            if ni == 1:
-                p.add_argument("--input", "-i", required=True)
+            if input_variadic_min is not None:
+                p.add_argument(
+                    "--input", "-i", action="append", default=[],
+                    required=input_variadic_min > 0,
+                )
             elif ni > 1:
                 p.add_argument("--input", "-i", action="append", required=True)
+            elif ni == 1:
+                p.add_argument("--input", "-i", required=True)
             if no == 1:
                 p.add_argument("--output", "-o", required=True)
             elif no > 1:
@@ -239,10 +244,20 @@ def weather_skill(
                     entry[dest] = kw[dest]
 
             in_paths = []
-            if ni == 1:
+            if ni == 0:
+                pass
+            elif input_variadic_min is not None:
+                vals = ns.input or []
+                if len(vals) < input_variadic_min:
+                    raise UsageError(
+                        f"--input must be passed at least {input_variadic_min} times; got {len(vals)}"
+                    )
+                in_paths = [Path(x) for x in vals]
+                entry["input"] = [str(x) for x in in_paths]
+            elif ni == 1:
                 in_paths = [Path(ns.input)]
                 entry["input"] = str(in_paths[0])
-            elif ni > 1:
+            else:
                 vals = ns.input or []
                 if len(vals) != ni:
                     raise UsageError(f"--input must be passed {ni} times; got {len(vals)}")
@@ -259,23 +274,22 @@ def weather_skill(
                 out_paths = [Path(x) for x in ns.output]
 
             datasets, chains = [], []
-            for path, spec in zip(in_paths, input_specs, strict=True):
+            if input_variadic_min is not None:
+                path_specs = [input_specs[0]] * len(in_paths)
+            else:
+                path_specs = input_specs
+            for path, spec in zip(in_paths, path_specs, strict=True):
                 allowed = spec if isinstance(spec, tuple) else (spec,)
                 ds = xr.open_zarr(path, consolidated=False)
                 _dataset.validate_dataset(ds, allowed, str(path))
                 datasets.append(ds)
                 chains.append(_provenance.load_history(path) or [])
 
+            multi = input_variadic_min is not None or ni > 1
             if ni == 0:
                 entry_input, fetcher, upstream = None, True, None
-            elif ni == 1:
-                fetcher, upstream = False, chains[0]
-                entry_input = {
-                    "basename": in_paths[0].name,
-                    "hash": _provenance.hash_zarr(in_paths[0]) if hash_input else "",
-                }
-            else:
-                fetcher, upstream = False, chains[0]
+            elif multi:
+                fetcher, upstream = False, []
                 entry_input = [
                     {
                         "basename": p.name,
@@ -284,6 +298,12 @@ def weather_skill(
                     }
                     for p, ch in zip(in_paths, chains, strict=True)
                 ]
+            else:
+                fetcher, upstream = False, chains[0]
+                entry_input = {
+                    "basename": in_paths[0].name,
+                    "hash": _provenance.hash_zarr(in_paths[0]) if hash_input else "",
+                }
 
             prov = _provenance.build_entry(name, version, entry, entry_input)
             if has_artifact and getattr(ns, "check_cache", True):
@@ -291,7 +311,8 @@ def weather_skill(
                     print(f"cache hit: skipping {name}; using {out_paths[0]}", file=sys.stderr)
                     return 0
 
-            result = fn(*datasets, **kw)
+            # Variadic skills receive the dataset list as the first positional.
+            result = fn(datasets, **kw) if input_variadic_min is not None else fn(*datasets, **kw)
             if not has_artifact:
                 return 0
 
@@ -308,7 +329,7 @@ def weather_skill(
             import xarray as xr
 
             members = spec if isinstance(spec, tuple) else (spec,)
-            history = [prov] if fetcher else (upstream or []) + [prov]
+            history = [prov] if fetcher or upstream == [] else (upstream or []) + [prov]
 
             if isinstance(item, (str, Path)):
                 path = Path(item)
@@ -328,8 +349,6 @@ def weather_skill(
             actual = _dataset.detect_type(item)
             if Types.ANY not in members and actual not in members:
                 raise DataError(f"output is {actual}; declared {' or '.join(members)}")
-            for var in item.variables:
-                item[var].encoding = {}
             _provenance.stamp_zarr(item, history, source=source)
             _rm(out)
             try:

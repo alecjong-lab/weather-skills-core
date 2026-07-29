@@ -190,9 +190,7 @@ def cache_hit(out: Path, entry: dict, upstream: list | None = None, *, fetcher: 
 
 
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
-    """Set history attrs on ds and clear variable encodings."""
+    """Set history (and optional source) attrs on ds."""
     ds.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
     if source is not None:
         ds.attrs[SOURCE_ATTR] = source
-    for v in ds.variables:
-        ds[v].encoding = {}

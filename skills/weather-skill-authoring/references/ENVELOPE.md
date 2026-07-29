@@ -1,3 +1,3 @@
-# Moved
+# ENVELOPE.md (moved)
 
-This document is now [STANDARD_DATASET.md](STANDARD_DATASET.md).
+See [STANDARD_DATASET.md](STANDARD_DATASET.md). Import helpers from `weather_skills_core.dataset`.

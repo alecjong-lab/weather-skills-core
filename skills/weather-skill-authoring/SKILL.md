@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
 | Kwarg | Meaning |
 |---|---|
-| `inputs` / `outputs` | Lists of `Types.*` (or unions as tuples) |
+| `inputs` / `outputs` | Lists of `Types.*` (or unions as tuples). Variadic inputs use argparse-style `+`/`*`: `inputs=[Types.ANY + "+"]` (≥1), `inputs=[Types.ANY + "*"]` (≥0), or `inputs=[Types.ANY + "+2"]` (≥2); skill gets one list as the first positional |
 | `required_args` / `optional_args` | From catalog: `time`, `start_time`, `end_time`, `bbox`, `variable` |
 | `required_env` | Env vars checked before run |
 | `exclude_args` | Dests omitted from cache key |
@@ -62,6 +62,10 @@ Custom flags: stack `@weather_skill.argument(...)` (argparse `add_argument` API)
 - object with `savefig` → PNG
 - `str`/`Path` → already written
 - optional `EntryOverride(args={...})` to rewrite provenance
+
+## Helpers
+
+`validate_type(ds, Types.FORECAST)` or `validate_type(ds1, ds2)` — assert shape compliance (or match another dataset).
 
 ## Errors
 
