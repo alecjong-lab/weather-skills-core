@@ -232,14 +232,16 @@ def _arg_dest(spec):
     """The dest argparse will give one ``extra_args`` entry.
 
     Mirrors argparse's own rule: an explicit ``dest`` wins, a positional is
-    its own name, and a flag uses the first long spelling with the leading
-    dashes stripped and inner dashes underscored.
+    its own name verbatim, and a flag uses the first long spelling with the
+    leading dashes stripped and inner dashes underscored. The dash-to-
+    underscore rewrite is argparse's rule for optionals only, so a positional
+    named ``target-grid`` keeps that dest and reaches the body under that key.
     """
     names, kwargs = _split_arg_spec(spec)
     if "dest" in kwargs:
         return kwargs["dest"]
     if not names[0].startswith("-"):
-        return names[0].replace("-", "_")
+        return names[0]
     longs = [n for n in names if n.startswith("--")]
     return (longs[0] if longs else names[0]).lstrip("-").replace("-", "_")
 

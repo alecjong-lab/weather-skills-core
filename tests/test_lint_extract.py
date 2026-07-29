@@ -79,6 +79,27 @@ class TestDeclarationExtraction:
         assert decl.extra_args["code"].positional and decl.extra_args["code"].flags == ()
         assert decl.extra_args["verbose"].arity == "store_true"
 
+    def test_dashed_positional_dest_matches_argparse(self, tmp_path):
+        # The decorator computes the same dest; the two must not diverge, or
+        # the linter reports a flag under a name the runtime never uses.
+        script, skill_dir = write_script(
+            tmp_path,
+            '''
+            """Doc."""
+            from weather_skills_core import weather_skill
+
+            _SKILL_VERSION = "0.1.0"
+
+
+            @weather_skill("some-skill", _SKILL_VERSION, extra_args=[("target-grid",)])
+            def some_skill(args):
+                """Doc."""
+            ''',
+        )
+        decl = extract_script(script, skill_dir)
+        assert list(decl.extra_args) == ["target-grid"]
+        assert decl.extra_args["target-grid"].positional
+
     def test_typed_and_choice_kwargs(self, tmp_path):
         script, skill_dir = write_script(
             tmp_path,

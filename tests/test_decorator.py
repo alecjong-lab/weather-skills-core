@@ -109,6 +109,17 @@ class TestParserConstruction:
 
         assert resolve_region.parser.parse_args(["KEN"]).code == "KEN"
 
+    def test_dashed_positional_keeps_its_dashes(self, tmp_path, gridded_store):
+        # argparse rewrites dashes to underscores for optionals only, so a
+        # dashed positional's dest -- and the key its value arrives under --
+        # keeps the dash.
+        calls = []
+        skill = make_identity_skill(calls, extra_args=[("target-grid",)])
+        args = skill.parser.parse_args(["-i", "a", "-o", "b", "ref.zarr"])
+        assert getattr(args, "target-grid") == "ref.zarr"
+        skill(["-i", str(gridded_store), "-o", str(tmp_path / "o.zarr"), "ref.zarr"])
+        assert calls == [{"target-grid": "ref.zarr"}]
+
     def test_extra_args_dest_keyword_decouples_dest_from_flag(self):
         skill = make_identity_skill([], extra_args=[("--from", {"dest": "sender"})])
         assert skill.parser.parse_args(["-i", "a", "-o", "b", "--from", "x"]).sender == "x"

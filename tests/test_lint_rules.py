@@ -41,15 +41,16 @@ class TestCleanSkill:
 class TestSourceRule:
     """WSK102 keys on fetcher shape: a zarr envelope written from no zarr input."""
 
-    def _skill(self, tmp_path, name, decl, body="    pass\n"):
+    def _skill(self, tmp_path, name, decl, sig="args", body="    return xr.Dataset()\n"):
         skill = tmp_path / name
         (skill / "scripts").mkdir(parents=True)
         (skill / "scripts" / "run.py").write_text(
             _PEP723
+            + "import xarray as xr\n"
             + "from weather_skills_core import set_source, types, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
             + f"@weather_skill({name!r}, _SKILL_VERSION, {decl})\n"
-            + "def run(args):\n"
+            + f"def run({sig}):\n"
             + body
         )
         (skill / "SKILL.md").write_text(_manifest([]))
@@ -71,21 +72,31 @@ class TestSourceRule:
             tmp_path,
             "toy-fetch",
             "output_type=types.GRIDDED",
-            body='    set_source(args, "toy")\n',
+            body='    return set_source(xr.Dataset(), "toy")\n',
         )
         assert "WSK102" not in self.codes(run_lint(skill, []))
 
     def test_transform_is_not_fetcher_shaped(self, tmp_path):
         # It inherits the attr from its input, so it owes no source of its own.
         skill = self._skill(
-            tmp_path, "toy-transform", "input_type=types.ALL, output_type=types.ALL"
+            tmp_path,
+            "toy-transform",
+            "input_type=types.ALL, output_type=types.ALL",
+            sig="ds, args",
+            body="    return ds\n",
         )
         assert "WSK102" not in self.codes(run_lint(skill, []))
 
     def test_png_and_no_artifact_skills_are_not_fetcher_shaped(self, tmp_path):
-        png = self._skill(tmp_path, "toy-plot", "input_type=types.ALL, output_type=types.PNG")
+        png = self._skill(
+            tmp_path,
+            "toy-plot",
+            "input_type=types.ALL, output_type=types.PNG",
+            sig="ds, args",
+            body="    import matplotlib.pyplot as plt\n\n    return plt.figure()\n",
+        )
         assert "WSK102" not in self.codes(run_lint(png, []))
-        bare = self._skill(tmp_path, "toy-report", 'extra_args=[("--to",)]')
+        bare = self._skill(tmp_path, "toy-report", 'extra_args=[("--to",)]', body="    pass\n")
         assert "WSK102" not in self.codes(run_lint(bare, []))
 
     def test_union_of_zarr_types_is_still_fetcher_shaped(self, tmp_path):
@@ -319,11 +330,11 @@ _PEP723 = '# /// script\n# dependencies = ["weather-skills-core"]\n# ///\n'
 def _script(skill_name, func_name, extra_args_src):
     return (
         _PEP723
-        + "from weather_skills_core import weather_skill\n"
+        + "from weather_skills_core import types, weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
-        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, input_type='any', "
+        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, input_type=types.ALL, "
         + f"output_type=types.ALL, extra_args={extra_args_src})\n"
-        + f"def {func_name}(ds):\n    return ds\n"
+        + f"def {func_name}(ds, args):\n    return ds\n"
     )
 
 
@@ -421,12 +432,12 @@ class TestMultiScriptSkill:
         scripts_dir.mkdir(parents=True)
         (scripts_dir / "one.py").write_text(
             _PEP723
-            + "from weather_skills_core import weather_skill\n"
+            + "from weather_skills_core import types, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
             + 'SHARED = {"foo": {"type": int}}\n'
-            + "@weather_skill('one', _SKILL_VERSION, input_type='any', "
+            + "@weather_skill('one', _SKILL_VERSION, input_type=types.ALL, "
             + "output_type=types.ALL, extra_args=SHARED)\n"
-            + "def one(ds):\n    return ds\n"
+            + "def one(ds, args):\n    return ds\n"
         )
         (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))
         report = run_lint(skill, [])

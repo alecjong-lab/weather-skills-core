@@ -188,11 +188,15 @@ def _find_decorator_calls(tree: ast.Module) -> list[tuple[str, ast.Call]]:
 
 
 def _spec_dest(names: list[str], spec: dict) -> str:
-    """The dest argparse derives for one extra_args entry, mirroring its rule."""
+    """The dest argparse derives for one extra_args entry, mirroring its rule.
+
+    Dashes become underscores for an optional only; a positional's dest is its
+    name verbatim, which is what the decorator computes too.
+    """
     if isinstance(spec.get("dest"), str):
         return spec["dest"]
     if not names[0].startswith("-"):
-        return names[0].replace("-", "_")
+        return names[0]
     longs = [n for n in names if n.startswith("--")]
     return (longs[0] if longs else names[0]).lstrip("-").replace("-", "_")
 

@@ -24,7 +24,11 @@ _SKILL_VERSION = "0.1.0"
 )
 def shadow_skill(args):
     """Lint fixture; never executed."""
-    set_source(args, "shadow")  # keeps WSK102 quiet: this fixture is about WSK101
+    import xarray as xr
+
+    # A fetcher stamps the source on the dataset it returns; stamping keeps
+    # WSK102 quiet, and this fixture is about WSK101.
+    return set_source(xr.Dataset(), "shadow")
 
 
 if __name__ == "__main__":
