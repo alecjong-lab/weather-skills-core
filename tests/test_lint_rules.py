@@ -93,6 +93,53 @@ class TestSourceRule:
         assert "WSK102" in self.codes(run_lint(skill, []))
 
 
+class TestValidateTypeDimsRule:
+    """WSK103 keys on the pair: a dims=True declaration and a dims-less assertion."""
+
+    def _skill(self, tmp_path, decl, body):
+        skill = tmp_path / "toy-transform"
+        (skill / "scripts").mkdir(parents=True)
+        (skill / "scripts" / "run.py").write_text(
+            _PEP723
+            + "from weather_skills_core import types, validate_type, weather_skill\n"
+            + '_SKILL_VERSION = "0.1.0"\n'
+            + "@weather_skill('toy-transform', _SKILL_VERSION, input_type=types.ALL, "
+            + f"output_type=types.ALL, {decl})\n"
+            + "def run(ds, args):\n"
+            + body
+        )
+        (skill / "SKILL.md").write_text(_manifest(["--dims"]))
+        return skill
+
+    def codes(self, tmp_path, decl, body):
+        return [f.rule for f in run_lint(self._skill(tmp_path, decl, body), []).findings]
+
+    def test_dims_skill_asserting_without_the_override_fires(self, tmp_path):
+        codes = self.codes(tmp_path, "dims=True", "    validate_type(ds, ds)\n    return ds\n")
+        assert "WSK103" in codes
+
+    def test_positional_dims_is_clean(self, tmp_path):
+        codes = self.codes(
+            tmp_path, "dims=True", '    validate_type(ds, ds, args["dims"])\n    return ds\n'
+        )
+        assert "WSK103" not in codes
+
+    def test_keyword_dims_is_clean(self, tmp_path):
+        codes = self.codes(
+            tmp_path, "dims=True", '    validate_type(ds, ds, dims=args["dims"])\n    return ds\n'
+        )
+        assert "WSK103" not in codes
+
+    def test_skill_without_the_toggle_owes_nothing(self, tmp_path):
+        # No --dims flag, so there is no override the assertion could ignore.
+        codes = self.codes(tmp_path, "title=True", "    validate_type(ds, ds)\n    return ds\n")
+        assert "WSK103" not in codes
+
+    def test_dims_skill_making_no_assertion_is_clean(self, tmp_path):
+        codes = self.codes(tmp_path, "dims=True", "    return ds\n")
+        assert "WSK103" not in codes
+
+
 class TestShadowRule:
     def test_each_shadowing_extra_arg_fires_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
@@ -475,13 +522,13 @@ class TestSelectionEndToEnd:
 
 class TestScoreRubric:
     def test_warning_only_rule_scores_half_of_that_rule(self):
-        # shadow-skill: 5 applicable rules (no corpus), one rule at its
-        # warning floor -> (0.5 + 4) / 5 = 90.
+        # shadow-skill: 6 applicable rules (no corpus), one rule at its
+        # warning floor -> (0.5 + 5) / 6 = 92.
         report = run_lint(FIXTURES / "shadow_tree", [])
-        assert score_of(report, "shadow-skill") == 90
+        assert score_of(report, "shadow-skill") == 92
 
     def test_cross_rules_excluded_from_the_denominator_when_skipped(self):
-        # Linted alone, clean-skill scores over the 4 per-skill rules only;
+        # Linted alone, clean-skill scores over the per-skill rules only;
         # skipped rules never count for or against it.
         report = run_lint(FIXTURES / "clean_tree" / "skills" / "clean-skill", [])
         assert score_of(report, "clean-skill") == 100

@@ -43,21 +43,25 @@ shapes — `types.GRIDDED`, `types.FORECAST`, `types.STATION`, `types.SERIES`.
 Declare each input's shape in `input_type`; the decorator validates on open
 and exits 2 with a message naming the offending dim.
 
-The shape is detected, first match wins: a `station_id` dim is a station; a
-`step` dim with a scalar `time` coord is a forecast; identifiable lat/lon
-coords make it gridded; anything with no spatial coords is a series (what
-collapsing latitude and longitude leaves). Gridded is a positive test rather
-than the fall-through, so every dataset classified gridded satisfies the
-gridded contract. "Identifiable" means cf-xarray's CF-attr resolution or the
-`lat`/`lon`/`y`/`x` name heuristics — a grid whose axes are named something
-else reads as a series until `--dims` names them, which is what `--dims` is
-for.
+The shape is detected, first match wins: a `station_id` dim is a station;
+without identifiable lat/lon coords it is a series (what collapsing latitude
+and longitude leaves); with them, a `step` dim plus a scalar `time` coord is a
+forecast and anything else is gridded. Gridded and forecast are positive tests
+rather than fall-throughs, so every dataset classified as one satisfies that
+shape's contract — a forecast collapsed over latitude and longitude keeps its
+`step` axis and scalar init `time` but reads as the series it is, not as a
+forecast no skill can open. "Identifiable" means cf-xarray's CF-attr
+resolution or the `lat`/`lon`/`y`/`x` name heuristics — a grid whose axes are
+named something else reads as a series until `--dims` names them, which is
+what `--dims` is for. A `station_id` dim without its `latitude(station_id)`/
+`longitude(station_id)` coords is a malformed station rather than another
+shape, and is rejected naming the missing coord.
 
 Declare types and modes with the `weather_skills_core.types` constants, never
 a bare string. `types.ALL` is the tuple of all four shapes: an input declaring
 it accepts any of them and is then validated as whichever shape it is detected
-to be — the grid, station-coordinate, and `--time-dim` checks all run. It
-widens what a skill accepts, not what the decorator checks.
+to be — the station-coordinate and `--time-dim` checks still run. It widens
+what a skill accepts, not what the decorator checks.
 
 `references/ENVELOPE.md` is authoritative for the rest: the exact dims and
 coords of each shape, the CF-compliance requirement, the write rules
@@ -354,7 +358,7 @@ def clip_region(ds, args):
     lat_dim, lon_dim = detect_spatial_dims(ds, args["dims"])
     sub = bbox_subset(ds, args["bbox"], lat_dim=lat_dim, lon_dim=lon_dim)
     # Subsetting the spatial axes preserves the envelope shape.
-    validate_type(sub, ds)
+    validate_type(sub, ds, args["dims"])
     return sub
 ```
 
@@ -363,7 +367,13 @@ LAT,LON`, those names identify the spatial axes for both classification and
 validation, so a grid with nonstandard dim names classifies as gridded and
 reaches the body (the same holds for `--time-dim`). Without the override that
 grid reads as a series. A skill whose inputs may carry nonstandard dim names
-needs `dims=True` so the caller can name them.
+needs `dims=True` so the caller can name them. Input validation and the
+`output_type` union check classify by those names, so a body asserting its own
+shape passes `args["dims"]` to `validate_type` — as the example does — and
+compares the shapes the decorator saw; WSK103 flags a `dims=True` skill that
+omits it. The names win on a dataset that has them and CF attrs/heuristics
+decide on one that does not, so a transform that renames its axes to canonical
+names still reads as shape-preserving.
 
 The decorator writes the returned Dataset: it carries the first input's attrs
 forward, stamps the provenance chain, clears encodings, replaces whatever
@@ -723,12 +733,14 @@ parameterized by them. Do not reimplement any of these in a skill body.
 - `normalize_longitude(ds, lon_dim="longitude")` — maps a 0..360 longitude
   axis onto [-180, 180) and sorts ascending, so N/W/S/E bboxes with negative
   west/east select correctly.
-- `validate_type(ds, expected)` — assert a dataset's envelope type, returning
-  it. `expected` is a type constant, a sequence of them, or another dataset
-  whose type `ds` must match (`validate_type(out_ds, ds)` is how a
+- `validate_type(ds, expected, dims=None)` — assert a dataset's envelope type,
+  returning it. `expected` is a type constant, a sequence of them, or another
+  dataset whose type `ds` must match (`validate_type(out_ds, ds)` is how a
   shape-preserving transform states that claim). Raises `DataError` (exit 1)
-  on a mismatch. Exported at the top level: `from weather_skills_core import
-  validate_type`.
+  on a mismatch. `dims` classifies both sides; a skill declaring `dims=True`
+  passes `args["dims"]` so the assertion reads the shapes the decorator
+  validated, and a skill that omits it is WSK103. Exported at the top level:
+  `from weather_skills_core import validate_type`.
 
 ### Dates (`weather_skills_core.dates`)
 
@@ -1052,6 +1064,7 @@ as clean.
 | WSK202 | error | Skills sharing a one-off flag name agree on its shape (type, arity, nargs, choices). | Align the declarations or rename the flags. Values that are not literals in the source are recorded as dynamic and skipped from the comparison. |
 | WSK301 | warning | SKILL.md and the declaration agree: every declared flag is mentioned in SKILL.md, and every flag the Arguments section documents is declared. A missing SKILL.md is its own finding. | Update the Arguments section or the declaration. |
 | WSK102 | warning | A fetcher-shaped skill (zarr `output_type`, no `input_type`) calls `set_source()`. | Name the data product in the body; nothing upstream can supply it. |
+| WSK103 | warning | A skill declaring `dims=True` passes `dims` to every `validate_type()` call. | Pass `args["dims"]`; without it the assertion classifies by CF attrs and heuristics while the decorator classified by the override. |
 | WSK401 | error | `_SKILL_VERSION` exists and is passed as the decorator's version argument. | Define the constant at module top and pass it (CI bumps it). |
 | WSK402 | error | The PEP 723 block declares weather-skills-core. | Add the core dependency to the inline script block. |
 

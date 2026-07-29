@@ -470,7 +470,12 @@ def weather_skill(
       ``--dims``/``--time-dim`` value is honored during input validation:
       typed inputs are validated against the overridden dim names instead of
       relying on CF/heuristic detection (see
-      :func:`weather_skills_core.envelope.validate_input`).
+      :func:`weather_skills_core.envelope.validate_input`), and the output
+      union check classifies by them too. A body that asserts its own shape
+      passes ``args["dims"]`` to
+      :func:`weather_skills_core.envelope.validate_type` so the assertion
+      classifies by the same axis names; the WSK103 lint rule flags a
+      ``dims=True`` skill that omits it.
     - toggle dict form: ``start_time``/``end_time``/``date``, ``bbox``,
       ``variable``, and ``workers`` also accept a dict overriding the flag's
       argparse surface -- ``help`` replaces the decorator-owned help text,

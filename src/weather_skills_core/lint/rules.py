@@ -42,6 +42,7 @@ RULES = {
     "WSK001": Rule("WSK001", "error", "skill script could not be analyzed"),
     "WSK101": Rule("WSK101", "warning", "extra argument shadows a standard parameter"),
     "WSK102": Rule("WSK102", "warning", "fetcher does not stamp a source"),
+    "WSK103": Rule("WSK103", "warning", "shape assertion ignores the --dims override"),
     "WSK201": Rule(
         "WSK201", "warning", "one-off flag declared by multiple skills", default_enabled=False
     ),
@@ -54,7 +55,7 @@ RULES = {
 #: Rules that need a corpus beyond the skill itself; skipped (and excluded
 #: from the score denominator) when none is available.
 CROSS_SKILL_RULES = ("WSK201", "WSK202")
-PER_SKILL_RULES = ("WSK101", "WSK102", "WSK301", "WSK401", "WSK402")
+PER_SKILL_RULES = ("WSK101", "WSK102", "WSK103", "WSK301", "WSK401", "WSK402")
 
 
 def default_rule_set() -> set[str]:
@@ -170,6 +171,29 @@ def _rule_source(decl: SkillDeclaration) -> list[Finding]:
             "fetcher writes a zarr envelope from no zarr input but never calls "
             "set_source(); name the data product (the source, not the skill) so "
             "downstream artifacts carry it.",
+        )
+    ]
+
+
+def _rule_validate_type_dims(decl: SkillDeclaration) -> list[Finding]:
+    """WSK103: a ``dims=True`` skill asserting a shape without the override.
+
+    The decorator validates the input and the output union against the axis
+    names ``--dims`` gave; a ``validate_type()`` call that omits them classifies
+    by CF attrs and heuristics instead, so on the very inputs ``--dims`` exists
+    for the assertion compares shapes nobody else read -- passing when the
+    output drifted, or failing a correct transform.
+    """
+    if not (decl.toggle_enabled("dims") and decl.bare_validate_type):
+        return []
+    return [
+        _finding(
+            "WSK103",
+            decl,
+            "--dims",
+            "skill declares dims=True but calls validate_type() without dims; pass "
+            'args["dims"] so the assertion classifies by the axis names the run '
+            "validated against.",
         )
     ]
 
@@ -461,6 +485,7 @@ def lint_corpus(
             continue
         findings += _rule_shadow(decl)
         findings += _rule_source(decl)
+        findings += _rule_validate_type_dims(decl)
         findings += _rule_skill_md(decl, siblings[decl.skill_dir.resolve()])
         findings += _rule_version(decl)
         findings += _rule_core_dep(decl)

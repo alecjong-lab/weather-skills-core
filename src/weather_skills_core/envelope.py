@@ -5,12 +5,12 @@ shapes:
 
 - ``gridded`` -- spatial dims ``latitude``/``longitude`` (aliases accepted on
   input) with a ``time`` dim;
-- ``forecast`` -- a ``step`` (lead time) dim plus a scalar ``time`` coord for
-  the forecast init date;
+- ``forecast`` -- spatial dims as above plus a ``step`` (lead time) dim and a
+  scalar ``time`` coord for the forecast init date;
 - ``station`` -- a single spatial dim ``station_id`` with 1-D
   ``latitude(station_id)`` / ``longitude(station_id)`` coords and a ``time``
   dim;
-- ``series`` -- no spatial coords at all, what collapsing latitude and
+- ``series`` -- no identifiable spatial dims, what collapsing latitude and
   longitude leaves.
 
 Coordinate identification goes through cf-xarray's CF-attr resolution first,
@@ -38,19 +38,25 @@ def parse_bbox(bbox: str) -> tuple:
     return north, west, south, east
 
 
+def _dims_names(value: str) -> tuple:
+    """Split a ``LAT,LON`` override string, raising on any other shape."""
+    parts = [s.strip() for s in value.split(",")]
+    if len(parts) != 2:
+        raise UsageError("--dims must be two comma-separated names: LAT,LON.")
+    return parts[0], parts[1]
+
+
 def detect_spatial_dims(ds, override: str | None = None) -> tuple:
     """Identify the latitude and longitude dim names of a dataset.
 
-    ``override`` is a ``LAT,LON`` string (the ``--dims`` flag); when given, the
-    named dims must exist. Otherwise cf-xarray CF-attr detection is tried
-    first, then name heuristics. Raises :class:`UsageError` when nothing
-    resolves, naming the coords searched.
+    ``override`` (a ``LAT,LON`` string, the ``--dims`` flag) names them, and
+    names the dataset does not have are a :class:`UsageError` -- a caller
+    passing the flag through is asserting these are the axes. Without one,
+    cf-xarray CF-attr detection is tried first, then name heuristics;
+    :class:`UsageError` when neither resolves, naming the coords searched.
     """
     if override:
-        parts = [s.strip() for s in override.split(",")]
-        if len(parts) != 2:
-            raise UsageError("--dims must be two comma-separated names: LAT,LON.")
-        lat_dim, lon_dim = parts
+        lat_dim, lon_dim = _dims_names(override)
         if lat_dim not in ds.dims or lon_dim not in ds.dims:
             raise UsageError(f"--dims names not in dataset dims {list(ds.dims)}")
         return lat_dim, lon_dim
@@ -63,12 +69,19 @@ def detect_spatial_dims(ds, override: str | None = None) -> tuple:
     return found
 
 
-def _find_spatial_dims(ds) -> tuple | None:
-    """The (lat, lon) coord names off CF attrs then name heuristics, or None.
+def _find_spatial_dims(ds, override: str | None = None) -> tuple | None:
+    """The (lat, lon) coord names, or None when the dataset has none identifiable.
 
-    The non-raising half of :func:`detect_spatial_dims`, so classification and
-    validation agree on what "has identifiable spatial coords" means.
+    ``override`` is preferred when the dataset has the dims it names; a dataset
+    that does not is not thereby axis-less, so detection still runs -- CF
+    attrs, then name heuristics. The non-raising half of
+    :func:`detect_spatial_dims`, so classification and validation agree on what
+    "has identifiable spatial coords" means.
     """
+    if override:
+        lat_dim, lon_dim = _dims_names(override)
+        if lat_dim in ds.dims and lon_dim in ds.dims:
+            return lat_dim, lon_dim
     try:
         import cf_xarray  # noqa: F401 -- registers the .cf accessor
 
@@ -112,26 +125,26 @@ def detect_time_dim(ds, override: str | None = None) -> str:
 def detect_type(ds, dims: str | None = None) -> str:
     """Classify a dataset as ``station``, ``forecast``, ``gridded``, or ``series``.
 
-    Precedence, first match wins: a ``station_id`` dim is a station envelope; a
-    ``step`` dim with a scalar ``time`` coord is a forecast envelope; lat/lon
-    coords that :func:`detect_spatial_dims` can identify make it gridded;
-    anything left has no spatial coords and is a series. Station and forecast
-    come first because both shapes carry spatial coords too, and gridded is a
-    positive test rather than the fall-through so that every dataset
-    classified gridded passes the gridded structural check.
+    Precedence, first match wins: a ``station_id`` dim is a station envelope;
+    with no identifiable lat/lon coords it is a series; with them, a ``step``
+    dim plus a scalar ``time`` coord makes it a forecast envelope and anything
+    else is gridded. Gridded and forecast are positive tests rather than the
+    fall-through, so every dataset classified as one passes that shape's
+    structural check -- a forecast collapsed over latitude and longitude is a
+    series, readable by every shape-agnostic skill, not an unreadable forecast.
 
     ``dims`` is the ``--dims`` LAT,LON override. Naming the spatial axes is
-    what identifies them, so an override makes the dataset gridded;
-    :func:`detect_spatial_dims` owns the error when its value is malformed or
-    names dims the dataset does not have.
+    what identifies them on a dataset that has those dims; on one that does
+    not, CF attrs and the name heuristics still decide, so a transform that
+    renames its axes to canonical names classifies by the names it wrote.
     """
     if "station_id" in ds.dims:
         return STATION
+    if _find_spatial_dims(ds, dims) is None:
+        return SERIES
     if "step" in ds.dims and "time" in ds.coords and ds["time"].ndim == 0:
         return FORECAST
-    if dims or _find_spatial_dims(ds) is not None:
-        return GRIDDED
-    return SERIES
+    return GRIDDED
 
 
 def validate_input(
@@ -160,6 +173,10 @@ def validate_input(
     unknown = [t for t in allowed if t not in ALL]
     if unknown:
         raise ValueError(f"unknown envelope type(s) {unknown}; valid types: {list(ALL)}")
+    if dims:
+        # --dims names this input's spatial axes: names it does not have are a
+        # typo to report, not a shape to classify.
+        detect_spatial_dims(ds, dims)
     actual = detect_type(ds, dims)
     if actual not in allowed:
         raise UsageError(
@@ -180,19 +197,16 @@ def validate_input(
                     f"coordinate has dims {list(ds[coord].dims)}, expected "
                     "('station_id',)."
                 )
-    elif actual in (GRIDDED, FORECAST):
-        # Gridded/forecast envelopes must expose identifiable spatial dims;
-        # a --dims override replaces detection with an existence check.
-        detect_spatial_dims(ds, dims)
-    # A series envelope is defined by having no spatial coords, so the shape
-    # is already established by detect_type and there is nothing left to check.
+    # Gridded, forecast, and series need no further check: detect_type reaches
+    # each of them only by resolving (or failing to resolve) the spatial dims,
+    # so the shape is established by the classification itself.
     if time_dim:
         # A --time-dim override must name an existing dim.
         detect_time_dim(ds, time_dim)
     return actual
 
 
-def validate_type(ds, expected) -> str:
+def validate_type(ds, expected, dims: str | None = None) -> str:
     """Assert a dataset's envelope type, returning the detected type.
 
     The explicit form of "this output preserves its input's shape": the skill
@@ -203,6 +217,10 @@ def validate_type(ds, expected) -> str:
         ds: the dataset to classify.
         expected: an envelope type, a sequence of them, or another dataset
             whose envelope type ``ds`` must match.
+        dims: the ``--dims`` LAT,LON override, classifying both datasets. A
+            skill declaring ``dims=True`` passes ``args["dims"]``, so the
+            assertion reads the shapes the way the decorator's own input and
+            output checks do; the WSK103 lint rule flags a skill that omits it.
 
     Raises:
         DataError: ``ds`` is none of the expected types.
@@ -214,11 +232,11 @@ def validate_type(ds, expected) -> str:
         allowed = tuple(expected)
     else:
         # Anything else is the reference-dataset form: match its own type.
-        allowed = (detect_type(expected),)
+        allowed = (detect_type(expected, dims),)
     unknown = [t for t in allowed if t not in ALL]
     if unknown:
         raise ValueError(f"unknown envelope type(s) {unknown}; valid types: {list(ALL)}")
-    actual = detect_type(ds)
+    actual = detect_type(ds, dims)
     if actual not in allowed:
         raise DataError(
             f"expected a {' or '.join(allowed)} envelope, got {actual} (dims: {list(ds.dims)})."
@@ -242,7 +260,7 @@ def _shape_detail(ds, allowed) -> str:
         details.append("has a 'station_id' dim")
     if GRIDDED in allowed and "step" in ds.dims:
         details.append("has a 'step' dim")
-    if GRIDDED in allowed and _find_spatial_dims(ds) is None:
+    if (GRIDDED in allowed or FORECAST in allowed) and _find_spatial_dims(ds) is None:
         details.append("no identifiable lat/lon coords; pass --dims to name them")
     if SERIES in allowed and _find_spatial_dims(ds) is not None:
         details.append("has lat/lon coords")

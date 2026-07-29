@@ -96,6 +96,7 @@ class SkillDeclaration:
     has_output: bool = False
     writes_zarr: bool = False  # output_type is a zarr envelope type, not PNG
     sets_source: bool = False  # the script calls set_source() somewhere
+    bare_validate_type: bool = False  # a validate_type() call passes no dims
     version_constant: bool = False
     version_passed: bool = False
     pep723_deps: list[str] | None = None  # None: no parseable script block
@@ -449,6 +450,15 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
 
     decl.sets_source = any(
         (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "set_source"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    )
+    # A validate_type() call classifying without the --dims the run was given:
+    # the shapes it compares are not the ones the decorator validated.
+    decl.bare_validate_type = any(
+        (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "validate_type"
+        and len(node.args) < 3
+        and not any(kw.arg == "dims" for kw in node.keywords)
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
     )

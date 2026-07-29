@@ -1014,6 +1014,66 @@ class TestValidationOverrides:
         assert exc.value.code == 2
         assert "not in dataset dims" in capsys.readouterr().err
 
+    def test_validate_type_classifies_as_the_run_does(self, tmp_path, renamed_store):
+        seen = []
+
+        @weather_skill(
+            "assert-shape", "0.1.0", input_type=types.ALL, output_type=types.ALL, dims=True
+        )
+        def assert_shape(ds, args):
+            """Copy the input, asserting the copy preserves its shape."""
+            out = ds.copy()
+            seen.append(envelope.validate_type(out, ds, args["dims"]))
+            return out
+
+        assert_shape(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--dims", "yy,xx"])
+        assert seen == [types.GRIDDED]
+
+    def test_shape_drift_under_a_dims_override_is_caught(self, tmp_path, renamed_store, capsys):
+        # The assertion has to bite where drift is likeliest: on axes only
+        # --dims can name. Classifying the reference without the override makes
+        # both sides a series and the claim vacuous.
+        @weather_skill("collapse", "0.1.0", input_type=types.ALL, output_type=types.ALL, dims=True)
+        def collapse(ds, args):
+            """Collapse the named spatial axes, then claim the shape is preserved."""
+            out = ds.mean(dim=["yy", "xx"])
+            envelope.validate_type(out, ds, args["dims"])
+            return out
+
+        with pytest.raises(SystemExit) as exc:
+            collapse(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--dims", "yy,xx"])
+        assert exc.value.code == 1
+        assert "expected a gridded envelope, got series" in capsys.readouterr().err
+
+    def test_renaming_the_axes_is_not_drift(self, tmp_path, renamed_store):
+        # The other half: --dims names the INPUT's axes, so a transform that
+        # writes canonical names is shape-preserving and must not raise.
+        @weather_skill(
+            "canonicalize", "0.1.0", input_type=types.ALL, output_type=types.ALL, dims=True
+        )
+        def canonicalize(ds, args):
+            """Rename the named spatial axes to their canonical names."""
+            out = ds.rename({"yy": "latitude", "xx": "longitude"})
+            envelope.validate_type(out, ds, args["dims"])
+            return out
+
+        out = tmp_path / "o.zarr"
+        canonicalize(["-i", str(renamed_store), "-o", str(out), "--dims", "yy,xx"])
+        assert set(xr.open_zarr(out, consolidated=True).sizes) == {"time", "latitude", "longitude"}
+
+    def test_the_override_is_only_what_the_run_was_given(self, tmp_path, renamed_store):
+        seen = []
+
+        @weather_skill("classify", "0.1.0", input_type=types.ALL, output_type=types.ALL, dims=True)
+        def classify(ds, args):
+            """Record how the run classifies its input."""
+            seen.append(envelope.detect_type(ds, args["dims"]))
+            return ds.copy()
+
+        classify(["-i", str(renamed_store), "-o", str(tmp_path / "o.zarr"), "--dims", "yy,xx"])
+        classify(["-i", str(renamed_store), "-o", str(tmp_path / "o2.zarr")])
+        assert seen == [types.GRIDDED, types.SERIES]
+
     def test_time_dim_override_validated(self, tmp_path, gridded_store, capsys):
         calls = []
         skill = make_identity_skill(calls, time_dim=True)
@@ -1042,19 +1102,26 @@ class TestAllInputType:
             ds.to_zarr(store, mode="w", consolidated=True)
             skill(["-i", str(store), "-o", str(tmp_path / f"out{i}.zarr")])
 
-    def test_grid_check_still_runs(self, tmp_path, capsys):
-        # The input is validated as the envelope it is detected to be; ALL
-        # widens what is accepted, not what is checked. A forecast still owes
-        # identifiable spatial dims.
+    def test_forecast_with_unnamed_axes_reads_as_a_series(self, tmp_path):
+        # A forecast owes identifiable spatial dims; a store without them is a
+        # series and an ALL skill reads it as one.
         store = tmp_path / "renamed.zarr"
         make_forecast().rename({"latitude": "yy", "longitude": "xx"}).to_zarr(
             store, mode="w", consolidated=True
         )
-        skill = make_identity_skill([], input_type=types.ALL)
-        with pytest.raises(SystemExit) as exc:
-            skill(["-i", str(store), "-o", str(tmp_path / "o.zarr")])
-        assert exc.value.code == 2
-        assert "Pass --dims" in capsys.readouterr().err
+        skill = make_identity_skill([], input_type=types.ALL, output_type=types.ALL)
+        skill(["-i", str(store), "-o", str(tmp_path / "o.zarr")])
+
+    def test_spatially_collapsed_forecast_is_readable(self, tmp_path):
+        # The store `reduce --dim latitude --dim longitude` leaves: step and
+        # the scalar init time, no spatial axes. It passes the ALL union check
+        # on the way out, so every ALL skill must be able to read it back.
+        store = tmp_path / "collapsed.zarr"
+        make_forecast().mean(dim=["latitude", "longitude"]).to_zarr(
+            store, mode="w", consolidated=True
+        )
+        skill = make_identity_skill([], input_type=types.ALL, output_type=types.ALL)
+        skill(["-i", str(store), "-o", str(tmp_path / "o.zarr")])
 
     def test_series_output_passes_the_union_check(self, tmp_path):
         # A skill declaring the ALL union must be able to WRITE a series, not
