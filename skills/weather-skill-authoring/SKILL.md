@@ -52,6 +52,10 @@ if __name__ == "__main__":
 
 Custom flags: stack `@weather_skill.argument(...)` (argparse `add_argument` API).
 
+## Variables
+
+Omit `--variable` → act on the **whole dataset**. Narrow with the `select` skill first when only one variable matters. Do not auto-pick a “main” variable.
+
 ## Dates
 
 `--time` / `--start` / `--end` accept `YYYY-MM-DD` or `latest`. Skills resolve `latest` themselves. No offset grammar.
