@@ -81,7 +81,6 @@ def test_transform_cache_hit(tmp_path, gridded_store, capsys):
         inputs=[Types.ANY],
         outputs=[Types.ANY],
         required_args=("bbox",),
-        hash_input=False,
     )
     def clip(ds, bbox):
         return ds
@@ -105,7 +104,6 @@ def test_check_cache_false_rewrites(tmp_path, gridded_store):
         outputs=[Types.GRIDDED],
         required_args=("bbox",),
         check_cache=True,
-        hash_input=False,
     )
     def clip(ds, bbox):
         calls.append(1)
@@ -180,7 +178,6 @@ def test_negative_bbox(tmp_path, gridded_store):
         inputs=[Types.ANY],
         outputs=[Types.ANY],
         required_args=("bbox",),
-        hash_input=False,
         check_cache=False,
     )
     def clip(ds, bbox):

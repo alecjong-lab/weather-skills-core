@@ -48,9 +48,9 @@ if __name__ == "__main__":
 | `required_env` | Env vars checked before run |
 | `exclude_args` | Dests omitted from cache key |
 | `check_cache` | Default for CLI cache flag (not a skill kwarg) |
-| `source` | Optional `weather_skills_source` on write |
 
 Custom flags: stack `@weather_skill.argument(...)` (argparse `add_argument` API).
+Fetchers set the CF global `source` attr on the returned Dataset themselves.
 
 ## Variables
 

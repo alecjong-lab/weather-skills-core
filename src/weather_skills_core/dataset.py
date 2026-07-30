@@ -61,12 +61,14 @@ def detect_type(ds) -> str:
     return GRIDDED
 
 
-def validate_dataset(ds, allowed, name: str) -> str:
-    """Validate ds against allowed type(s); return detected type."""
-    if isinstance(allowed, str):
-        allowed = [allowed]
+def validate_type(ds, expected, name: str = "dataset") -> str:
+    """Validate ds matches a Types constant, union, list/tuple of types, or another dataset."""
+    if hasattr(expected, "dims") and hasattr(expected, "coords"):
+        allowed = [detect_type(expected)]
+    elif isinstance(expected, str):
+        allowed = [expected]
     else:
-        allowed = list(allowed)
+        allowed = list(expected)
     unknown = [t for t in allowed if t not in TYPES]
     if unknown:
         raise ValueError(f"unknown type(s) {unknown}; valid types: {list(TYPES)}")
@@ -94,13 +96,6 @@ def validate_dataset(ds, allowed, name: str) -> str:
     return actual
 
 
-def validate_type(ds, expected, name: str = "dataset") -> str:
-    """Validate ds matches a Types constant, union, or another dataset's type."""
-    if hasattr(expected, "dims") and hasattr(expected, "coords"):
-        return validate_dataset(ds, (detect_type(expected),), name)
-    if isinstance(expected, str):
-        return validate_dataset(ds, (expected,), name)
-    return validate_dataset(ds, expected, name)
 def _shape_detail(ds, allowed) -> str:
     """Short mismatch description for error messages."""
     details = []

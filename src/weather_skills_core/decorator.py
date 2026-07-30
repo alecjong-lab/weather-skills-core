@@ -120,8 +120,6 @@ def weather_skill(
     exclude_args=(),
     required_env=(),
     check_cache: bool = True,
-    source: str | None = None,
-    hash_input: bool = True,
 ):
     input_specs, input_variadic_min = normalize_io_list(inputs, name="inputs", allow_variadic=True)
     output_specs, _ = normalize_io_list(outputs, name="outputs")
@@ -281,7 +279,7 @@ def weather_skill(
             for path, spec in zip(in_paths, path_specs, strict=True):
                 allowed = spec if isinstance(spec, tuple) else (spec,)
                 ds = xr.open_zarr(path, consolidated=False)
-                _dataset.validate_dataset(ds, allowed, str(path))
+                _dataset.validate_type(ds, allowed, str(path))
                 datasets.append(ds)
                 chains.append(_provenance.load_history(path) or [])
 
@@ -291,19 +289,12 @@ def weather_skill(
             elif multi:
                 fetcher, upstream = False, []
                 entry_input = [
-                    {
-                        "basename": p.name,
-                        "hash": _provenance.hash_zarr(p) if hash_input else "",
-                        "history": ch,
-                    }
+                    {"basename": p.name, "history": ch}
                     for p, ch in zip(in_paths, chains, strict=True)
                 ]
             else:
                 fetcher, upstream = False, chains[0]
-                entry_input = {
-                    "basename": in_paths[0].name,
-                    "hash": _provenance.hash_zarr(in_paths[0]) if hash_input else "",
-                }
+                entry_input = {"basename": in_paths[0].name}
 
             prov = _provenance.build_entry(name, version, entry, entry_input)
             if has_artifact and getattr(ns, "check_cache", True):
@@ -349,7 +340,7 @@ def weather_skill(
             actual = _dataset.detect_type(item)
             if Types.ANY not in members and actual not in members:
                 raise DataError(f"output is {actual}; declared {' or '.join(members)}")
-            _provenance.stamp_zarr(item, history, source=source)
+            _provenance.stamp_zarr(item, history)
             _rm(out)
             try:
                 item.to_zarr(out, mode="w", consolidated=True)

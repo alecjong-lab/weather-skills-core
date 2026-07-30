@@ -123,7 +123,7 @@ selects that variable facet (and is the output variable).
 - **No backwards-compat aliasing.** If a flag name changes, change every caller
   in the same PR. There are no external callers to preserve.
 - **Cross-skill behavior lives in `weather-skills-core`.** CLI construction,
-  envelope validation, the date grammar, provenance, caching, and output
+  dataset validation, the date grammar, provenance, caching, and output
   writing come from the `@weather_skill` decorator and its modules. Skills
   never import from each other; per-skill code is domain logic only.
 - **Don't reuse a canonical name for a different concept.** If you need a new

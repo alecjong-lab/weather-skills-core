@@ -35,18 +35,15 @@ def test_cf_only_spatial_dims():
     assert dataset.detect_spatial_dims(stamped) == ("yy", "xx")
 
 
-def test_validate_dataset():
-    assert dataset.validate_dataset(make_gridded(), "gridded", "in.zarr") == "gridded"
-    dataset.validate_dataset(make_forecast(), "any", "in.zarr")
-    with pytest.raises(UsageError, match="no 'step' dim"):
-        dataset.validate_dataset(make_gridded(), "forecast", "in.zarr")
-
-
 def test_validate_type():
     from weather_skills_core import Types, validate_type
 
+    assert validate_type(make_gridded(), "gridded", "in.zarr") == "gridded"
+    validate_type(make_forecast(), "any", "in.zarr")
     assert validate_type(make_forecast(), Types.FORECAST) == "forecast"
     assert validate_type(make_gridded(), make_gridded()) == "gridded"
+    with pytest.raises(UsageError, match="no 'step' dim"):
+        validate_type(make_gridded(), "forecast", "in.zarr")
     with pytest.raises(UsageError, match="forecast"):
         validate_type(make_gridded(), Types.FORECAST)
     with pytest.raises(UsageError, match="gridded"):

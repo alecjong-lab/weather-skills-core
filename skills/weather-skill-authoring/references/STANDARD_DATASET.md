@@ -12,11 +12,11 @@ CF-compliant Zarr that skills read and write. Types: `gridded`, `forecast`, `sta
 
 Dims are identified via cf-xarray CF attrs only.
 
-## Provenance
+## Provenance and source
 
 | Attr | Meaning |
 |---|---|
-| `weather_skills_source` | Optional fetcher label |
 | `weather_skills_history` | JSON array of `{skill, version, args, input}` |
+| `source` | Optional CF global attribute naming the data origin (set by fetchers) |
 
 Write with `consolidated=True`. Clear `.encoding` before `to_zarr`. Missing data = NaN.

@@ -1,26 +1,15 @@
 """Provenance: weather_skills_history chains on zarr/PNG artifacts."""
 
-import hashlib
 import json
 import sys
 from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
-SOURCE_ATTR = "weather_skills_source"
+# CF global attribute; fetchers set this on the Dataset (not via the decorator).
+SOURCE_ATTR = "source"
 
 _ENTRY_KNOWN_KEYS = {"skill", "version", "args", "input"}
-_INPUT_ITEM_KNOWN_KEYS = {"basename", "hash", "history"}
-
-
-def hash_zarr(zarr_path: Path) -> str:
-    """Sha256 of a zarr directory's stored bytes."""
-    zarr_path = Path(zarr_path)
-    h = hashlib.sha256()
-    for p in sorted(zarr_path.rglob("*")):
-        if p.is_file():
-            h.update(str(p.relative_to(zarr_path)).encode())
-            h.update(p.read_bytes())
-    return h.hexdigest()
+_INPUT_ITEM_KNOWN_KEYS = {"basename", "history"}
 
 
 def read_chain(raw, *, strict: bool = False, label: str = "artifact") -> list | None:
@@ -55,10 +44,6 @@ def _validate_input(value, loc: str, violations: list, notes: list) -> None:
             violations.append(f"{item_loc}: missing required key 'basename'")
         elif not isinstance(item["basename"], str):
             violations.append(f"{item_loc}.basename: must be a string")
-        if "hash" not in item:
-            violations.append(f"{item_loc}: missing required key 'hash'")
-        elif not isinstance(item["hash"], str):
-            violations.append(f"{item_loc}.hash: must be a string")
         if "history" in item:
             _validate_chain(item["history"], f"{item_loc}.history", violations, notes)
         for key in item:
@@ -137,13 +122,13 @@ def build_entry(skill: str, version: str, args: dict, input) -> dict:
 
 
 def _chained_input_match(last_input, entry_input) -> bool:
+    """Match on basename (+ nested history for multi-input). No content hashing."""
     if isinstance(entry_input, list):
         if not isinstance(last_input, list) or len(last_input) != len(entry_input):
             return False
         return all(
             isinstance(li, dict)
             and li.get("basename") == ei["basename"]
-            and li.get("hash") == ei["hash"]
             and li.get("history") == ei["history"]
             for li, ei in zip(last_input, entry_input, strict=True)
         )
@@ -151,10 +136,7 @@ def _chained_input_match(last_input, entry_input) -> bool:
         return False
     last_input = last_input or {}
     entry_input = entry_input or {}
-    return (
-        last_input.get("basename") == entry_input.get("basename")
-        and last_input.get("hash") == entry_input.get("hash")
-    )
+    return last_input.get("basename") == entry_input.get("basename")
 
 
 def cache_hit(out: Path, entry: dict, upstream: list | None = None, *, fetcher: bool = False) -> bool:
@@ -189,8 +171,6 @@ def cache_hit(out: Path, entry: dict, upstream: list | None = None, *, fetcher: 
     )
 
 
-def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
-    """Set history (and optional source) attrs on ds."""
+def stamp_zarr(ds, history: list) -> None:
+    """Set weather_skills_history on ds. Fetchers set CF ``source`` themselves."""
     ds.attrs[HISTORY_ATTR] = json.dumps(history, sort_keys=True)
-    if source is not None:
-        ds.attrs[SOURCE_ATTR] = source
