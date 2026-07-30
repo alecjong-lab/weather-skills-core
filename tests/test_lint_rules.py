@@ -64,7 +64,7 @@ class TestShadowRule:
         scripts_dir = skill / "scripts"
         scripts_dir.mkdir(parents=True)
         head = decorator_head.rstrip(", ")
-        ws = f"@weather_skill({name!r}, _SKILL_VERSION"
+        ws = f"@weather_skill(name={name!r}, version=_SKILL_VERSION"
         if head:
             ws += f", {head}"
         ws += ")\n"
@@ -223,7 +223,7 @@ def _script(skill_name, func_name, argument_decorators):
         _PEP723
         + "from weather_skills_core import weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
-        + f"@weather_skill({skill_name!r}, _SKILL_VERSION, inputs=['data'], "
+        + f"@weather_skill(name={skill_name!r}, version=_SKILL_VERSION, inputs=['data'], "
         + "outputs=['data'])\n"
         + argument_decorators
         + f"def {func_name}(ds, **kwargs):\n    return ds\n"
@@ -341,7 +341,7 @@ class TestMultiScriptSkill:
             + "from weather_skills_core import Argument, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
             + "SHARED = [Argument('--foo', type=int)]\n"
-            + "@weather_skill('one', _SKILL_VERSION, inputs=['data'], "
+            + "@weather_skill(name='one', version=_SKILL_VERSION, inputs=['data'], "
             + "outputs=['data'], arguments=SHARED)\n"
             + "def one(ds, **kwargs):\n    return ds\n"
         )

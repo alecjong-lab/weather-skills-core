@@ -44,7 +44,7 @@ class TestDeclarationExtraction:
             _SKILL_VERSION = "0.1.0"
 
 
-            @weather_skill("some-skill", _SKILL_VERSION)
+            @weather_skill(name="some-skill", version=_SKILL_VERSION)
             @weather_skill.argument("--from", required=True, dest="sender")
             @weather_skill.argument("--item", "-x", action="append")
             @weather_skill.argument("code")
@@ -69,8 +69,8 @@ class TestDeclarationExtraction:
             _SKILL_VERSION = "0.1.0"
 
             @weather_skill(
-                "some-skill",
-                _SKILL_VERSION,
+                name="some-skill",
+                version=_SKILL_VERSION,
                 inputs=["observations", "forecast"],
                 outputs=["visualization"],
             )
@@ -95,7 +95,7 @@ class TestDeclarationExtraction:
             _SKILL_VERSION = "0.1.0"
             SHARED = []
 
-            @weather_skill("some-skill", _SKILL_VERSION, arguments=SHARED)
+            @weather_skill(name="some-skill", version=_SKILL_VERSION, arguments=SHARED)
             def some_skill(**kwargs):
                 pass
             """,

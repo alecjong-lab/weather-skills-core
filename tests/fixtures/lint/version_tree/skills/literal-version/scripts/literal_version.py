@@ -12,8 +12,8 @@ _SKILL_VERSION = "0.1.0"
 
 
 @weather_skill(
-    "literal-version",
-    "0.1.0",
+    name="literal-version",
+    version="0.1.0",
     inputs=["data"],
     outputs=["data"],
 )

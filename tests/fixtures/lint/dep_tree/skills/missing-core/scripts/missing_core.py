@@ -11,7 +11,7 @@ from weather_skills_core import weather_skill
 _SKILL_VERSION = "0.1.0"
 
 
-@weather_skill("missing-core", _SKILL_VERSION, inputs=["data"], outputs=["data"])
+@weather_skill(name="missing-core", version=_SKILL_VERSION, inputs=["data"], outputs=["data"])
 def missing_core(ds):
     return ds
 

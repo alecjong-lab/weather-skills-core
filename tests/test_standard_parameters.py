@@ -3,8 +3,8 @@
 from weather_skills_core.decorator import standard_parameters, weather_skill
 
 @weather_skill(
-    "full",
-    "0.1.0",
+    name="full",
+    version="0.1.0",
     inputs=["observations"],
     outputs=["observations"]
 )
@@ -16,8 +16,8 @@ def _full(ds, bbox, start_time, end_time, variable, **kwargs):
     return ds
 
 @weather_skill(
-    "date-only",
-    "0.1.0",
+    name="date-only",
+    version="0.1.0",
     outputs=["observations"]
 )
 @weather_skill.argument("--date", required=True)

@@ -156,16 +156,17 @@ def _argument(*option_strings, **kwargs):
 
 
 def weather_skill(
+    *,
     name,
     version,
-    *,
     inputs=None,
     outputs=None,
 ):
     """Declare a weather skill's CLI and wrap its domain function.
 
-    ``inputs`` / ``outputs``: lists of IO slots. Within a slot, a **list** is
-    OR, a **tuple** is AND, and a **string** is a canonical shorthand
+    ``name`` / ``version`` are required keyword arguments. ``inputs`` /
+    ``outputs``: lists of IO slots. Within a slot, a **list** is OR, a
+    **tuple** is AND, and a **string** is a canonical shorthand
     (``observations``, ``forecast``, …), a dimension name, ``any``,
     ``unstructured``, or (outputs only) ``visualization``. A single ``…+``
     string in ``inputs`` is variadic.

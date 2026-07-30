@@ -11,8 +11,8 @@ from weather_skills_core import weather_skill
 _SKILL_VERSION = "0.1.0"
 
 @weather_skill(
-    "no-manifest",
-    _SKILL_VERSION,
+    name="no-manifest",
+    version=_SKILL_VERSION,
     inputs=["data"],
     outputs=["data"]
 )

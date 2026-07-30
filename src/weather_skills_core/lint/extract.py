@@ -390,7 +390,10 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
     if any(kw.arg is None for kw in call.keywords):
         decl.notes.append("declaration spreads **kwargs; those keywords are not analyzed")
 
-    name_node = call.args[0] if call.args else keywords.get("name")
+    name_node = keywords.get("name")
+    if name_node is None and call.args:
+        name_node = call.args[0]
+        decl.notes.append("pass name= as a keyword; positional name is deprecated")
     if name_node is not None:
         name = _literal(name_node)
         if isinstance(name, str):
@@ -398,7 +401,10 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         else:
             decl.notes.append("skill name is not a string literal; using the directory name")
 
-    version_node = call.args[1] if len(call.args) > 1 else keywords.get("version")
+    version_node = keywords.get("version")
+    if version_node is None and len(call.args) > 1:
+        version_node = call.args[1]
+        decl.notes.append("pass version= as a keyword; positional version is deprecated")
     decl.version_passed = isinstance(version_node, ast.Name) and version_node.id == "_SKILL_VERSION"
 
     inputs_val = _literal(keywords["inputs"]) if "inputs" in keywords else None

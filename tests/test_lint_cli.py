@@ -58,7 +58,7 @@ def _clean_shared_flag_tree(root):
             _PEP723
             + "from weather_skills_core import weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
-            + f"@weather_skill({name!r}, _SKILL_VERSION, inputs=['observations'], "
+            + f"@weather_skill(name={name!r}, version=_SKILL_VERSION, inputs=['observations'], "
             + "outputs=['observations'])\n"
             + "@weather_skill.argument('--method', type=str, help='x')\n"
             + f"def {name}(ds, method, **kwargs):\n    return ds\n"

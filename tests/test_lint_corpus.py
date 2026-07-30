@@ -16,7 +16,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "lint"
 DECORATED_SCRIPT = (
     "from weather_skills_core import weather_skill\n"
     "_SKILL_VERSION = '0.1.0'\n"
-    "@weather_skill('s', _SKILL_VERSION)\n"
+    "@weather_skill(name='s', version=_SKILL_VERSION)\n"
     "def s():\n"
     "    ...\n"
 )

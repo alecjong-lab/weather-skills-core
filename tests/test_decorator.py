@@ -18,7 +18,7 @@ class TestRewriteBbox:
 
 class TestParser:
     def test_basic_flags(self):
-        @weather_skill("s", "1.0.0", inputs=["data"], outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", inputs=["data"], outputs=["data"])
         @weather_skill.argument("--bbox")
         def skill(ds, bbox, **kwargs):
             return ds
@@ -27,7 +27,7 @@ class TestParser:
         assert dests == {"input", "output", "bbox"}
 
     def test_dates_range(self):
-        @weather_skill("s", "1.0.0", outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", outputs=["data"])
         @weather_skill.argument("--start-time", required=True)
         @weather_skill.argument("--end-time", required=True)
         def skill(start_time, end_time, **kwargs):
@@ -37,7 +37,7 @@ class TestParser:
         assert "start_time" in dests and "end_time" in dests
 
     def test_variable_append(self):
-        @weather_skill("s", "1.0.0", outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", outputs=["data"])
         @weather_skill.argument("--variable", "-v", action="append", required=True)
         def skill(variable, **kwargs):
             return make_data()
@@ -47,7 +47,7 @@ class TestParser:
         assert action.option_strings == ["--variable", "-v"]
 
     def test_extra_argument(self):
-        @weather_skill("s", "1.0.0", outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", outputs=["data"])
         @weather_skill.argument("--smoothing", "-s", type=int, default=1)
         def skill(smoothing, **kwargs):
             return make_data()
@@ -58,27 +58,22 @@ class TestParser:
     def test_requires_kwargs(self):
         with pytest.raises(TypeError, match=r"\*\*kwargs"):
 
-            @weather_skill("s", "1.0.0", outputs=["data"])
+            @weather_skill(name="s", version="1.0.0", outputs=["data"])
             def skill(ds):
                 return ds
 
     def test_argument_order_matches_source(self):
-        @weather_skill("s", "1.0.0", outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", outputs=["data"])
         @weather_skill.argument("--date", required=True)
         @weather_skill.argument("--bbox", help="Study area.")
         def skill(date, bbox, **kwargs):
             return make_data()
 
-        # Source top-to-bottom: date then bbox
-        dests = [
-            a.dest
-            for a in skill.parser._actions
-            if a.dest in ("date", "bbox")
-        ]
+        dests = [a.dest for a in skill.parser._actions if a.dest in ("date", "bbox")]
         assert dests == ["date", "bbox"]
 
     def test_canonical_bbox_help_appended(self):
-        @weather_skill("s", "1.0.0", outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", outputs=["data"])
         @weather_skill.argument("--bbox", help="Study area.")
         def skill(bbox, **kwargs):
             return make_data()
@@ -87,6 +82,10 @@ class TestParser:
         assert "Study area." in action.help
         assert "N/W/S/E" in action.help
 
+    def test_name_and_version_are_keyword_only(self):
+        with pytest.raises(TypeError):
+            weather_skill("s", "1.0.0", outputs=["data"])  # type: ignore[misc]
+
 
 class TestRunLoop:
     def test_copy_dataset(self, tmp_path):
@@ -94,7 +93,7 @@ class TestRunLoop:
         out = tmp_path / "out.zarr"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("copy", "0.1.0", inputs=["data"], outputs=["data"])
+        @weather_skill(name="copy", version="0.1.0", inputs=["data"], outputs=["data"])
         def copy(ds, **kwargs):
             return ds
 
@@ -108,7 +107,7 @@ class TestRunLoop:
         make_data().to_zarr(src, mode="w", consolidated=True)
         seen = {}
 
-        @weather_skill("s", "0.1.0", inputs=["data"], outputs=["data"])
+        @weather_skill(name="s", version="0.1.0", inputs=["data"], outputs=["data"])
         @weather_skill.argument("--bbox", required=True)
         @weather_skill.argument("--start-time", required=True)
         @weather_skill.argument("--end-time", required=True)
@@ -137,7 +136,7 @@ class TestRunLoop:
     def test_start_after_end_exits(self, tmp_path):
         out = tmp_path / "out.zarr"
 
-        @weather_skill("s", "0.1.0", outputs=["data"])
+        @weather_skill(name="s", version="0.1.0", outputs=["data"])
         @weather_skill.argument("--start-time", required=True)
         @weather_skill.argument("--end-time", required=True)
         def skill(start_time, end_time, **kwargs):
@@ -160,7 +159,7 @@ class TestRunLoop:
         out = tmp_path / "out.zarr"
         seen = {}
 
-        @weather_skill("s", "0.1.0", outputs=["data"])
+        @weather_skill(name="s", version="0.1.0", outputs=["data"])
         @weather_skill.argument("--date", required=True)
         def skill(date, **kwargs):
             seen["date"] = date.isoformat()
@@ -177,7 +176,7 @@ class TestRunLoop:
         make_data().to_zarr(a, mode="w", consolidated=True)
         make_data(fill=2.0).to_zarr(b, mode="w", consolidated=True)
 
-        @weather_skill("s", "1.0.0", inputs=["data", "data"], outputs=["data"])
+        @weather_skill(name="s", version="1.0.0", inputs=["data", "data"], outputs=["data"])
         def skill(ds_a, ds_b, **kwargs):
             return ds_a
 
@@ -189,7 +188,7 @@ class TestRunLoop:
         raw.write_bytes(b"abc")
         out = tmp_path / "out.zarr"
 
-        @weather_skill("wrap", "0.1.0", inputs=["unstructured"], outputs=["data"])
+        @weather_skill(name="wrap", version="0.1.0", inputs=["unstructured"], outputs=["data"])
         def wrap(path, **kwargs):
             assert path == raw
             return make_data()
@@ -202,7 +201,7 @@ class TestRunLoop:
         out = tmp_path / "plot.png"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("plot", "0.1.0", inputs=["data"], outputs=["visualization"])
+        @weather_skill(name="plot", version="0.1.0", inputs=["data"], outputs=["visualization"])
         def plot(ds, output, **kwargs):
             Image.new("RGB", (8, 8), color=(1, 2, 3)).save(output)
             return output
@@ -215,7 +214,7 @@ class TestRunLoop:
         out = tmp_path / "plot.png"
         wrong = tmp_path / "other.png"
 
-        @weather_skill("plot", "0.1.0", outputs=["visualization"])
+        @weather_skill(name="plot", version="0.1.0", outputs=["visualization"])
         def plot(output, **kwargs):
             Image.new("RGB", (4, 4)).save(wrong)
             return wrong
@@ -230,7 +229,7 @@ class TestRunLoop:
         make_data().to_zarr(src, mode="w", consolidated=True)
         seen = {}
 
-        @weather_skill("copy", "0.1.0", inputs=["data"], outputs=["data"])
+        @weather_skill(name="copy", version="0.1.0", inputs=["data"], outputs=["data"])
         def copy(ds, output, **kwargs):
             seen["output"] = output
             return ds
@@ -244,7 +243,9 @@ class TestRunLoop:
         b = tmp_path / "b.zarr"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("split", "0.1.0", inputs=["data"], outputs=["data", "data"])
+        @weather_skill(
+            name="split", version="0.1.0", inputs=["data"], outputs=["data", "data"]
+        )
         def split(ds, output, **kwargs):
             assert output == [a, b]
             return ds, ds
@@ -256,7 +257,7 @@ class TestRunLoop:
         src = tmp_path / "in.zarr"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("inspect", "0.1.0", inputs=["data"])
+        @weather_skill(name="inspect", version="0.1.0", inputs=["data"])
         def inspect(ds, **kwargs):
             return {"n": int(ds.sizes["time"])}
 
@@ -267,7 +268,7 @@ class TestRunLoop:
         out = tmp_path / "out.zarr"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("s", "0.1.0", inputs=["any"], outputs=["any"])
+        @weather_skill(name="s", version="0.1.0", inputs=["any"], outputs=["any"])
         def skill(ds, **kwargs):
             return ds
 
@@ -277,7 +278,9 @@ class TestRunLoop:
     def test_variadic_rejects_mixed(self):
         with pytest.raises(ValueError, match="variadic"):
 
-            @weather_skill("s", "0.1.0", inputs=["data", "any+"], outputs=["any"])
+            @weather_skill(
+                name="s", version="0.1.0", inputs=["data", "any+"], outputs=["any"]
+            )
             def skill(items, **kwargs):
                 return items[0]
 
@@ -290,7 +293,7 @@ class TestRunLoop:
         out = tmp_path / "out.zarr"
         seen = {}
 
-        @weather_skill("cat", "0.1.0", inputs=["any+"], outputs=["any"])
+        @weather_skill(name="cat", version="0.1.0", inputs=["any+"], outputs=["any"])
         def cat(datasets, **kwargs):
             seen["n"] = len(datasets)
             return datasets[0]
@@ -305,7 +308,7 @@ class TestRunLoop:
     def test_variadic_requires_at_least_one(self, tmp_path):
         out = tmp_path / "out.zarr"
 
-        @weather_skill("cat", "0.1.0", inputs=["any+"], outputs=["any"])
+        @weather_skill(name="cat", version="0.1.0", inputs=["any+"], outputs=["any"])
         def cat(datasets, **kwargs):
             return datasets[0]
 
@@ -317,7 +320,7 @@ class TestRunLoop:
         out = tmp_path / "out.zarr"
         seen = {}
 
-        @weather_skill("s", "0.1.0", outputs=["data"])
+        @weather_skill(name="s", version="0.1.0", outputs=["data"])
         @weather_skill.argument("--bbox", required=True)
         def skill(bbox, **kwargs):
             seen["bbox"] = bbox
@@ -329,7 +332,7 @@ class TestRunLoop:
     def test_history_args_json(self, tmp_path):
         out = tmp_path / "out.zarr"
 
-        @weather_skill("s", "0.1.0", outputs=["data"])
+        @weather_skill(name="s", version="0.1.0", outputs=["data"])
         @weather_skill.argument("--variable", "-v", action="append", required=True)
         def skill(variable, **kwargs):
             return make_data()
@@ -337,7 +340,6 @@ class TestRunLoop:
         skill(["-o", str(out), "-v", "precip", "-v", "temp"])
         entry = load_history(out)[-1]
         assert entry["args"]["variable"] == ["precip", "temp"]
-        # round-tripable
         json.dumps(entry)
 
     def test_attrs_merge_from_input(self, tmp_path):
@@ -347,7 +349,7 @@ class TestRunLoop:
         ds.attrs["weather_skills_source"] = "test-src"
         ds.to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill("copy", "0.1.0", inputs=["data"], outputs=["data"])
+        @weather_skill(name="copy", version="0.1.0", inputs=["data"], outputs=["data"])
         def copy(ds, **kwargs):
             return ds.assign(precip=ds["precip"] * 2)
 

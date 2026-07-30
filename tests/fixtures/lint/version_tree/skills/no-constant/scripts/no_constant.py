@@ -10,8 +10,8 @@ from weather_skills_core import weather_skill
 
 
 @weather_skill(
-    "no-constant",
-    "0.1.0",
+    name="no-constant",
+    version="0.1.0",
     inputs=["data"],
     outputs=["data"],
 )

@@ -29,8 +29,8 @@ _SKILL_VERSION = "0.1.0"
 
 
 @weather_skill(
-    "my-skill",
-    _SKILL_VERSION,
+    name="my-skill",
+    version=_SKILL_VERSION,
     inputs=["space"],                # dim / canonical / any; list=OR, tuple=AND
     outputs=["observations"],
 )
