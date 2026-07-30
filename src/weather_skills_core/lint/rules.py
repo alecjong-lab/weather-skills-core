@@ -107,13 +107,18 @@ def _standard_lookup() -> dict[str, StandardParameter]:
 def _shadow_remedy(param: StandardParameter) -> str:
     if param.kind == "io":
         return f"declare inputs=/outputs= so the decorator owns {'/'.join(param.flags)}"
-    return f"declare the standard toggle {param.name}= instead"
+    return f"use the canonical @weather_skill.argument({'/'.join(repr(f) for f in param.flags)}) form"
 
 
 def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
+    """Flag arguments that collide with decorator-owned --input/--output only.
+
+    Canonical specials (bbox/date/start_time/…) are declared via Argument and
+    are not shadows.
+    """
     findings = []
     lookup = _standard_lookup()
-    for shape in decl.extra_args.values():
+    for shape in decl.arguments.values():
         param = None
         for flag in shape.flags:
             if flag in lookup:
@@ -121,16 +126,18 @@ def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
                 break
         if param is None and shape.dest in lookup:
             param = lookup[shape.dest]
-        if param is None:
+        if param is None or param.kind != "io":
             continue
-        if not decl.has_output and param.kind == "io":
+        if not decl.has_output and param.dest == "output":
+            continue
+        if not decl.has_input and param.dest == "input":
             continue
         findings.append(
             _finding(
                 "WSK101",
                 decl,
                 shape.identity,
-                f"extra_args {shape.dest!r} shadows the standard {param.name} parameter "
+                f"arguments {shape.dest!r} shadows the standard {param.name} parameter "
                 f"({'/'.join(param.flags)}); {_shadow_remedy(param)}.",
             )
         )
@@ -190,26 +197,11 @@ def _declared_flags(decl: SkillDeclaration) -> tuple[dict[str, str], set[str]]:
     """The declared CLI flags: {primary flag: origin} plus every accepted spelling."""
     primary: dict[str, str] = {}
     all_spellings: set[str] = set()
-    for shape in decl.extra_args.values():
+    for shape in decl.arguments.values():
         if shape.positional:
             continue
-        primary.setdefault(shape.primary_flag, f"extra_args {shape.dest!r}")
+        primary.setdefault(shape.primary_flag, f"arguments {shape.dest!r}")
         all_spellings.update(shape.flags)
-
-    dates_mode = decl.toggles.get("dates")
-    if dates_mode == "range":
-        primary.setdefault("--start", "dates=range")
-        primary.setdefault("--end", "dates=range")
-        all_spellings.update(("--start", "--end"))
-    elif dates_mode == "single":
-        primary.setdefault("--date", "dates=single")
-        all_spellings.add("--date")
-    if decl.toggle_enabled("region"):
-        primary.setdefault("--bbox", "region")
-        all_spellings.add("--bbox")
-    if decl.toggle_enabled("variable"):
-        primary.setdefault("--variable", "variable")
-        all_spellings.update(("--variable", "-v"))
 
     if decl.has_input:
         primary.setdefault("--input", "inputs")

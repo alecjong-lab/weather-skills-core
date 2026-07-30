@@ -39,34 +39,42 @@ class TestCleanSkill:
 
 
 class TestShadowRule:
-    def test_each_shadowing_extra_arg_fires_wsk101(self):
+    def test_each_shadowing_argument_fires_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         shadow_findings = [f for f in report.findings if f.rule == "WSK101"]
-        assert {f.flag for f in shadow_findings} == {"--date", "--bbox"}
+        assert {f.flag for f in shadow_findings} == {"--input", "--output"}
         assert all(f.severity == "warning" for f in shadow_findings)
 
-    def test_remediation_names_the_standard_toggle(self):
+    def test_remediation_names_inputs_outputs_declaration(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         by_flag = {f.flag: f.message for f in report.findings if f.rule == "WSK101"}
-        assert "standard dates parameter" in by_flag["--date"]
-        assert "dates=" in by_flag["--date"]
-        assert "standard region parameter" in by_flag["--bbox"]
+        assert "declare inputs=/outputs=" in by_flag["--input"]
+        assert "declare inputs=/outputs=" in by_flag["--output"]
 
-    def test_non_shadowing_extra_arg_does_not_fire(self):
+    def test_non_shadowing_argument_does_not_fire(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         assert not [f for f in report.findings if f.flag == "--period"]
 
-    def _single_skill(self, tmp_path, *, name, decorator_head, extra_args_src):
+    def test_canonical_specials_do_not_fire_wsk101(self):
+        report = run_lint(FIXTURES / "shadow_tree", [])
+        assert not [f for f in report.findings if f.flag in ("--date", "--bbox")]
+
+    def _single_skill(self, tmp_path, *, name, decorator_head, argument_decorators):
         skill = tmp_path / name
         scripts_dir = skill / "scripts"
         scripts_dir.mkdir(parents=True)
+        head = decorator_head.rstrip(", ")
+        ws = f"@weather_skill({name!r}, _SKILL_VERSION"
+        if head:
+            ws += f", {head}"
+        ws += ")\n"
         (scripts_dir / "run.py").write_text(
             _PEP723
             + "from weather_skills_core import weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
-            + f"@weather_skill({name!r}, _SKILL_VERSION, {decorator_head}"
-            + f"extra_args={extra_args_src})\n"
-            + "def run():\n    pass\n"
+            + ws
+            + argument_decorators
+            + "def run(**kwargs):\n    pass\n"
         )
         (skill / "SKILL.md").write_text(_manifest([]))
         return skill
@@ -76,7 +84,10 @@ class TestShadowRule:
             tmp_path,
             name="no-artifact",
             decorator_head="",
-            extra_args_src="[(('--input',), {'help': 'x'}), (('--output',), {'help': 'y'})]",
+            argument_decorators=(
+                "@weather_skill.argument('--input', help='x')\n"
+                "@weather_skill.argument('--output', help='y')\n"
+            ),
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -86,23 +97,23 @@ class TestShadowRule:
         skill = self._single_skill(
             tmp_path,
             name="artifact",
-            decorator_head="outputs=['data'], ",
-            extra_args_src="[(('--input',), {'help': 'x'})]",
+            decorator_head="inputs=['data'], outputs=['data']",
+            argument_decorators="@weather_skill.argument('--input', help='x')\n",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert {f.flag for f in shadow} == {"--input"}
 
-    def test_no_artifact_skill_still_fires_wsk101_for_non_io_shadow(self, tmp_path):
+    def test_no_artifact_skill_variable_does_not_fire_wsk101(self, tmp_path):
         skill = self._single_skill(
             tmp_path,
             name="no-artifact-variable",
             decorator_head="",
-            extra_args_src="[(('--variable',), {'help': 'x'})]",
+            argument_decorators="@weather_skill.argument('--variable', help='x')\n",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
-        assert {f.flag for f in shadow} == {"--variable"}
+        assert shadow == []
 
 
 class TestCrossSkillRules:
@@ -207,14 +218,15 @@ class TestAnalysisFailures:
 _PEP723 = '# /// script\n# dependencies = ["weather-skills-core"]\n# ///\n'
 
 
-def _script(skill_name, func_name, extra_args_src):
+def _script(skill_name, func_name, argument_decorators):
     return (
         _PEP723
         + "from weather_skills_core import weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
         + f"@weather_skill({skill_name!r}, _SKILL_VERSION, inputs=['data'], "
-        + f"outputs=['data'], extra_args={extra_args_src})\n"
-        + f"def {func_name}(ds):\n    return ds\n"
+        + "outputs=['data'])\n"
+        + argument_decorators
+        + f"def {func_name}(ds, **kwargs):\n    return ds\n"
     )
 
 
@@ -244,8 +256,12 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "[(('--shared',), {'type': int, 'help': 'x'})]"),
-                "two.py": _script("two", "two", "[(('--shared',), {'type': int, 'help': 'x'})]"),
+                "one.py": _script(
+                    "one", "one", "@weather_skill.argument('--shared', type=int, help='x')\n"
+                ),
+                "two.py": _script(
+                    "two", "two", "@weather_skill.argument('--shared', type=int, help='x')\n"
+                ),
             },
             manifest_flags=["--shared"],
         )
@@ -259,8 +275,12 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "[(('--foo',), {'type': int, 'help': 'x'})]"),
-                "two.py": _script("two", "two", "[(('--bar',), {'type': int, 'help': 'x'})]"),
+                "one.py": _script(
+                    "one", "one", "@weather_skill.argument('--foo', type=int, help='x')\n"
+                ),
+                "two.py": _script(
+                    "two", "two", "@weather_skill.argument('--bar', type=int, help='x')\n"
+                ),
             },
             manifest_flags=["--foo", "--bar"],
         )
@@ -273,8 +293,12 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("one", "one", "[(('--foo',), {'type': int, 'help': 'x'})]"),
-                "two.py": _script("two", "two", "[(('--bar',), {'type': int, 'help': 'x'})]"),
+                "one.py": _script(
+                    "one", "one", "@weather_skill.argument('--foo', type=int, help='x')\n"
+                ),
+                "two.py": _script(
+                    "two", "two", "@weather_skill.argument('--bar', type=int, help='x')\n"
+                ),
             },
             manifest_flags=["--foo", "--bar", "--ghost"],
         )
@@ -289,10 +313,12 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("dup", "one", "[(('--date',), {'type': str, 'help': 'x'})]"),
-                "two.py": _script("dup", "two", "[(('--clean',), {'type': int, 'help': 'x'})]"),
+                "one.py": _script("dup", "one", "@weather_skill.argument('--input', help='x')\n"),
+                "two.py": _script(
+                    "dup", "two", "@weather_skill.argument('--clean', type=int, help='x')\n"
+                ),
             },
-            manifest_flags=["--date", "--clean"],
+            manifest_flags=["--input", "--clean"],
         )
         report = run_lint(skill, [])
         assert {s["key"] for s in report.skills} == {
@@ -303,8 +329,8 @@ class TestMultiScriptSkill:
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert len(shadow) == 1 and shadow[0].file.endswith("one.py")
 
-    def test_dynamic_extra_args_suppresses_the_wsk301_reverse_check(self, tmp_path):
-        # extra_args is a name reference: the declared-flag set is unknown, so
+    def test_dynamic_arguments_suppresses_the_wsk301_reverse_check(self, tmp_path):
+        # arguments is a name reference: the declared-flag set is unknown, so
         # documenting flags must not fire the reverse check, and the report
         # surfaces the suppression note.
         skill = tmp_path / "multi-skill"
@@ -312,12 +338,12 @@ class TestMultiScriptSkill:
         scripts_dir.mkdir(parents=True)
         (scripts_dir / "one.py").write_text(
             _PEP723
-            + "from weather_skills_core import weather_skill\n"
+            + "from weather_skills_core import Argument, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
-            + 'SHARED = [(("--foo",), {"type": int})]\n'
+            + "SHARED = [Argument('--foo', type=int)]\n"
             + "@weather_skill('one', _SKILL_VERSION, inputs=['data'], "
-            + "outputs=['data'], extra_args=SHARED)\n"
-            + "def one(ds):\n    return ds\n"
+            + "outputs=['data'], arguments=SHARED)\n"
+            + "def one(ds, **kwargs):\n    return ds\n"
         )
         (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))
         report = run_lint(skill, [])

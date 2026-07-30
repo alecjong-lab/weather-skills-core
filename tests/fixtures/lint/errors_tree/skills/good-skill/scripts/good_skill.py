@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     inputs=["data"],
     outputs=["data"],
 )
-def good_skill(ds):
+def good_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
 

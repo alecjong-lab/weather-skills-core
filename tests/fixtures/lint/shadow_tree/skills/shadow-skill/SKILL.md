@@ -7,10 +7,11 @@ metadata:
 
 # shadow-skill
 
-Lint fixture whose extra arguments shadow standard flags.
+Lint fixture whose arguments shadow standard I/O flags.
 
 ### Arguments
-- `--output`, `-o` — output Zarr.
-- `--date` — a redeclared standard flag.
-- `--bbox` — a redeclared standard flag.
+- `--input`, `-i` — a redeclared standard flag.
+- `--output`, `-o` — a redeclared standard flag.
+- `--date` — canonical date flag.
+- `--bbox` — canonical bbox flag.
 - `--period` — a legitimate one-off flag.

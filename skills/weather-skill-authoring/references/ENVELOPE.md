@@ -1,29 +1,50 @@
 # Weather-Skills Envelope
 
-The common Zarr-based container that skills consume and produce.
+Zarr inputs and outputs are declared by **required dimensions** (or canonical
+shorthands that expand to dims). Within one `inputs=` / `outputs=` slot:
 
-## Shape
+| Form | Meaning | Example |
+| --- | --- | --- |
+| string (canonical) | Expand shorthand to required dims | `"forecast"` |
+| string (dimension) | Require that one dim | `"time"` |
+| string `"any"` | No dim requirements | `"any"` |
+| string with `+` | Variadic (≥1 paths), same requirements each | `"any+"`, `"time+"` |
+| **tuple** | **AND** — every entry required | `("space", "time")` |
+| **list** | **OR** — any alternative matches | `["forecast", "ensemble_forecast"]` |
 
-A Zarr store containing one or more data variables. Consumers also read Zarr v2
-(xarray detects the format on open).
+Outer list = multiple slots (one per `--input` / `--output`).
 
-### Data envelope
-- Spatial dims: `latitude`, `longitude` (aliases `lat`/`lon`, `y`/`x` accepted on input).
-- Temporal: a `time` dim.
+## Dimension vocabulary
 
-### Forecast envelope
-- `step` dim (lead time, `timedelta64`) plus a scalar `time` coord for the init date.
-- Optional `number` — ensemble member index.
+| Name | On-disk detection |
+| --- | --- |
+| `space` | Lat/lon pair via CF / name heuristics |
+| `time` | Time-like dim (CF / `time`) |
+| `init_time` | `init_time` dim/coord, or scalar `time` + step (forecast init) |
+| `prediction_timedelta` | Lead/step dim (`step`, `prediction_timedelta`, `lead_time`) |
+| `member` | Ensemble member (`number`, `member`, `realization`) |
+| `day_of_year` / `doy` | Day-of-year dim |
+| `point_id` | Station/point dim (`station_id` / `point_id`) with lat/lon on that dim |
+| `x` / `y` | Projected axis dims (when declared explicitly) |
 
-### Station envelope
-- Spatial dim `station_id` (string).
-- 1-D coords `latitude(station_id)` and `longitude(station_id)`.
-- `time` dim.
+## Canonical shorthands
 
-Other I/O kinds (not Zarr envelope shapes):
+Equivalence families share the same dim requirements; prefer the **primary**
+name in skill declarations.
 
-- `unstructured` — opaque file path; no shape validation.
-- `visualization` — PNG / JPEG / HTML written by the skill; provenance stamped into file metadata.
+| Family (primary first) | Expands to (AND) |
+| --- | --- |
+| **`observations`**, `analysis`, `retrieval`, `field` | `space` + `time` |
+| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `ensemble_forecast` | forecast dims + `member` |
+| `station` | `point_id` + `time` |
+
+Legacy `"data"` still expands like `observations` but prefer `observations`.
+
+Other I/O kinds (not dim-validated):
+
+- `unstructured` — opaque file path
+- `visualization` — PNG / JPEG / HTML; provenance stamped into file metadata
 
 ## Attrs
 

@@ -28,16 +28,23 @@ make_gridded = make_data
 
 
 def make_forecast(n_number=3, n_step=4):
-    data = np.ones((n_number, n_step, 2, 2))
+    coords = {
+        "step": np.array([np.timedelta64(i, "D") for i in range(n_step)]),
+        "time": np.datetime64("2026-01-01", "ns"),
+        "latitude": [0.0, 1.0],
+        "longitude": [10.0, 11.0],
+    }
+    if n_number:
+        data = np.ones((n_number, n_step, 2, 2))
+        coords["number"] = np.arange(n_number)
+        return xr.Dataset(
+            {"tp": (("number", "step", "latitude", "longitude"), data)},
+            coords=coords,
+        )
+    data = np.ones((n_step, 2, 2))
     return xr.Dataset(
-        {"tp": (("number", "step", "latitude", "longitude"), data)},
-        coords={
-            "number": np.arange(n_number),
-            "step": np.array([np.timedelta64(i, "D") for i in range(n_step)]),
-            "time": np.datetime64("2026-01-01", "ns"),
-            "latitude": [0.0, 1.0],
-            "longitude": [10.0, 11.0],
-        },
+        {"tp": (("step", "latitude", "longitude"), data)},
+        coords=coords,
     )
 
 

@@ -10,21 +10,17 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "clean-skill",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    region="optional",
-    extra_args=[
-        (("--smoothing",), {"type": int, "help": "Smoothing window width in grid cells."}),
-    ],
+    outputs=["data"]
 )
-def clean_skill(ds, bbox, smoothing):
+@weather_skill.argument("--bbox")
+@weather_skill.argument("--smoothing", type=int, help="Smoothing window width in grid cells.")
+def clean_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     clean_skill()

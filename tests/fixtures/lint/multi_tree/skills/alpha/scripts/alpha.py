@@ -10,21 +10,17 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "alpha",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    extra_args=[
-        (("--method",), {"type": str, "help": "Aggregation method.", "default": "mean"}),
-        (("--window",), {"type": int, "help": "Window width."}),
-    ],
+    outputs=["data"]
 )
-def alpha(ds, method, window):
+@weather_skill.argument("--method", type=str, help="Aggregation method.", default="mean")
+@weather_skill.argument("--window", type=int, help="Window width.")
+def alpha(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     alpha()

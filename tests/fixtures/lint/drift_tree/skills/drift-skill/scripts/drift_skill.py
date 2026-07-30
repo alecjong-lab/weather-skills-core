@@ -10,20 +10,16 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "drift-skill",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    extra_args=[
-        (("--window",), {"type": int, "help": "Window width."}),
-    ],
+    outputs=["data"]
 )
-def drift_skill(ds, window):
+@weather_skill.argument("--window", type=int, help="Window width.")
+def drift_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     drift_skill()

@@ -10,28 +10,17 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "gamma",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    extra_args=[
-        (
-            ("--method",),
-            {
-                "type": str,
-                "help": "Aggregation method.",
-                "choices": ["sum", "mean"],
-            },
-        ),
-        (("--window",), {"type": float, "help": "Window width."}),
-    ],
+    outputs=["data"]
 )
-def gamma(ds, method, window):
+@weather_skill.argument("--method", type=str, help="Aggregation method.", choices=["sum", "mean"])
+@weather_skill.argument("--window", type=float, help="Window width.")
+def gamma(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     gamma()

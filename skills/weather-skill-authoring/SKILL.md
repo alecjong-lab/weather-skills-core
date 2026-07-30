@@ -1,6 +1,6 @@
 ---
 name: weather-skill-authoring
-description: Playbook for writing a weather skill on the @weather_skill decorator. Covers the declaration surface, envelope types, absolute dates, provenance, and script layout.
+description: Playbook for writing a weather skill on the @weather_skill decorator. Covers the declaration surface, dim-ontology IO, stacked argument decorators, provenance, and script layout.
 ---
 
 # weather-skill-authoring
@@ -11,7 +11,7 @@ provenance, and output writing. The script body is domain logic only.
 
 ## References
 
-- `references/ENVELOPE.md` — Zarr shapes and `weather_skills_history`
+- `references/ENVELOPE.md` — dim ontology, Zarr shapes, and `weather_skills_history`
 - `references/CONVENTIONS.md` — canonical CLI flag names
 
 ## Declaration
@@ -31,16 +31,15 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     "my-skill",
     _SKILL_VERSION,
-    inputs=["data"],                 # list; empty = fetcher; "any" / "any+" allowed
-    outputs=["data"],                # data|forecast|station|any|unstructured|visualization
-    dates="range",                   # None | "single" | "range" | "either"
-    region="optional",               # None | "required" | "optional" → --bbox
-    variable="single_required",      # None | single_*/multiple_*
-    extra_args=[
-        (("--smoothing",), {"type": int, "help": "Window width."}),
-    ],
+    inputs=["space"],                # dim / canonical / any; list=OR, tuple=AND
+    outputs=["observations"],
 )
-def my_skill(ds, bbox, start_time, end_time, variable, smoothing):
+@weather_skill.argument("--bbox", required=True)
+@weather_skill.argument("--start-time", required=True)
+@weather_skill.argument("--end-time", required=True)
+@weather_skill.argument("--variable", "-v", action="append")
+@weather_skill.argument("--smoothing", type=int, help="Window width.")
+def my_skill(ds, bbox, start_time, end_time, variable, smoothing, **kwargs):
     """Shown as the CLI description."""
     return ds  # or Path(...)
 
@@ -49,56 +48,53 @@ if __name__ == "__main__":
     my_skill()
 ```
 
-`extra_args` entries are `(option_strings, kwargs)` passed to
-`parser.add_argument(*option_strings, **kwargs)`.
+`@weather_skill.argument(...)` mirrors
+`argparse.ArgumentParser.add_argument(*option_strings, **kwargs)`. Stack one
+decorator per flag under `@weather_skill(...)`. The skill function **must**
+accept `**kwargs`.
+
+Canonical dests get automatic help and post-parse conversion:
+
+| Dest | Flags | Conversion |
+| --- | --- | --- |
+| `bbox` | `--bbox` | `parse_bbox` → `(N,W,S,E)` |
+| `date` | `--date` | `parse_date` → `datetime.date` |
+| `start_time` | `--start-time` | `parse_date` → `datetime.date` |
+| `end_time` | `--end-time` | `parse_date` → `datetime.date` |
+
+If both `start_time` and `end_time` are set, the decorator also requires
+`start_time <= end_time`. It does **not** XOR `--date` with the range flags;
+skills that need that check do it in-body.
 
 ## Skill shapes
 
 | Kind | Declaration | Return |
 | --- | --- | --- |
-| Transform | `inputs=[...]`, `outputs=[zarr type]` | Dataset or Path |
+| Transform | `inputs=[...]`, `outputs=[…]` | Dataset or Path |
 | Fetcher | `inputs=[]` (or omit), zarr `outputs` | Dataset or Path |
-| Visualization | `outputs=["visualization"]` | Path (skill writes PNG/JPEG/HTML to `output` kwarg) |
+| Visualization | `outputs=["visualization"]` | Path (write to `kwargs["output"]`) |
 | Unstructured input | `inputs=["unstructured"]` | skill receives a `Path` |
-| Variadic inputs | `inputs=["any+"]` (or `data+`, …) | skill receives a `list` of opened inputs |
+| Variadic inputs | `inputs=["any+"]` (or `time+`, …) | skill receives a `list` of opened inputs |
 | No-artifact | omit / empty `outputs` | anything (ignored) |
 
-Variadic form is a **single** `type+` entry (≥1 `--input`). Do not mix fixed and
-variadic slots. Skills that need ≥2 inputs (e.g. concat) enforce that in-body.
+## Inputs / outputs ontology
 
-## Types
+Within one slot: **list = OR**, **tuple = AND**, **string = atom** (canonical,
+dimension, `any`, `unstructured`, or output-only `visualization`).
 
-- `data`, `forecast`, `station` — Zarr envelopes (validated on open)
-- `any` — any Zarr envelope (`data|forecast|station`); valid on inputs and outputs
-  (output `any` means passthrough / shape-preserving write)
-- `unstructured` — opaque file; passed as `Path`
-- `visualization` — output-only; decorator stamps provenance into file metadata
+Canonicals (prefer primary): `observations` (+ aliases analysis/retrieval/field),
+`forecast`, `ensemble_forecast`, `station`. Dims: `space`, `time`, `init_time`,
+`prediction_timedelta`, `member`, `day_of_year`/`doy`, `point_id`, `x`, `y`.
 
-## Dates
-
-`--start`/`--end` or `--date` take **absolute `YYYY-MM-DD` only**. Modes:
-
-- `"range"` — required `--start` and `--end`
-- `"single"` — required `--date`
-- `"either"` — `--date` XOR (`--start` + `--end`); skill receives all three kwargs
-  with the unused side `None`
-
-Relative / rolling dates are resolved by the caller before invoking the skill.
+Be specific when the skill's contract is dimensional (`inputs=["space"]` for
+clip); use `any` / `any+` when shape-agnostic. See `references/ENVELOPE.md`.
 
 ## Provenance
 
-The decorator appends a `weather_skills_history` entry:
-
-- Dataset return → stamp attrs, then write Zarr to `--output`
-- Path return (Zarr) → reopen and restamp in place
-- Path return (`visualization`) → embed JSON history in PNG/JPEG/HTML metadata
-
-When `outputs` is declared, the decorator passes `--output` path(s) as an
-`output` keyword when the skill function accepts it: a single `Path` when
-there is one output, or a `list[Path]` when there are several. Visualization
-skills must declare `output`, write the file to that path, and return the
-same `Path`. Skills that return a Dataset and let the decorator write Zarr
-may omit `output` from their signature.
+The decorator appends a `weather_skills_history` entry. When `outputs` is
+declared, `--output` path(s) are passed as `output` in `**kwargs`. Returned
+Datasets are checked against the output slot dims before write (Path returns
+skip that check).
 
 Do not clear or rewrite history yourself; set `weather_skills_source` on fetcher
 Datasets before return if needed.

@@ -15,7 +15,7 @@ from weather_skills_core import weather_skill
     inputs=["data"],
     outputs=["data"],
 )
-def no_constant(ds):
+def no_constant(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
 

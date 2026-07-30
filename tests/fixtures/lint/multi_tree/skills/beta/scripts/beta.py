@@ -10,20 +10,16 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "beta",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    extra_args=[
-        (("--method",), {"type": str, "help": "Aggregation method.", "default": "mean"}),
-    ],
+    outputs=["data"]
 )
-def beta(ds, method):
+@weather_skill.argument("--method", type=str, help="Aggregation method.", default="mean")
+def beta(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     beta()

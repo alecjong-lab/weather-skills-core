@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     inputs=["data"],
     outputs=["data"],
 )
-def literal_version(ds):
+def literal_version(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
 

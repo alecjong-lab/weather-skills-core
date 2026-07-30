@@ -1,32 +1,369 @@
-"""Envelope shape vocabulary, CF dim detection, and bbox subsetting.
+"""Envelope dim ontology, CF dim detection, and bbox subsetting.
 
-Zarr envelope shapes:
+Zarr inputs/outputs are declared as required **dimensions** (or canonical
+shorthands that expand to dims). Within one IO slot:
 
-- ``data`` -- spatial dims ``latitude``/``longitude`` (aliases accepted on
-  input) with a ``time`` dim;
-- ``forecast`` -- a ``step`` (lead time) dim plus a scalar ``time`` coord for
-  the forecast init date;
-- ``station`` -- a single spatial dim ``station_id`` with 1-D
-  ``latitude(station_id)`` / ``longitude(station_id)`` coords and a ``time``
-  dim.
+- a **list** is OR (any alternative may match)
+- a **tuple** is AND (every entry required)
+- a **string** is a canonical shorthand, a single dim name, ``any``,
+  ``unstructured``, or ``visualization``
 
-``unstructured`` and ``visualization`` are I/O kinds handled by the decorator
-(not validated here).
+Canonical families (same dims; prefer the primary name in declarations):
+
+- ``observations`` / ``analysis`` / ``retrieval`` / ``field`` → space + time
+- ``forecast`` → space + init + prediction_timedelta
+- ``ensemble_forecast`` → forecast + member
+- ``station`` → point_id + time
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 from weather_skills_core.errors import DataError, UsageError
 
-DATA = "data"
-FORECAST = "forecast"
-STATION = "station"
+# --- dimension vocabulary -------------------------------------------------
+
+SPACE = "space"
+TIME = "time"
+INIT_TIME = "init_time"
+PREDICTION_TIMEDELTA = "prediction_timedelta"
+MEMBER = "member"
+DAY_OF_YEAR = "day_of_year"
+POINT_ID = "point_id"
+X = "x"
+Y = "y"
+
+DIMS = frozenset(
+    {SPACE, TIME, INIT_TIME, PREDICTION_TIMEDELTA, MEMBER, DAY_OF_YEAR, POINT_ID, X, Y}
+)
+DIM_ALIASES = {"doy": DAY_OF_YEAR}
+
+# Non-dim I/O kinds
 UNSTRUCTURED = "unstructured"
 VISUALIZATION = "visualization"
 ANY = "any"
 
-TYPES = (DATA, FORECAST, STATION)
+# Legacy names kept as constants for gradual migration / tests
+DATA = "observations"  # formerly gridded data envelope
+FORECAST = "forecast"
+STATION = "station"
+OBSERVATIONS = "observations"
+
+_OBS = frozenset({SPACE, TIME})
+_FORECAST = frozenset({SPACE, INIT_TIME, PREDICTION_TIMEDELTA})
+_ENSEMBLE = _FORECAST | {MEMBER}
+_STATION = frozenset({POINT_ID, TIME})
+
+# Canonical shorthand → required ontology dims (AND)
+CANONICAL: dict[str, frozenset[str]] = {
+    "observations": _OBS,
+    "analysis": _OBS,
+    "retrieval": _OBS,
+    "field": _OBS,
+    "forecast": _FORECAST,
+    "ensemble_forecast": _ENSEMBLE,
+    "station": _STATION,
+}
+
+# Back-compat: old envelope type name still accepted in specs
+CANONICAL["data"] = _OBS
+
+TYPES = (OBSERVATIONS, FORECAST, STATION)  # legacy grouping for docs/tests
 
 _LAT_NAMES = ("latitude", "lat", "y")
 _LON_NAMES = ("longitude", "lon", "x")
+_MEMBER_NAMES = ("number", "member", "realization")
+_STEP_NAMES = ("step", "prediction_timedelta", "lead_time")
+_POINT_NAMES = ("station_id", "point_id")
+
+
+@dataclass(frozen=True)
+class SlotSpec:
+    """One inputs=/outputs= slot after normalization."""
+
+    kind: str  # "zarr" | "unstructured" | "visualization"
+    alternatives: tuple[frozenset[str], ...] | None  # None = any (no dim constraints)
+    variadic: bool = False
+    label: str = ""  # human-readable for help/errors
+
+
+def expand_atom(atom: str) -> frozenset[str]:
+    """Expand one canonical name or dimension name to a frozenset of dims."""
+    if atom in CANONICAL:
+        return CANONICAL[atom]
+    dim = DIM_ALIASES.get(atom, atom)
+    if dim in DIMS:
+        return frozenset({dim})
+    raise ValueError(
+        f"unknown IO atom {atom!r}; expected a dimension {sorted(DIMS)}, "
+        f"a canonical {sorted(CANONICAL)}, or any/unstructured/visualization"
+    )
+
+
+def _and_group(spec) -> frozenset[str]:
+    if isinstance(spec, str):
+        return expand_atom(spec)
+    if isinstance(spec, tuple):
+        if not spec:
+            return frozenset()
+        out: set[str] = set()
+        for part in spec:
+            if isinstance(part, (list, tuple)) and not isinstance(part, str):
+                # nested tuple still AND-flattened; nested list is invalid here
+                if isinstance(part, list):
+                    raise ValueError(
+                        "OR lists cannot appear inside an AND tuple; "
+                        f"got {part!r}"
+                    )
+                out |= _and_group(part)
+            elif isinstance(part, str):
+                out |= expand_atom(part)
+            else:
+                raise ValueError(f"invalid AND-group entry {part!r}")
+        return frozenset(out)
+    raise ValueError(f"expected str or tuple for AND-group, got {type(spec).__name__}")
+
+
+def parse_alternatives(spec) -> tuple[frozenset[str], ...]:
+    """Parse one slot body into OR-alternatives (each a frozenset of required dims)."""
+    if isinstance(spec, str):
+        return (expand_atom(spec),)
+    if isinstance(spec, tuple):
+        return (_and_group(spec),)
+    if isinstance(spec, list):
+        if not spec:
+            raise ValueError("OR list must not be empty")
+        alts: list[frozenset[str]] = []
+        for item in spec:
+            if isinstance(item, list):
+                raise ValueError(f"nested OR lists are not allowed; got {item!r}")
+            alts.extend(parse_alternatives(item))
+        return tuple(alts)
+    raise ValueError(
+        f"invalid IO slot {spec!r}; expected str, list (OR), or tuple (AND)"
+    )
+
+
+def normalize_slot(raw, *, allow_variadic: bool = False, for_input: bool = True) -> SlotSpec:
+    """Normalize one inputs=/outputs= entry to a :class:`SlotSpec`."""
+    variadic = False
+    label = repr(raw)
+    if isinstance(raw, str) and raw.endswith("+"):
+        if not allow_variadic:
+            raise ValueError(f"outputs do not support variadic '+'; got {raw!r}")
+        variadic = True
+        raw = raw[:-1]
+        label = raw + "+"
+
+    if isinstance(raw, str):
+        if raw == ANY:
+            return SlotSpec(kind="zarr", alternatives=None, variadic=variadic, label=label or ANY)
+        if raw == UNSTRUCTURED:
+            if not for_input:
+                # unstructured outputs are allowed in principle
+                pass
+            return SlotSpec(
+                kind="unstructured", alternatives=None, variadic=variadic, label=raw
+            )
+        if raw == VISUALIZATION:
+            if for_input:
+                raise ValueError("visualization is output-only")
+            return SlotSpec(
+                kind="visualization", alternatives=None, variadic=False, label=raw
+            )
+
+    alternatives = parse_alternatives(raw)
+    return SlotSpec(
+        kind="zarr",
+        alternatives=alternatives,
+        variadic=variadic,
+        label=label if isinstance(raw, str) else repr(raw),
+    )
+
+
+def normalize_io_list(
+    raw_slots, *, allow_variadic: bool, for_input: bool
+) -> tuple[list[SlotSpec], bool]:
+    """Normalize a full inputs= or outputs= list."""
+    slots = list(raw_slots or [])
+    if not slots:
+        return [], False
+    parsed = [
+        normalize_slot(s, allow_variadic=allow_variadic, for_input=for_input) for s in slots
+    ]
+    variadic_flags = [s.variadic for s in parsed]
+    if any(variadic_flags):
+        if len(parsed) != 1 or not parsed[0].variadic:
+            raise ValueError(
+                "variadic IO must be a single entry like 'any+' or 'time+'; "
+                "cannot mix fixed and variadic slots"
+            )
+        return parsed, True
+    return parsed, False
+
+
+def has_dim(ds, dim: str) -> bool:
+    """Return True if dataset satisfies one ontology dimension requirement."""
+    if dim == SPACE:
+        try:
+            detect_spatial_dims(ds)
+            return True
+        except UsageError:
+            return False
+    if dim == TIME:
+        try:
+            name = detect_time_dim(ds)
+            return name in ds.dims
+        except UsageError:
+            return False
+    if dim == INIT_TIME:
+        if "init_time" in ds.dims or "init_time" in ds.coords:
+            return True
+        # Classic forecast: scalar time coord + step dim
+        if "time" in ds.coords and "time" not in ds.dims and ds["time"].ndim == 0:
+            return any(n in ds.dims for n in _STEP_NAMES)
+        return False
+    if dim == PREDICTION_TIMEDELTA:
+        return any(n in ds.dims for n in _STEP_NAMES)
+    if dim == MEMBER:
+        return any(n in ds.dims for n in _MEMBER_NAMES)
+    if dim == DAY_OF_YEAR:
+        return "day_of_year" in ds.dims or "doy" in ds.dims
+    if dim == POINT_ID:
+        point = next((n for n in _POINT_NAMES if n in ds.dims), None)
+        if point is None:
+            return False
+        for coord in ("latitude", "longitude"):
+            if coord not in ds.coords:
+                return False
+            if tuple(ds[coord].dims) != (point,):
+                return False
+        return True
+    if dim == X:
+        return "x" in ds.dims
+    if dim == Y:
+        return "y" in ds.dims
+    return False
+
+
+def missing_dims(
+    ds,
+    required: frozenset[str],
+    *,
+    dims: str | None = None,
+    time_dim: str | None = None,
+) -> list[str]:
+    missing = []
+    for d in sorted(required):
+        if d == SPACE and dims is not None:
+            try:
+                detect_spatial_dims(ds, dims)
+                continue
+            except UsageError:
+                missing.append(d)
+                continue
+        if d == TIME and time_dim is not None:
+            try:
+                detect_time_dim(ds, time_dim)
+                continue
+            except UsageError:
+                missing.append(d)
+                continue
+        if not has_dim(ds, d):
+            missing.append(d)
+    return missing
+
+
+def validate_dims(
+    ds,
+    alternatives: tuple[frozenset[str], ...] | None,
+    name: str,
+    *,
+    dims: str | None = None,
+    time_dim: str | None = None,
+) -> frozenset[str]:
+    """Validate dataset against OR-of-AND dim alternatives.
+
+    ``alternatives is None`` means ``any`` (no constraints). Returns the
+    matching alternative (empty frozenset when unconstrained).
+    """
+    if alternatives is None:
+        return frozenset()
+    for alt in alternatives:
+        if not missing_dims(ds, alt, dims=dims, time_dim=time_dim):
+            return alt
+    parts = []
+    for alt in alternatives:
+        miss = missing_dims(ds, alt, dims=dims, time_dim=time_dim)
+        parts.append(f"{{{', '.join(sorted(alt))}}} missing {miss}")
+    raise UsageError(
+        f"{name} does not satisfy required dimensions "
+        f"({' OR '.join(parts)}); dims={list(ds.dims)}"
+    )
+
+
+def detect_type(ds) -> str:
+    """Best-effort classify for messages/tests: station, forecast, or observations."""
+    if has_dim(ds, POINT_ID):
+        return STATION
+    if has_dim(ds, PREDICTION_TIMEDELTA) and has_dim(ds, INIT_TIME):
+        if has_dim(ds, MEMBER):
+            return "ensemble_forecast"
+        return FORECAST
+    return OBSERVATIONS
+
+
+def validate_input(
+    ds, allowed, name: str, *, dims: str | None = None, time_dim: str | None = None
+) -> str:
+    """Validate a dataset against a slot spec or legacy type string(s).
+
+    ``allowed`` may be a :class:`SlotSpec`, a legacy type string / list of
+    type strings, or a new ontology slot body (str / list / tuple).
+    """
+    if isinstance(allowed, SlotSpec):
+        if allowed.kind != "zarr":
+            return allowed.kind
+        validate_dims(ds, allowed.alternatives, name, dims=dims, time_dim=time_dim)
+        return detect_type(ds)
+
+    # String / list / tuple slot body (including legacy "data")
+    if isinstance(allowed, (str, list, tuple)):
+        if isinstance(allowed, list) and allowed and all(
+            isinstance(x, str) and x in ("data", "forecast", "station", "observations", "any")
+            for x in allowed
+        ):
+            mapped = ["observations" if x == "data" else x for x in allowed]
+            slot = normalize_slot(mapped if len(mapped) > 1 else mapped[0], for_input=True)
+        else:
+            body = "observations" if allowed == "data" else allowed
+            slot = normalize_slot(body, for_input=True)
+        if slot.kind != "zarr":
+            return slot.kind
+        validate_dims(ds, slot.alternatives, name, dims=dims, time_dim=time_dim)
+        return detect_type(ds)
+
+    raise ValueError(f"invalid validate_input allowed={allowed!r}")
+
+
+def _shape_detail(ds, allowed) -> str:
+    """Describe mismatch (legacy helper)."""
+    try:
+        if isinstance(allowed, str):
+            alts = parse_alternatives(
+                "observations" if allowed == "data" else allowed
+            )
+        else:
+            alts = parse_alternatives(allowed)
+        bits = []
+        for alt in alts:
+            miss = missing_dims(ds, alt)
+            if miss:
+                bits.append(f"missing {miss} for {sorted(alt)}")
+        return "; ".join(bits) if bits else f"dims: {list(ds.dims)}"
+    except Exception:
+        return f"dims: {list(ds.dims)}"
 
 
 def parse_bbox(bbox: str) -> tuple:
@@ -99,75 +436,6 @@ def detect_time_dim(ds, override: str | None = None) -> str:
         f"could not identify a time dim via CF metadata or name heuristics in "
         f"{list(ds.dims)}. Pass --time-dim to override."
     )
-
-
-def detect_type(ds) -> str:
-    """Classify a dataset as ``station``, ``forecast``, or ``data``."""
-    if "station_id" in ds.dims:
-        return STATION
-    if "step" in ds.dims and "time" in ds.coords and ds["time"].ndim == 0:
-        return FORECAST
-    return DATA
-
-
-def validate_input(
-    ds, allowed, name: str, *, dims: str | None = None, time_dim: str | None = None
-) -> str:
-    """Validate a dataset against the declared envelope type(s).
-
-    ``allowed`` is a type string or list from :data:`TYPES`. Returns the
-    detected type. ``dims`` / ``time_dim`` optionally override spatial/time
-    dim detection for the structural check.
-    """
-    if isinstance(allowed, str):
-        allowed = [allowed]
-    unknown = [t for t in allowed if t not in TYPES]
-    if unknown:
-        raise ValueError(f"unknown envelope type(s) {unknown}; valid types: {list(TYPES)}")
-    actual = detect_type(ds)
-    if actual not in allowed:
-        raise UsageError(
-            f"input {name} is a {actual} envelope, but this skill expects "
-            f"{' or '.join(allowed)}: {_shape_detail(ds, allowed)}"
-        )
-    if actual == STATION:
-        for coord in ("latitude", "longitude"):
-            if coord not in ds.coords:
-                raise UsageError(
-                    f"input {name} is a station envelope but has no {coord!r} "
-                    f"coordinate (coords: {list(ds.coords)})."
-                )
-            if tuple(ds[coord].dims) != ("station_id",):
-                raise UsageError(
-                    f"input {name} is a station envelope but its {coord!r} "
-                    f"coordinate has dims {list(ds[coord].dims)}, expected "
-                    "('station_id',)."
-                )
-    elif actual in (DATA, FORECAST):
-        detect_spatial_dims(ds, dims)
-    if time_dim:
-        detect_time_dim(ds, time_dim)
-    return actual
-
-
-def _shape_detail(ds, allowed) -> str:
-    """Describe what the expected shape(s) require and what the dataset has."""
-    details = []
-    if FORECAST in allowed and "step" not in ds.dims:
-        details.append("no 'step' dim")
-    if FORECAST in allowed and "step" in ds.dims:
-        if "time" not in ds.coords:
-            details.append("no scalar 'time' coord")
-        elif ds["time"].ndim != 0:
-            details.append("'time' is a dim, not a scalar init coord")
-    if STATION in allowed and "station_id" not in ds.dims:
-        details.append("no 'station_id' dim")
-    if DATA in allowed and "station_id" in ds.dims:
-        details.append("has a 'station_id' dim")
-    if DATA in allowed and "step" in ds.dims:
-        details.append("has a 'step' dim")
-    detail = "; ".join(details) if details else "shape does not match"
-    return f"{detail} (dims: {list(ds.dims)})"
 
 
 def stamp_cf_attrs(ds):

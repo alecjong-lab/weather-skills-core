@@ -10,23 +10,16 @@ from weather_skills_core import weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
-
 @weather_skill(
     "remote-skill",
     _SKILL_VERSION,
     inputs=["data"],
-    outputs=["data"],
-    extra_args=[
-        (
-            ("--method",),
-            {"type": str, "help": "Aggregation method.", "choices": ["percentile"]},
-        ),
-    ],
+    outputs=["data"]
 )
-def remote_skill(ds, method):
+@weather_skill.argument("--method", type=str, help="Aggregation method.", choices=["percentile"])
+def remote_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
-
 
 if __name__ == "__main__":
     remote_skill()

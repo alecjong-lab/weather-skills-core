@@ -74,38 +74,88 @@ class TestDetectTimeDim:
 
 class TestDetectType:
     def test_gridded(self):
-        assert envelope.detect_type(make_gridded()) == envelope.DATA
+        assert envelope.detect_type(make_gridded()) == envelope.OBSERVATIONS
 
     def test_forecast(self):
-        assert envelope.detect_type(make_forecast()) == envelope.FORECAST
+        assert envelope.detect_type(make_forecast(n_number=0)) == envelope.FORECAST
+        # Default fixture includes a member dim → ensemble_forecast
+        assert envelope.detect_type(make_forecast()) == "ensemble_forecast"
 
     def test_station(self):
         assert envelope.detect_type(make_station()) == envelope.STATION
 
     def test_step_with_time_dim_is_not_forecast(self):
-        # A forecast envelope is a step dim plus a SCALAR time coord; a step
-        # dim alongside a time dim does not classify as forecast.
+        # Forecast needs scalar init (time) + step; a step dim alongside a
+        # time *dim* does not classify as forecast.
         ds = make_forecast()
         ds = ds.drop_vars("time")
         ds = ds.expand_dims(time=np.array(["2026-01-01"], dtype="datetime64[ns]"))
-        assert envelope.detect_type(ds) == envelope.DATA
+        assert envelope.detect_type(ds) == envelope.OBSERVATIONS
+
+
+class TestParseIoSpec:
+    def test_canonical_observations(self):
+        assert envelope.parse_alternatives("observations") == (
+            frozenset({"space", "time"}),
+        )
+
+    def test_alias_analysis_same_as_observations(self):
+        assert envelope.parse_alternatives("analysis") == envelope.parse_alternatives(
+            "observations"
+        )
+
+    def test_or_list(self):
+        alts = envelope.parse_alternatives(["forecast", "ensemble_forecast"])
+        assert len(alts) == 2
+        assert frozenset({"space", "init_time", "prediction_timedelta"}) in alts
+        assert (
+            frozenset({"space", "init_time", "prediction_timedelta", "member"}) in alts
+        )
+
+    def test_and_tuple(self):
+        assert envelope.parse_alternatives(("space", "time")) == (
+            frozenset({"space", "time"}),
+        )
+
+    def test_single_dim(self):
+        assert envelope.parse_alternatives("time") == (frozenset({"time"}),)
 
 
 class TestValidateInput:
     def test_matching_type_passes(self):
-        assert envelope.validate_input(make_gridded(), "data", "in.zarr") == "data"
+        assert (
+            envelope.validate_input(make_gridded(), "observations", "in.zarr")
+            == "observations"
+        )
+
+    def test_legacy_data_alias(self):
+        assert envelope.validate_input(make_gridded(), "data", "in.zarr") == "observations"
 
     def test_list_of_alternatives(self):
         assert (
-            envelope.validate_input(make_forecast(), ["data", "forecast"], "in.zarr") == "forecast"
+            envelope.validate_input(
+                make_forecast(n_number=0), ["observations", "forecast"], "in.zarr"
+            )
+            == "forecast"
         )
 
+    def test_or_canonical_list(self):
+        assert (
+            envelope.validate_input(
+                make_forecast(), ["forecast", "ensemble_forecast"], "in.zarr"
+            )
+            == "ensemble_forecast"
+        )
+
+    def test_dim_only_space(self):
+        assert envelope.validate_input(make_gridded(), "space", "in.zarr") == "observations"
+
     def test_gridded_rejected_when_forecast_expected(self):
-        with pytest.raises(UsageError, match="no 'step' dim"):
+        with pytest.raises(UsageError, match="prediction_timedelta|init_time"):
             envelope.validate_input(make_gridded(), "forecast", "in.zarr")
 
     def test_forecast_rejected_when_station_expected(self):
-        with pytest.raises(UsageError, match="no 'station_id' dim"):
+        with pytest.raises(UsageError, match="point_id"):
             envelope.validate_input(make_forecast(), "station", "in.zarr")
 
     def test_error_names_the_input(self):
@@ -114,35 +164,45 @@ class TestValidateInput:
 
     def test_station_missing_latitude_coord(self):
         ds = make_station().drop_vars("latitude")
-        with pytest.raises(UsageError, match="'latitude'"):
+        with pytest.raises(UsageError, match="point_id"):
             envelope.validate_input(ds, "station", "in.zarr")
 
     def test_station_latitude_on_wrong_dim(self):
         ds = make_station()
         ds = ds.assign_coords(latitude=("time", np.zeros(ds.sizes["time"])))
-        with pytest.raises(UsageError, match="station_id"):
+        with pytest.raises(UsageError, match="point_id"):
             envelope.validate_input(ds, "station", "in.zarr")
 
     def test_unknown_declared_type_is_a_programming_error(self):
-        with pytest.raises(ValueError, match="unknown envelope type"):
+        with pytest.raises(ValueError, match="unknown IO atom"):
             envelope.validate_input(make_gridded(), "grid", "in.zarr")
 
     def test_dims_override_validates_undetectable_gridded(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        with pytest.raises(UsageError, match="Pass --dims"):
-            envelope.validate_input(ds, "data", "in.zarr")
-        assert envelope.validate_input(ds, "data", "in.zarr", dims="yy,xx") == "data"
+        with pytest.raises(UsageError, match="space"):
+            envelope.validate_input(ds, "observations", "in.zarr")
+        assert (
+            envelope.validate_input(ds, "observations", "in.zarr", dims="yy,xx")
+            == "observations"
+        )
 
     def test_dims_override_names_must_exist(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.validate_input(ds, "data", "in.zarr", dims="a,b")
+        with pytest.raises(UsageError, match="space"):
+            envelope.validate_input(ds, "observations", "in.zarr", dims="a,b")
 
     def test_time_dim_override_must_exist(self):
-        with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.validate_input(make_gridded(), "data", "in.zarr", time_dim="t")
+        with pytest.raises(UsageError, match="time"):
+            envelope.validate_input(make_gridded(), "observations", "in.zarr", time_dim="t")
         ds = make_gridded().rename({"time": "t"})
-        assert envelope.validate_input(ds, "data", "in.zarr", time_dim="t") == "data"
+        assert (
+            envelope.validate_input(ds, "observations", "in.zarr", time_dim="t")
+            == "observations"
+        )
+
+    def test_any_accepts_all(self):
+        for ds in (make_gridded(), make_forecast(), make_station()):
+            envelope.validate_input(ds, "any", "in.zarr")
 
 
 class TestBboxSubset:
