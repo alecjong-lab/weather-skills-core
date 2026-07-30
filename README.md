@@ -9,8 +9,8 @@ from weather_skills_core import Types, weather_skill
     name="my-skill",
     version="0.1.0",
     outputs=[Types.GRIDDED],
-    required_args=("start_time", "end_time", "variable"),
-    optional_args=("bbox",),
+    required_args=("date_range|date", "variable"),
+    optional_args=("bbox|region",),
     check_cache=True,
 )
 @weather_skill.argument("--workers", type=int, default=1)
