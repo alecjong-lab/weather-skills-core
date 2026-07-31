@@ -24,8 +24,8 @@ from weather_skills_core import weather_skill
 @weather_skill(
     name="clip-region",
     version="0.1.0",
-    inputs=["space"],
-    outputs=["space"],
+    inputs=["spatial"],
+    outputs=["spatial"],
 )
 @weather_skill.argument("--bbox", required=True)
 def clip_region(ds, bbox, **kwargs):
@@ -50,14 +50,12 @@ def my_fancy_skill(ds, bbox, start_time, end_time, corr_coefficient, **kwargs):
     return result_ds  # or a Path to an already-written file
 ```
 
-Always take `**kwargs`. The decorator does not only call your function — it
-fills kwargs with the parsed values for every declared argument (and with
-runtime extras like `output`). You receive ready-to-use Python objects, not
-raw CLI strings. For example, declare `--bbox` and pass Kenya's box on the
-command line (often from `resolve-region`); your skill gets
-`bbox=(north, west, south, east)` floats for Kenya, not `"5/34/-5/42"` to
-split yourself. The same idea applies to dates (`datetime.date`) and other
-standard args.
+Always take `**kwargs`. Every flag you declare with
+`@weather_skill.argument(...)` is passed into your function that way (match the
+dest as a named parameter, or read it from kwargs) — not only the shared
+“standard” ones. The decorator also injects runtime extras such as `output`.
+You get the values argparse (and the standard-arg converters) already produced,
+not raw CLI strings to re-parse.
 
 Stack more flags with `@weather_skill.argument(...)` (same signature as
 `argparse.add_argument`). The decorator opens inputs, runs your function, and
@@ -73,20 +71,38 @@ We follow [CF conventions](https://cfconventions.org/) for coordinates and
 metadata, and expose a small set of **standard dimensions**. Skills declare
 what they need either as those dimension names, or as a **type** — a short
 alias for a fixed set of required dimensions (for example `forecast` means
-`space` + `init_time` + `prediction_timedelta`). That is how the decorator
+`lat` + `lon` + `init_time` + `prediction_timedelta`). That is how the decorator
 checks inputs and outputs before and after your function runs.
 
 ## Inputs and outputs
+
+`inputs=` / `outputs=` tell the decorator what each `--input` / `--output` path
+must be. Each entry in those lists is one CLI path. What you put *in* an entry
+is a dimension name, a type from the tables below, or a combination:
+
+| Entry form | Meaning | Example entry |
+| --- | --- | --- |
+| String | That dim or type | `"spatial"`, `"time"`, `"forecast"` |
+| Tuple | All of these (AND) | `("lat", "lon", "member")` |
+| List | Any one of these (OR) | `["forecast", "ensemble_forecast"]` |
+| Trailing `+` on a string | One or more paths of this kind | `"any+"` (must be the only `inputs=` entry) |
+
+So `inputs=["spatial"]` means one input that needs `lat` + `lon`.
+`inputs=["spatial", "spatial"]` means two such inputs. For a single path that
+may be either of two kinds, the entry itself is an OR list:
+`inputs=[["forecast", "ensemble_forecast"]]`.
 
 ### Dimensions
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Regular grid (`lat` + `lon`) |
+| `lat` | Latitude (regular grid) |
+| `lon` | Longitude (regular grid) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
 | `member` | Ensemble member |
+| `vertical` | Vertical level (pressure, height, …) |
 | `day_of_year` | Day of year |
 | `point_id` | Station or point id |
 | `x`, `y` | Coordinates for irregular gridded data (e.g. projected meshes) |
@@ -97,38 +113,47 @@ Types are aliases for specific required dimensions:
 
 | Type aliases | Required dimensions |
 | --- | --- |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
-| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `spatial`, `space` | `lat` + `lon` |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
+| `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
+| `vertical_forecast` | forecast dims + `vertical` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
 | `figure` | PNG / JPEG / HTML (output only) |
 | `unstructured` | opaque file path |
 
-One `inputs=` / `outputs=` entry per CLI path. Tuple = all required; list = any
-one; trailing `+` = one or more paths.
-
 Full details:
 [`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
 
-## Standard arguments
+## Arguments
 
-Many weather skills need the same inputs: a region, a date or date range, a
-variable name. Declare those with `@weather_skill.argument(...)` using the
-shared names below, and the decorator handles them for you — help text, parsing,
-and basic checks — so every skill behaves the same way.
+Declare CLI flags with stacked `@weather_skill.argument(...)` decorators (same
+kwargs as `argparse.add_argument`). **Every** declared flag is passed into your
+skill as a keyword argument — custom ones included. In the fancy-skill example
+above, `corr_coefficient` arrives the same way `bbox` and `start_time` do;
+only the conversion rules differ.
 
-For example, add `--bbox` and the decorator puts a parsed
-`(north, west, south, east)` bounding box in your function kwargs (and accepts
-negative latitudes). Add `--start-time` / `--end-time` and you get
-`datetime.date` values, with a check that the start is not after the end. For a
-named country or region, run the `resolve-region` skill first to get a standard
-bbox (and optional boundary polygon), then pass that into skills that take
-`--bbox`.
+### Standard arguments
+
+A few shared names get extra help text, parsing, and checks so every skill that
+uses them behaves the same way. Declare them with the canonical flags below;
+do **not** re-parse in the skill body (no `bbox.split("/")`, no
+`date.fromisoformat` on these).
+
+For example, add `--bbox` and you receive a parsed
+`(north, west, south, east)` float tuple. Add `--region Kenya` (a plain CLI
+string — name or ISO3) and the decorator looks up the country and passes
+`region` as a **GeoDataFrame** in kwargs (plus fills `bbox`). Do not treat
+`region` as a string in the skill body. Pass `--region` or `--bbox`, not both
+(`weather-skills-core[geo]` required for `--region`). Add `--start-time` /
+`--end-time` and you get `datetime.date` values, with a check that the start
+is not after the end.
 
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
+| `region` | `--region` | GeoDataFrame under kwargs key `region` (CLI is a string like `Kenya`; also fills `bbox`) |
 | `date` | `--date` | Single `datetime.date` (`YYYY-MM-DD`) |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |

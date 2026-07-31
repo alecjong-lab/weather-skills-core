@@ -1,4 +1,4 @@
-"""Shared CLI flags (``--bbox``, dates, …) for the decorator and linting catalog."""
+"""Shared CLI flags (``--bbox``, ``--region``, dates, …) for the decorator and linting catalog."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from weather_skills_core.errors import UsageError
 from weather_skills_core.standard_utils import parse_bbox, parse_date
 
 STANDARD_HELP = {
-    "bbox": "N/W/S/E decimal degrees (use the resolve-region skill to get a country's bbox).",
+    "bbox": "N/W/S/E decimal degrees. Prefer --region when you have a country name or ISO3 code.",
+    "region": (
+        "Country name or ISO3 code as a string (e.g. Kenya). The skill receives "
+        "region as a GeoDataFrame (and bbox is filled). Requires weather-skills-core[geo]."
+    ),
     "date": "Absolute date YYYY-MM-DD.",
     "start_time": "Range start, inclusive. Absolute YYYY-MM-DD.",
     "end_time": "Range end, inclusive. Absolute YYYY-MM-DD.",
@@ -33,6 +37,7 @@ def standard_parameters():
         StandardParameter("end_time", "end_time", ("--end-time",), "canonical", True),
         StandardParameter("date", "date", ("--date",), "canonical", True),
         StandardParameter("bbox", "bbox", ("--bbox",), "canonical", True),
+        StandardParameter("region", "region", ("--region",), "canonical", True),
         StandardParameter("variable", "variable", ("--variable", "-v"), "canonical", True),
     )
 
@@ -65,20 +70,36 @@ def add_standard_help(kwargs: dict, canonical: str) -> dict:
 
 
 def convert_standard_args(args, arguments) -> dict:
-    """Build skill kwargs from parsed CLI: bbox → tuple, dates → date.
+    """Build skill kwargs from parsed CLI.
+
+    ``--region Kenya`` (string) becomes ``region=<GeoDataFrame>`` and fills ``bbox``.
+    ``--bbox`` becomes an ``(N, W, S, E)`` float tuple. Dates become ``datetime.date``.
+    Pass ``--region`` or ``--bbox``, not both.
 
     Raises UsageError if ``start_time`` is after ``end_time``.
     """
+    dests = {arg.dest for arg in arguments}
     params = {}
     for arg in arguments:
         dest = arg.dest
         raw = getattr(args, dest)
         if dest == "bbox":
             params[dest] = parse_bbox(raw) if raw is not None else None
+        elif dest == "region":
+            params[dest] = raw
         elif dest in ("date", "start_time", "end_time"):
             params[dest] = parse_date(raw) if raw is not None else None
         else:
             params[dest] = raw
+
+    if "region" in dests and params.get("region"):
+        if "bbox" in dests and params.get("bbox") is not None:
+            raise UsageError("pass --region or --bbox, not both.")
+        from weather_skills_core.region import resolve_region
+
+        bbox, gdf = resolve_region(params["region"])
+        params["region"] = gdf
+        params["bbox"] = bbox
 
     start = params.get("start_time")
     end = params.get("end_time")

@@ -27,7 +27,7 @@ plots, `point_obs` for station/point time series).
 | Concept | Flag | Notes |
 | --- | --- | --- |
 | Bounding box | `--bbox` | CLI is `N/W/S/E` decimal degrees. Skill receives `(N, W, S, E)` floats — do not re-parse. |
-| Country / region name | via `resolve-region` | Returns a bbox (and optional polygon) to pass into `--bbox`. |
+| Country / region | `--region` | CLI string (e.g. `Kenya`). Skill gets kwargs `region` as a GeoDataFrame; `bbox` is also filled. Requires `weather-skills-core[geo]`. Do not pass with `--bbox`. |
 | Boundary GeoJSON | `--geojson` / `--mask-geojson` | Skill-specific. |
 
 ### Time

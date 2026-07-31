@@ -9,8 +9,8 @@ from weather_skills_core.standard_dataset import names_for
 def stamp_cf_attrs(ds):
     """Fill missing CF attrs on lat/lon/time coords; leave existing values.
 
-    Uses ``names_for`` aliases (``lat``/``latitude``/``y``, etc.). Treats
-    ``y``/``x`` as geographic — skip for projected grids. Returns ``ds``.
+    Uses ``names_for`` aliases (``lat``/``latitude``, ``lon``/``longitude``).
+    Does not treat projected ``x``/``y`` as geographic. Returns ``ds``.
     """
     for name in names_for("lat"):
         if name in ds.coords:

@@ -3,7 +3,7 @@ from typing import ClassVar
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_forecast, make_gridded, make_station
+from conftest import make_forecast, make_gridded, make_station, make_vertical_forecast
 
 from weather_skills_core import standard_dataset as dataset
 from weather_skills_core.errors import DataError, UsageError
@@ -68,6 +68,13 @@ class TestDetectType:
         # Default fixture includes a member dim → ensemble_forecast
         assert dataset.detect_type(make_forecast()) == "ensemble_forecast"
 
+    def test_vertical_forecast(self):
+        ds = make_vertical_forecast()
+        assert dataset.detect_type(ds) == "vertical_forecast"
+        assert dataset.validate_input(ds, "vertical_forecast", "in.zarr") == "vertical_forecast"
+        with pytest.raises(UsageError, match="vertical"):
+            dataset.validate_input(make_forecast(n_number=0), "vertical_forecast", "in.zarr")
+
     def test_point_obs(self):
         assert dataset.detect_type(make_station()) == "point_obs"
 
@@ -88,7 +95,7 @@ class TestDetectType:
 class TestParseIoSpec:
     def test_canonical_observations(self):
         assert dataset.parse_alternatives("observations") == (
-            frozenset({"space", "time"}),
+            frozenset({"lat", "lon", "time"}),
         )
 
     def test_obs_aliases_same_as_observations(self):
@@ -99,18 +106,29 @@ class TestParseIoSpec:
     def test_or_list(self):
         alts = dataset.parse_alternatives(["forecast", "ensemble_forecast"])
         assert len(alts) == 2
-        assert frozenset({"space", "init_time", "prediction_timedelta"}) in alts
+        assert frozenset({"lat", "lon", "init_time", "prediction_timedelta"}) in alts
         assert (
-            frozenset({"space", "init_time", "prediction_timedelta", "member"}) in alts
+            frozenset({"lat", "lon", "init_time", "prediction_timedelta", "member"}) in alts
         )
 
     def test_and_tuple(self):
-        assert dataset.parse_alternatives(("space", "time")) == (
-            frozenset({"space", "time"}),
+        assert dataset.parse_alternatives(("lat", "lon", "time")) == (
+            frozenset({"lat", "lon", "time"}),
         )
+
+    def test_spatial_alias(self):
+        assert dataset.parse_alternatives("spatial") == (frozenset({"lat", "lon"}),)
+        assert dataset.parse_alternatives("space") == (frozenset({"lat", "lon"}),)
+
+    def test_vertical_forecast(self):
+        assert dataset.parse_alternatives("vertical_forecast") == (
+            frozenset({"lat", "lon", "init_time", "prediction_timedelta", "vertical"}),
+        )
+        assert dataset.parse_alternatives("vertical") == (frozenset({"vertical"}),)
 
     def test_single_dim(self):
         assert dataset.parse_alternatives("time") == (frozenset({"time"}),)
+        assert dataset.parse_alternatives("lat") == (frozenset({"lat"}),)
 
 
 class TestValidateInput:
@@ -139,7 +157,8 @@ class TestValidateInput:
             == "ensemble_forecast"
         )
 
-    def test_dim_only_space(self):
+    def test_dim_only_spatial(self):
+        assert dataset.validate_input(make_gridded(), "spatial", "in.zarr") == "observations"
         assert dataset.validate_input(make_gridded(), "space", "in.zarr") == "observations"
 
     def test_gridded_rejected_when_forecast_expected(self):
@@ -175,7 +194,7 @@ class TestValidateInput:
 
     def test_dims_override_validates_undetectable_gridded(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        with pytest.raises(UsageError, match="space"):
+        with pytest.raises(UsageError, match="lat|lon"):
             dataset.validate_input(ds, "observations", "in.zarr")
         assert (
             dataset.validate_input(ds, "observations", "in.zarr", dims="yy,xx")
@@ -184,7 +203,7 @@ class TestValidateInput:
 
     def test_dims_override_names_must_exist(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        with pytest.raises(UsageError, match="space"):
+        with pytest.raises(UsageError, match="lat|lon"):
             dataset.validate_input(ds, "observations", "in.zarr", dims="a,b")
 
     def test_time_dim_override_must_exist(self):

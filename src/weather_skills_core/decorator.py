@@ -279,7 +279,7 @@ def weather_skill(
                 else:
                     path_specs = list(input_specs)
 
-                # 2. Standard kwargs (bbox / dates)
+                # 2. Standard kwargs (bbox / region / dates)
                 params = standard_args.convert_standard_args(args, arguments)
 
                 # 3. Open inputs

@@ -31,7 +31,7 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     name="my-skill",
     version=_SKILL_VERSION,
-    inputs=["space"],                # dim / canonical / any; list=OR, tuple=AND
+    inputs=["spatial"],
     outputs=["observations"],
 )
 @weather_skill.argument("--bbox", required=True)
@@ -50,7 +50,9 @@ if __name__ == "__main__":
 
 `@weather_skill.argument(...)` mirrors
 `argparse.ArgumentParser.add_argument`. Stack one decorator per flag. The skill
-function **must** accept `**kwargs`.
+function **must** accept `**kwargs`. **Every** declared flag is injected as a
+keyword argument (named parameter or via kwargs) — custom flags the same as
+standard ones.
 
 ## Standard arguments
 
@@ -59,19 +61,22 @@ the decorator adds help, parses CLI strings, and injects kwargs. The skill body
 must **not** re-parse those values (no `bbox.split("/")`, no
 `date.fromisoformat` on `bbox` / `date` / `start_time` / `end_time`). Format for
 APIs with `.isoformat()` if needed, or apply a spatial subset in the skill
-itself.
+itself. Other `@weather_skill.argument` flags still arrive as kwargs; they just
+use ordinary argparse typing (`type=`, `action=`, …) without this extra
+conversion.
 
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
+| `region` | `--region` | GeoDataFrame in kwargs as `region` (CLI string e.g. `Kenya`; also fills `bbox`) |
 | `date` | `--date` | `datetime.date` |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |
 | `variable` | `--variable` / `-v` | Variable name(s) |
 
-When both `start_time` and `end_time` are set, start must be ≤ end. For named
-regions, use `resolve-region` to get a bbox (and optional polygon), then pass
-`--bbox` into skills.
+When both `start_time` and `end_time` are set, start must be ≤ end. Pass
+`--region` or `--bbox`, not both. `--region` needs `weather-skills-core[geo]`;
+the skill body receives a GeoDataFrame, not the CLI string.
 
 ## Skill shapes
 
@@ -86,22 +91,24 @@ regions, use `resolve-region` to get a bbox (and optional polygon), then pass
 
 ## Inputs / outputs
 
-CF-based standard dimensions: `space`, `time`, `init_time`,
-`prediction_timedelta`, `member`, `day_of_year`, `point_id`, `x`, `y`.
+CF-based standard dimensions: `lat`, `lon`, `time`, `init_time`,
+`prediction_timedelta`, `member`, `vertical`, `day_of_year`, `point_id`, `x`, `y`.
 
 Types are aliases for specific required dimensions:
 
 | Type aliases | Required dimensions |
 | --- | --- |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
-| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `spatial`, `space` | `lat` + `lon` |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
+| `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
+| `vertical_forecast` | forecast dims + `vertical` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
 | `figure` | PNG / JPEG / HTML (output only) |
 | `unstructured` | opaque file path |
 
-Example: `inputs=["space"]` for clip; `inputs=["forecast"]` for a forecast-only
+Example: `inputs=["spatial"]` for clip; `inputs=["forecast"]` for a forecast-only
 skill. See `references/STANDARD_DATASET.md`.
 
 ## Provenance

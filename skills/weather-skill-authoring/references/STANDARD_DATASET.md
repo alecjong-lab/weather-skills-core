@@ -12,11 +12,13 @@ required dimensions.
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Regular grid (`lat` + `lon`) |
+| `lat` | Latitude (regular grid) |
+| `lon` | Longitude (regular grid) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
 | `member` | Ensemble member |
+| `vertical` | Vertical level (pressure, height, …) |
 | `day_of_year` | Day of year |
 | `point_id` | Station or point id |
 | `x`, `y` | Coordinates for irregular gridded data (e.g. projected meshes) |
@@ -27,8 +29,10 @@ Types are aliases for specific required dimensions:
 
 | Type aliases | Required dimensions |
 | --- | --- |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
-| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `spatial`, `space` | `lat` + `lon` |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
+| `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
+| `vertical_forecast` | forecast dims + `vertical` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
@@ -37,20 +41,27 @@ Types are aliases for specific required dimensions:
 
 ## Declaring I/O on a skill
 
+Each entry in `inputs=` / `outputs=` is one `--input` / `--output` path. What
+you put *in* an entry is a dimension, a type, or a combination:
+
+| Entry form | Meaning | Example entry |
+| --- | --- | --- |
+| String | That dim or type | `"spatial"` |
+| Tuple | All required (AND) | `("lat", "lon", "member")` |
+| List | Any one alternative (OR) | `["forecast", "ensemble_forecast"]` |
+| Trailing `+` on a string | One or more matching paths | `"any+"` (sole `inputs=` entry) |
+
 ```python
 @weather_skill(
     name="clip-region",
     version=_SKILL_VERSION,
-    inputs=["space"],          # needs a horizontal grid
-    outputs=["space"],
+    inputs=["spatial"],          # one path; needs lat + lon
+    outputs=["spatial"],
 )
 ```
 
-- One entry per `--input` / `--output`
-- Use a type or a dimension name
-- Tuple = all required: `("space", "time")`
-- List = any one is fine: `["forecast", "ensemble_forecast"]`
-- Trailing `+` = one or more paths: `"any+"`
+Two paths: `inputs=["spatial", "spatial"]`. One path that may be forecast or
+ensemble: `inputs=[["forecast", "ensemble_forecast"]]`.
 
 ## Provenance attrs
 

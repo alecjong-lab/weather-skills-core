@@ -48,6 +48,25 @@ def make_forecast(n_number=3, n_step=4):
     )
 
 
+def make_vertical_forecast(n_level=3, n_step=4):
+    levels = [850.0, 700.0, 500.0][:n_level]
+    return xr.Dataset(
+        {
+            "t": (
+                ("step", "level", "latitude", "longitude"),
+                np.ones((n_step, n_level, 2, 2)),
+            )
+        },
+        coords={
+            "step": np.array([np.timedelta64(i, "D") for i in range(n_step)]),
+            "time": np.datetime64("2026-01-01", "ns"),
+            "level": levels,
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
 def make_station(n_station=3, n_time=2):
     ids = [f"TA{i:04d}" for i in range(n_station)]
     times = np.arange(
