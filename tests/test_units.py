@@ -70,3 +70,21 @@ def test_to_standard_units_missing_variable():
     ds = make_gridded()
     with pytest.raises(UsageError, match="not in dataset"):
         to_standard_units(ds, variables=["nope"])
+
+
+def test_to_standard_units_normalizes_already_standard_spelling():
+    ds = make_gridded(name="precip", fill=1.0)
+    ds["precip"].attrs.update(units="mm/day", standard_name="precipitation_flux")
+    values_before = ds["precip"].values.copy()
+    out = to_standard_units(ds)
+    assert out["precip"].attrs["units"] == PRECIP_RATE_UNITS
+    assert out["precip"].attrs["standard_name"] == "lwe_precipitation_rate"
+    np.testing.assert_array_equal(out["precip"].values, values_before)
+
+
+def test_to_standard_units_raises_when_classified_but_not_convertible():
+    ds = make_gridded(name="t2m", fill=1.0)
+    # Classified as temperature via standard_name, but units are not convertible to °C.
+    ds["t2m"].attrs.update(units="m s-1", standard_name="air_temperature")
+    with pytest.raises(UsageError, match="not convertible"):
+        to_standard_units(ds)
