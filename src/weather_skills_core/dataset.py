@@ -1,19 +1,19 @@
-"""Envelope dim ontology, CF dim detection, and bbox subsetting.
+"""Standard-dataset dim ontology, CF dim detection, and bbox subsetting.
 
-Zarr inputs/outputs are declared as required **dimensions** (or canonical
-shorthands that expand to dims). Within one IO slot:
+Zarr inputs/outputs are declared as required **dimensions**, or as a **type**
+that expands to dims. Within one IO slot:
 
 - a **list** is OR (any alternative may match)
 - a **tuple** is AND (every entry required)
-- a **string** is a canonical shorthand, a single dim name, ``any``,
-  ``unstructured``, or ``visualization``
+- a **string** is a type, a single dim name, ``any``, ``unstructured``, or
+  ``visualization``
 
-Canonical families (same dims; prefer the primary name in declarations):
+Types (prefer the primary name):
 
-- ``observations`` / ``analysis`` / ``retrieval`` / ``field`` → space + time
-- ``forecast`` → space + init + prediction_timedelta
-- ``ensemble_forecast`` → forecast + member
-- ``station`` → point_id + time
+- ``observations`` (+ analysis/retrieval/field/data) → space, time
+- ``forecast`` → space, init_time, prediction_timedelta
+- ``ensemble_forecast`` → space, init_time, prediction_timedelta, member
+- ``station`` → point_id, time
 """
 
 from __future__ import annotations

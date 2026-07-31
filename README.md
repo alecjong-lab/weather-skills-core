@@ -31,46 +31,37 @@ signature as `argparse.ArgumentParser.add_argument`.
 
 ## Inputs and outputs
 
-`inputs=` / `outputs=` are lists of **slots** (one per `--input` / `--output`).
-Within a slot:
+Zarr slots are declared by **dimensions** or by a **type** that expands to dims.
 
-| Form | Meaning | Example |
-| --- | --- | --- |
-| string (canonical) | Expand shorthand to required dims | `"forecast"` |
-| string (dimension) | Require that one dim | `"time"` |
-| `"any"` | Zarr with no dim constraints | `"any"` |
-| `"…+"` | Variadic (≥1 paths), same requirements each | `"any+"` |
-| **tuple** | **AND** — every entry required | `("space", "time")` |
-| **list** | **OR** — any alternative matches | `["forecast", "ensemble_forecast"]` |
-
-Non-Zarr kinds: `unstructured` (opaque `Path`) and `visualization` (output-only
-PNG/JPEG/HTML).
-
-### Canonical types and dimensions
-
-Prefer the **primary** name when declaring. Aliases expand to the same dims.
-
-| Type (primary first) | Required dimensions |
-| --- | --- |
-| **`observations`**, `analysis`, `retrieval`, `field` | `space` + `time` |
-| `forecast` | `space` + `init_time` + `prediction_timedelta` |
-| `ensemble_forecast` | forecast dims + `member` |
-| `station` | `point_id` + `time` |
-
-### Dimension vocabulary
+### Dimensions
 
 | Dimension | Detected on disk as |
 | --- | --- |
 | `space` | Lat/lon pair (CF / name heuristics) |
 | `time` | Time-like dim (CF / `time`) |
-| `init_time` | `init_time` dim/coord, or scalar `time` + step (forecast init) |
-| `prediction_timedelta` | Lead/step (`step`, `prediction_timedelta`, `lead_time`) |
-| `member` | Ensemble member (`number`, `member`, `realization`) |
-| `day_of_year` / `doy` | Day-of-year dim |
+| `init_time` | `init_time`, or scalar `time` + step |
+| `prediction_timedelta` | `step`, `prediction_timedelta`, or `lead_time` |
+| `member` | `number`, `member`, or `realization` |
+| `day_of_year` (`doy`) | Day-of-year dim |
 | `point_id` | `station_id` / `point_id` with lat/lon on that dim |
-| `x` / `y` | Projected axes (when declared explicitly) |
+| `x`, `y` | Projected axes (declared explicitly) |
 
-Full standard-dataset details live in
+### Types
+
+| Type | Implied dimensions | Aliases |
+| --- | --- | --- |
+| `observations` | `space`, `time` | `analysis`, `retrieval`, `field`, `data` |
+| `forecast` | `space`, `init_time`, `prediction_timedelta` | — |
+| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` | — |
+| `station` | `point_id`, `time` | — |
+
+Also: `any` (no dim constraints), `unstructured` (opaque `Path`),
+`visualization` (output-only PNG/JPEG/HTML).
+
+`inputs=` / `outputs=` are lists of slots (one per `--input` / `--output`).
+Within a slot: string = type or dim; tuple = AND; list = OR; `…+` = variadic.
+
+Full details:
 [`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
 
 ## Automatic argument processing

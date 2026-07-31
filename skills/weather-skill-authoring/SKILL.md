@@ -77,17 +77,24 @@ skills that need that check do it in-body.
 | Variadic inputs | `inputs=["any+"]` (or `time+`, …) | skill receives a `list` of opened inputs |
 | No-artifact | omit / empty `outputs` | anything (ignored) |
 
-## Inputs / outputs ontology
+## Inputs / outputs
 
-Within one slot: **list = OR**, **tuple = AND**, **string = atom** (canonical,
-dimension, `any`, `unstructured`, or output-only `visualization`).
+**Dimensions:** `space`, `time`, `init_time`, `prediction_timedelta`, `member`,
+`day_of_year` (`doy`), `point_id`, `x`, `y`.
 
-Canonicals (prefer primary): `observations` (+ aliases analysis/retrieval/field),
-`forecast`, `ensemble_forecast`, `station`. Dims: `space`, `time`, `init_time`,
-`prediction_timedelta`, `member`, `day_of_year`/`doy`, `point_id`, `x`, `y`.
+**Types → dims:**
 
-Be specific when the skill's contract is dimensional (`inputs=["space"]` for
-clip); use `any` / `any+` when shape-agnostic. See `references/STANDARD_DATASET.md`.
+| Type | Dimensions |
+| --- | --- |
+| `observations` | `space`, `time` |
+| `forecast` | `space`, `init_time`, `prediction_timedelta` |
+| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
+| `station` | `point_id`, `time` |
+
+Also `any`, `unstructured`, `visualization`. Within one slot: string = type/dim,
+tuple = AND, list = OR, `…+` = variadic. Prefer a type when the contract is a
+known shape (`inputs=["forecast"]`); a bare dim when narrower
+(`inputs=["space"]` for clip). See `references/STANDARD_DATASET.md`.
 
 ## Provenance
 
