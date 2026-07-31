@@ -32,8 +32,9 @@ Types are aliases for specific required dimensions:
 | `forecast` | `space` + `init_time` + `prediction_timedelta` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
-
-Also: `any` (any Zarr), `unstructured` (file path), `figure` (PNG / JPEG / HTML).
+| `any` | any Zarr (no dimension check) |
+| `figure` | PNG / JPEG / HTML (output only) |
+| `unstructured` | opaque file path |
 
 ## Declaring I/O on a skill
 

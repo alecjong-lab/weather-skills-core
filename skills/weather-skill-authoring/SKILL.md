@@ -93,8 +93,9 @@ Types are aliases for specific required dimensions:
 | `forecast` | `space` + `init_time` + `prediction_timedelta` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
-
-Also: `any`, `unstructured`, `figure`.
+| `any` | any Zarr (no dimension check) |
+| `figure` | PNG / JPEG / HTML (output only) |
+| `unstructured` | opaque file path |
 
 Example: `inputs=["space"]` for clip; `inputs=["forecast"]` for a forecast-only
 skill. See `references/STANDARD_DATASET.md`.

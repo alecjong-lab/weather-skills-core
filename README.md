@@ -16,6 +16,8 @@ uv run --script clip-region.py -i imerg.zarr -o kenya.zarr --bbox 5/34/-5/42
 uv run --script plot-compare.py -i kenya.zarr -i forecast.zarr -o compare.png
 ```
 
+A minimal skill:
+
 ```python
 from weather_skills_core import weather_skill
 
@@ -27,13 +29,30 @@ from weather_skills_core import weather_skill
 )
 @weather_skill.argument("--bbox", required=True)
 def clip_region(ds, bbox, **kwargs):
-    # transform weather data; return a Dataset (or a Path you already wrote)
-    return ds
+    return ds  # or a Path you already wrote
 ```
 
-Always take `**kwargs`. Add flags with `@weather_skill.argument(...)`. The
-decorator opens inputs, runs your function, and writes Zarr outputs with
-provenance.
+A skill with standard args plus a custom flag:
+
+```python
+@weather_skill(
+    name="my-fancy-skill",
+    version="0.1.0",
+    inputs=["any"],
+    outputs=["any"],
+)
+@weather_skill.argument("--bbox")
+@weather_skill.argument("--start-time", required=True)
+@weather_skill.argument("--end-time", required=True)
+@weather_skill.argument("--corr-coefficient", type=int)
+def my_fancy_skill(ds, bbox, start_time, end_time, corr_coefficient, **kwargs):
+    ...
+    return result_ds  # or a Path to an already-written file
+```
+
+Always take `**kwargs`. Stack more flags with `@weather_skill.argument(...)`
+(same signature as `argparse`). The decorator opens inputs, runs your function,
+and writes Zarr outputs with provenance.
 
 ## Why dimensions are standardized
 
@@ -73,8 +92,9 @@ Types are aliases for specific required dimensions:
 | `forecast` | `space` + `init_time` + `prediction_timedelta` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
-
-Also: `any` (any Zarr), `unstructured` (file path), `figure` (PNG / JPEG / HTML).
+| `any` | any Zarr (no dimension check) |
+| `figure` | PNG / JPEG / HTML (output only) |
+| `unstructured` | opaque file path |
 
 One `inputs=` / `outputs=` entry per CLI path. Tuple = all required; list = any
 one; trailing `+` = one or more paths.
