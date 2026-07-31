@@ -12,7 +12,7 @@ Lint fixture with a conformant declaration.
 ## Usage
 
 ```
-uv run --script scripts/clean_skill.py --input in.zarr --output out.zarr
+uv run scripts/clean_skill.py --input in.zarr --output out.zarr
 ```
 
 ### Arguments

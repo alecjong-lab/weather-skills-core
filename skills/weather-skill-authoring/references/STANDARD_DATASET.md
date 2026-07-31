@@ -12,15 +12,14 @@ required dimensions.
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Horizontal grid (`lat` + `lon`) |
+| `space` | Regular grid (`lat` + `lon`) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
 | `member` | Ensemble member |
 | `day_of_year` | Day of year |
 | `point_id` | Station or point id |
-| `x` | Projected X |
-| `y` | Projected Y |
+| `x`, `y` | Coordinates for irregular gridded data (e.g. projected meshes) |
 
 ## Types
 

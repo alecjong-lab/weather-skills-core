@@ -9,11 +9,11 @@ skill is the code you checked in.
 
 ```bash
 # Fetch an ensemble forecast over Kenya
-uv run --script ecmwf-fetch.py --bbox 5/34/-5/42 --date 2026-01-15 -o forecast.zarr
+uv run ecmwf-fetch.py --bbox 5/34/-5/42 --date 2026-01-15 -o forecast.zarr
 
 # Clip precip observations and compare against the forecast
-uv run --script clip-region.py -i imerg.zarr -o kenya.zarr --bbox 5/34/-5/42
-uv run --script plot-compare.py -i kenya.zarr -i forecast.zarr -o compare.png
+uv run clip-region.py -i imerg.zarr -o kenya.zarr --bbox 5/34/-5/42
+uv run plot-compare.py -i kenya.zarr -i forecast.zarr -o compare.png
 ```
 
 A minimal skill:
@@ -50,9 +50,18 @@ def my_fancy_skill(ds, bbox, start_time, end_time, corr_coefficient, **kwargs):
     return result_ds  # or a Path to an already-written file
 ```
 
-Always take `**kwargs`. Stack more flags with `@weather_skill.argument(...)`
-(same signature as `argparse`). The decorator opens inputs, runs your function,
-and writes Zarr outputs with provenance.
+Always take `**kwargs`. The decorator does not only call your function — it
+fills kwargs with the parsed values for every declared argument (and with
+runtime extras like `output`). You receive ready-to-use Python objects, not
+raw CLI strings. For example, declare `--bbox` and pass Kenya's box on the
+command line (often from `resolve-region`); your skill gets
+`bbox=(north, west, south, east)` floats for Kenya, not `"5/34/-5/42"` to
+split yourself. The same idea applies to dates (`datetime.date`) and other
+standard args.
+
+Stack more flags with `@weather_skill.argument(...)` (same signature as
+`argparse.add_argument`). The decorator opens inputs, runs your function, and
+writes Zarr outputs with provenance.
 
 ## Why dimensions are standardized
 
@@ -73,14 +82,14 @@ checks inputs and outputs before and after your function runs.
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Horizontal grid (`lat` + `lon`) |
+| `space` | Regular grid (`lat` + `lon`) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
 | `member` | Ensemble member |
 | `day_of_year` | Day of year |
 | `point_id` | Station or point id |
-| `x`, `y` | Projected coordinates |
+| `x`, `y` | Coordinates for irregular gridded data (e.g. projected meshes) |
 
 ### Types
 

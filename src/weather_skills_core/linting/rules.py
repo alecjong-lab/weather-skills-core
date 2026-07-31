@@ -187,7 +187,7 @@ def _rule_core_dep(decl: SkillDeclaration) -> list[Finding]:
                 decl,
                 None,
                 f"the PEP 723 dependencies do not declare {CORE_PACKAGE}; add it so "
-                "uv run --script can resolve the decorator.",
+                "uv run can resolve the decorator.",
             )
         ]
     return []
