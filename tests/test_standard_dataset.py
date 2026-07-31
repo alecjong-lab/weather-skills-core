@@ -170,7 +170,7 @@ class TestValidateInput:
         assert dataset.validate_input(ds, "point_obs", "in.zarr") == "point_obs"
 
     def test_unknown_declared_type_is_a_programming_error(self):
-        with pytest.raises(ValueError, match="unknown IO atom"):
+        with pytest.raises(ValueError, match="unknown type or dimension"):
             dataset.validate_input(make_gridded(), "grid", "in.zarr")
 
     def test_dims_override_validates_undetectable_gridded(self):

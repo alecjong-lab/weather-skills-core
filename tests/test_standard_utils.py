@@ -397,3 +397,56 @@ class TestRequireEnv:
             utils.require_env("WSC_TEST_USER")
         assert excinfo.value.exit_code == 2
 
+
+class TestGridSpacing:
+    def test_median_spacing(self):
+        assert utils.grid_spacing([0.0, 0.25, 0.5, 0.75]) == pytest.approx(0.25)
+
+
+class TestPickTimeDim:
+    def test_prefers_time(self):
+        ds = make_gridded()
+        assert utils.pick_time_dim(ds) == "time"
+
+    def test_override(self):
+        ds = make_gridded()
+        assert utils.pick_time_dim(ds, "time") == "time"
+
+    def test_missing_override(self):
+        with pytest.raises(UsageError, match="not in dims"):
+            utils.pick_time_dim(make_gridded(), "nope")
+
+
+class TestDatasetLabel:
+    def test_from_source_attr(self):
+        ds = make_gridded()
+        ds.attrs["weather_skills_source"] = "ecmwf-s2s"
+        assert utils.dataset_label(ds, "fallback") == "ecmwf-s2s"
+
+    def test_fallback(self):
+        assert utils.dataset_label(make_gridded(), "input 1") == "input 1"
+
+
+class TestApplyWriteEncoding:
+    def test_time_and_fill(self):
+        import numpy as np
+
+        ds = make_gridded()
+        utils.apply_write_encoding(
+            ds, time_units="days since 1970-01-01", time_calendar="standard", fills={"precip": np.nan}
+        )
+        assert ds["time"].encoding["units"] == "days since 1970-01-01"
+        assert ds["time"].encoding["calendar"] == "standard"
+        assert np.isnan(ds["precip"].encoding["_FillValue"])
+
+
+class TestVerifyCfDecode:
+    def test_ok_on_stamped_grid(self):
+        from weather_skills_core.cf import stamp_cf_attrs
+
+        ds = stamp_cf_attrs(make_gridded())
+        utils.verify_cf_decode(ds)
+
+    def test_raises_when_unstamped(self):
+        with pytest.raises(DataError, match="did not resolve"):
+            utils.verify_cf_decode(make_gridded())

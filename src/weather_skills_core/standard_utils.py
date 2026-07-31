@@ -267,3 +267,79 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
             f"--bbox {bbox_str} selects no grid cells; check the extent and N/W/S/E order."
         )
     return ds
+
+
+def grid_spacing(coord_vals) -> float:
+    """Median absolute spacing of a 1-D coordinate (degrees or similar)."""
+    import numpy as np
+
+    coord = np.asarray(coord_vals)
+    if coord.size < 2:
+        raise ValueError(f"Cannot infer spacing for coord with size {coord.size}")
+    return float(abs(np.median(np.diff(coord))))
+
+
+def pick_time_dim(obj, override=None) -> str:
+    """Resolve a time-like dim: override, then ``time``, ``step``, then CF time."""
+    from weather_skills_core.cf import cf_dim
+    from weather_skills_core.errors import UsageError
+
+    dims = list(obj.dims)
+    if override:
+        if override not in obj.dims:
+            raise UsageError(f"--time-dim {override!r} not in dims {dims}")
+        return override
+    if "time" in obj.dims:
+        return "time"
+    if "step" in obj.dims:
+        return "step"
+    cf = cf_dim(obj, "time")
+    if cf and cf in obj.dims:
+        return cf
+    raise UsageError(f"no time-like dim in {dims}; pass --time-dim")
+
+
+def dataset_label(ds, fallback) -> str:
+    """Short label from ``weather_skills_source``, else ``fallback`` (str or callable)."""
+    from pathlib import Path
+
+    src = ds.attrs.get("weather_skills_source")
+    if isinstance(src, str) and src.strip():
+        return Path(src).stem
+    return fallback() if callable(fallback) else str(fallback)
+
+
+def apply_write_encoding(ds, *, time_units=None, time_calendar=None, fills=None):
+    """Set time encoding and optional per-variable ``_FillValue`` encodings in place."""
+    if time_units is not None and "time" in ds.coords:
+        ds["time"].encoding["units"] = time_units
+    if time_calendar is not None and "time" in ds.coords:
+        ds["time"].encoding["calendar"] = time_calendar
+    if fills:
+        for var, fill in fills.items():
+            if fill is not None and var in ds.variables:
+                ds[var].encoding["_FillValue"] = fill
+    return ds
+
+
+def verify_cf_decode(ds, axes: tuple = ("X", "Y", "T")):
+    """Raise DataError if cf-xarray cannot resolve the given axes."""
+    from weather_skills_core.cf import cf_axes_missing
+
+    missing = cf_axes_missing(ds, axes=axes)
+    if missing:
+        raise DataError(
+            f"cf-xarray did not resolve axes {missing} "
+            f"(expected {list(axes)}); the output is not CF-compliant."
+        )
+
+
+def latitude_weights(lats):
+    """Cosine latitude weights normalized to mean 1."""
+    import numpy as np
+    import xarray as xr
+
+    if not isinstance(lats, xr.DataArray):
+        lats = xr.DataArray(lats)
+    weights = np.cos(np.deg2rad(lats))
+    return weights / weights.mean()

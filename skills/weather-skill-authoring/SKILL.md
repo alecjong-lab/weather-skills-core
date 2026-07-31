@@ -104,7 +104,7 @@ skill. See `references/STANDARD_DATASET.md`.
 
 The decorator appends a `weather_skills_history` entry. When `outputs` is
 declared, `--output` path(s) are passed as `output` in `**kwargs`. Returned
-Datasets are checked against the output slot dims before write (Path returns
+Datasets are checked against the declared output dims before write (Path returns
 skip that check).
 
 Do not clear or rewrite history yourself; set `weather_skills_source` on fetcher

@@ -84,7 +84,7 @@ class IoSpec:
     """What one ``--input`` / ``--output`` path is allowed to be.
 
     Built from one entry in ``@weather_skill(inputs=..., outputs=...)`` by
-    :func:`normalize_slot`. The decorator uses it for CLI help and to check
+    :func:`normalize_io_spec`. The decorator uses it for CLI help and to check
     opened Zarrs via :func:`validate_input`.
 
     Examples (author shorthand → meaning)::
@@ -114,18 +114,18 @@ class IoSpec:
     label: str = ""
 
 
-def expand_atom(atom: str) -> frozenset[str]:
-    """Map a type/dim name to required ontology dims (``TYPE_ALIASES`` → ``TYPE_DIMS``, else ``DIMS``/``ALIASES``)."""
-    primary = TYPE_ALIASES.get(atom, atom)
+def required_dims_for(name: str) -> frozenset[str]:
+    """Ontology dims required by one type or dim name (``TYPE_ALIASES`` → ``TYPE_DIMS``, else ``DIMS``/``ALIASES``)."""
+    primary = TYPE_ALIASES.get(name, name)
     if primary in TYPE_DIMS:
         return TYPE_DIMS[primary]
-    if atom in DIMS:
-        return frozenset({atom})
-    dim = ALIASES.get(atom, atom)  # dataset-name synonyms: doy → day_of_year, …
+    if name in DIMS:
+        return frozenset({name})
+    dim = ALIASES.get(name, name)  # dataset-name synonyms: doy → day_of_year, …
     if dim in DIMS:
         return frozenset({dim})
     raise ValueError(
-        f"unknown IO atom {atom!r}; expected a dimension {sorted(DIMS)}, "
+        f"unknown type or dimension {name!r}; expected a dimension {sorted(DIMS)}, "
         f"a type {sorted(TYPE_DIMS)}, or any/unstructured/figure"
     )
 
@@ -133,7 +133,7 @@ def expand_atom(atom: str) -> frozenset[str]:
 def and_group(spec) -> frozenset[str]:
     """Flatten a str or AND-tuple into one required dim-set."""
     if isinstance(spec, str):
-        return expand_atom(spec)
+        return required_dims_for(spec)
     if isinstance(spec, tuple):
         if not spec:
             return frozenset()
@@ -144,7 +144,7 @@ def and_group(spec) -> frozenset[str]:
                     raise ValueError(f"OR lists cannot appear inside an AND tuple; got {part!r}")
                 out |= and_group(part)
             elif isinstance(part, str):
-                out |= expand_atom(part)
+                out |= required_dims_for(part)
             else:
                 raise ValueError(f"invalid AND-group entry {part!r}")
         return frozenset(out)
@@ -154,7 +154,7 @@ def and_group(spec) -> frozenset[str]:
 def parse_alternatives(spec) -> tuple[frozenset[str], ...]:
     """Parse a Zarr IO entry body into OR-alternatives: str / tuple=AND / list=OR → :attr:`IoSpec.alternatives`."""
     if isinstance(spec, str):
-        return (expand_atom(spec),)
+        return (required_dims_for(spec),)
     if isinstance(spec, tuple):
         return (and_group(spec),)
     if isinstance(spec, list):
@@ -169,7 +169,7 @@ def parse_alternatives(spec) -> tuple[frozenset[str], ...]:
     raise ValueError(f"invalid IO entry {spec!r}; expected str, list (OR), or tuple (AND)")
 
 
-def normalize_slot(raw, *, allow_variadic: bool = False, for_input: bool = True) -> IoSpec:
+def normalize_io_spec(raw, *, allow_variadic: bool = False, for_input: bool = True) -> IoSpec:
     """Parse one ``inputs=``/``outputs=`` entry into a :class:`IoSpec` (kinds, ``+``, then dim spec)."""
     variadic = False
     label = repr(raw)
@@ -195,19 +195,19 @@ def normalize_slot(raw, *, allow_variadic: bool = False, for_input: bool = True)
     return IoSpec(kind="zarr", alternatives=alternatives, variadic=variadic, label=label)
 
 
-def normalize_io_list(
-    raw_slots, *, allow_variadic: bool, for_input: bool
+def normalize_io_specs(
+    raw_specs, *, allow_variadic: bool, for_input: bool
 ) -> tuple[list[IoSpec], bool]:
-    """Parse ``inputs=``/``outputs=`` → ``(slots, is_variadic)``; ``+`` must be the sole entry."""
-    slots = list(raw_slots or [])
-    if not slots:
+    """Parse ``inputs=``/``outputs=`` → ``(specs, is_variadic)``; ``+`` must be the sole entry."""
+    specs = list(raw_specs or [])
+    if not specs:
         return [], False
-    parsed = [normalize_slot(s, allow_variadic=allow_variadic, for_input=for_input) for s in slots]
+    parsed = [normalize_io_spec(s, allow_variadic=allow_variadic, for_input=for_input) for s in specs]
     if any(s.variadic for s in parsed):
         if len(parsed) != 1 or not parsed[0].variadic:
             raise ValueError(
                 "variadic IO must be a single entry like 'any+' or 'time+'; "
-                "cannot mix fixed and variadic slots"
+                "cannot mix fixed and variadic entries"
             )
         return parsed, True
     return parsed, False
@@ -330,7 +330,7 @@ def validate_input(
         validate_dims(ds, allowed.alternatives, name, dims=dims, time_dim=time_dim)
         return detect_type(ds)
 
-    # String / list / tuple slot body (including legacy "data")
+    # String / list / tuple IO entry body (including legacy "data")
     if isinstance(allowed, (str, list, tuple)):
         if (
             isinstance(allowed, list)
@@ -353,7 +353,7 @@ def validate_input(
                 ("observations" if x == "data" else "point_obs" if x == "station" else x)
                 for x in allowed
             ]
-            slot = normalize_slot(mapped if len(mapped) > 1 else mapped[0], for_input=True)
+            spec = normalize_io_spec(mapped if len(mapped) > 1 else mapped[0], for_input=True)
         else:
             body = (
                 "observations"
@@ -362,10 +362,10 @@ def validate_input(
                 if allowed == "station"
                 else allowed
             )
-            slot = normalize_slot(body, for_input=True)
-        if slot.kind != "zarr":
-            return slot.kind
-        validate_dims(ds, slot.alternatives, name, dims=dims, time_dim=time_dim)
+            spec = normalize_io_spec(body, for_input=True)
+        if spec.kind != "zarr":
+            return spec.kind
+        validate_dims(ds, spec.alternatives, name, dims=dims, time_dim=time_dim)
         return detect_type(ds)
 
     raise ValueError(f"invalid validate_input allowed={allowed!r}")

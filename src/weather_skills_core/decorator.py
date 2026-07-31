@@ -40,18 +40,18 @@ class Argument:
         return flag.lstrip("-").replace("-", "_")
 
 
-def slot_help_label(slot: std.IoSpec) -> str:
-    if slot.kind == "unstructured":
+def io_spec_help_label(spec: std.IoSpec) -> str:
+    if spec.kind == "unstructured":
         return "unstructured"
-    if slot.kind == "figure":
+    if spec.kind == "figure":
         return "figure"
-    if slot.alternatives is None:
+    if spec.alternatives is None:
         return "any"
-    if len(slot.alternatives) == 1:
-        dims = sorted(slot.alternatives[0])
+    if len(spec.alternatives) == 1:
+        dims = sorted(spec.alternatives[0])
         return "+".join(dims) if dims else "any"
     parts = []
-    for alt in slot.alternatives:
+    for alt in spec.alternatives:
         parts.append("{" + ",".join(sorted(alt)) + "}")
     return " OR ".join(parts)
 
@@ -67,7 +67,7 @@ def serialize_args(entry_args: dict) -> dict:
     return json.loads(json.dumps(entry_args, default=str))
 
 
-def build_history(name, version, args, params, input_paths, path_slots, upstream):
+def build_history(name, version, args, params, input_paths, path_specs, upstream):
     """Append this skill's provenance entry to the first input's history."""
     entry_args = {k: v for k, v in vars(args).items() if k not in ("input", "output")}
     for dest in ("date", "start_time", "end_time"):
@@ -79,7 +79,7 @@ def build_history(name, version, args, params, input_paths, path_slots, upstream
         input_field = None
         base_history = []
     elif len(input_paths) == 1:
-        if path_slots[0].kind == std.UNSTRUCTURED:
+        if path_specs[0].kind == std.UNSTRUCTURED:
             input_field = {
                 "basename": input_paths[0].name,
                 "hash": provenance_mod.hash_file(input_paths[0]),
@@ -89,8 +89,8 @@ def build_history(name, version, args, params, input_paths, path_slots, upstream
         base_history = upstream[0]
     else:
         input_field = []
-        for path, slot, hist in zip(input_paths, path_slots, upstream, strict=True):
-            if slot.kind == std.UNSTRUCTURED:
+        for path, spec, hist in zip(input_paths, path_specs, upstream, strict=True):
+            if spec.kind == std.UNSTRUCTURED:
                 input_field.append(
                     {
                         "basename": path.name,
@@ -112,9 +112,9 @@ def build_history(name, version, args, params, input_paths, path_slots, upstream
     return base_history + [entry]
 
 
-def write_output(value, out_path, out_slot, history, first_ds):
+def write_output(value, out_path, out_spec, history, first_ds):
     """Write one skill result: stamp a figure/Path, or ``to_zarr`` a Dataset."""
-    if out_slot.kind == std.FIGURE:
+    if out_spec.kind == std.FIGURE:
         if not isinstance(value, (str, Path)):
             raise SkillError("figure outputs must return a Path to the written file")
         written = Path(value)
@@ -132,8 +132,8 @@ def write_output(value, out_path, out_slot, history, first_ds):
         print(f"Wrote: {out_path}", file=sys.stderr)
         return
 
-    if out_slot.kind == "zarr" and hasattr(value, "dims"):
-        std.validate_input(value, out_slot, f"output {out_path}")
+    if out_spec.kind == "zarr" and hasattr(value, "dims"):
+        std.validate_input(value, out_spec, f"output {out_path}")
 
     if first_ds is not None:
         value.attrs = {**first_ds.attrs, **value.attrs}
@@ -171,17 +171,17 @@ def weather_skill(
 ):
     """Turn a function into a weather skill CLI with validated I/O and provenance.
 
-    ``inputs``/``outputs`` are slot lists (str; list=OR; tuple=AND; trailing ``+``
+    ``inputs``/``outputs`` are IO spec lists (str; list=OR; tuple=AND; trailing ``+``
     = variadic). Stack ``@weather_skill.argument`` for extra flags. The skill
     must accept ``**kwargs`` (decorator passes ``output`` there).
     """
     raw_inputs = list(inputs or [])
     raw_outputs = list(outputs or [])
     try:
-        input_slots, variadic_input = std.normalize_io_list(
+        input_specs, variadic_input = std.normalize_io_specs(
             raw_inputs, allow_variadic=True, for_input=True
         )
-        output_slots, _ = std.normalize_io_list(
+        output_specs, _ = std.normalize_io_specs(
             raw_outputs, allow_variadic=False, for_input=False
         )
     except ValueError as exc:
@@ -209,12 +209,12 @@ def weather_skill(
             description=fn.__doc__,
             epilog=f"skill version: {version}",
         )
-        if input_slots:
+        if input_specs:
             if variadic_input:
-                label = slot_help_label(input_slots[0])
+                label = io_spec_help_label(input_specs[0])
                 help_text = f"Input path (repeat once per input; each must be {label})."
             else:
-                n = len(input_slots)
+                n = len(input_specs)
                 help_text = f"Input path (repeat exactly {n} time{'s' if n != 1 else ''})."
             parser.add_argument(
                 "--input",
@@ -225,8 +225,8 @@ def weather_skill(
                 metavar="PATH",
                 help=help_text,
             )
-        if output_slots:
-            n = len(output_slots)
+        if output_specs:
+            n = len(output_specs)
             parser.add_argument(
                 "--output",
                 "-o",
@@ -256,18 +256,18 @@ def weather_skill(
                 # 1. Paths
                 input_paths = [Path(p) for p in (getattr(args, "input", None) or [])]
                 output_paths = [Path(p) for p in (getattr(args, "output", None) or [])]
-                if input_slots:
+                if input_specs:
                     if variadic_input:
                         if len(input_paths) < 1:
                             raise UsageError("expected at least one --input path")
-                    elif len(input_paths) != len(input_slots):
+                    elif len(input_paths) != len(input_specs):
                         raise UsageError(
-                            f"expected {len(input_slots)} --input path(s), "
+                            f"expected {len(input_specs)} --input path(s), "
                             f"got {len(input_paths)}"
                         )
-                if output_slots and len(output_paths) != len(output_slots):
+                if output_specs and len(output_paths) != len(output_specs):
                     raise UsageError(
-                        f"expected {len(output_slots)} --output path(s), "
+                        f"expected {len(output_specs)} --output path(s), "
                         f"got {len(output_paths)}"
                     )
                 for path in input_paths:
@@ -275,9 +275,9 @@ def weather_skill(
                         raise UsageError(f"input not found: {path}")
 
                 if variadic_input:
-                    path_slots = [input_slots[0]] * len(input_paths)
+                    path_specs = [input_specs[0]] * len(input_paths)
                 else:
-                    path_slots = list(input_slots)
+                    path_specs = list(input_specs)
 
                 # 2. Standard kwargs (bbox / dates)
                 params = standard_args.convert_standard_args(args, arguments)
@@ -285,19 +285,19 @@ def weather_skill(
                 # 3. Open inputs
                 opened = []
                 upstream = []
-                for path, slot in zip(input_paths, path_slots, strict=True):
-                    if slot.kind == std.UNSTRUCTURED:
+                for path, spec in zip(input_paths, path_specs, strict=True):
+                    if spec.kind == std.UNSTRUCTURED:
                         opened.append(path)
                         upstream.append([])
                     else:
                         ds = xr.open_zarr(path, consolidated=True)
-                        std.validate_input(ds, slot, str(path))
+                        std.validate_input(ds, spec, str(path))
                         opened.append(ds)
                         upstream.append(provenance_mod.load_history(path))
 
                 # 4. Call skill
                 extra = {}
-                if output_slots:
+                if output_specs:
                     extra["output"] = (
                         output_paths[0] if len(output_paths) == 1 else output_paths
                     )
@@ -305,28 +305,28 @@ def weather_skill(
                     result = fn(opened, **params, **extra)
                 else:
                     result = fn(*opened, **params, **extra)
-                if not output_slots:
+                if not output_specs:
                     return result
 
                 # 5. Stamp / write each output
                 results = result if isinstance(result, (list, tuple)) else [result]
-                if len(results) != len(output_slots):
+                if len(results) != len(output_specs):
                     raise SkillError(
                         f"skill returned {len(results)} value(s), "
-                        f"expected {len(output_slots)}"
+                        f"expected {len(output_specs)}"
                     )
 
                 history = build_history(
-                    name, version, args, params, input_paths, path_slots, upstream
+                    name, version, args, params, input_paths, path_specs, upstream
                 )
                 first_ds = next(
                     (item for item in opened if hasattr(item, "attrs")),
                     None,
                 )
-                for value, out_path, out_slot in zip(
-                    results, output_paths, output_slots, strict=True
+                for value, out_path, out_spec in zip(
+                    results, output_paths, output_specs, strict=True
                 ):
-                    write_output(value, out_path, out_slot, history, first_ds)
+                    write_output(value, out_path, out_spec, history, first_ds)
 
                 return result
             except SkillError as exc:

@@ -25,7 +25,7 @@ weather-skills-core = "weather_skills_core.linting.cli:main"
 [project.optional-dependencies]
 # udunits validation: cf.udunits_error
 units = ["cf-units>=3.3.1"]
-# GeoJSON geometry: standard_args.polygon_from_geojson
+# GeoJSON geometry: standard_utils.polygon_from_geojson
 geo = ["shapely>=2.1.2"]
 
 [dependency-groups]

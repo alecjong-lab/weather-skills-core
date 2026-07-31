@@ -413,7 +413,7 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("inputs is not a literal; input arity unknown")
     elif isinstance(inputs_val, list | tuple):
         decl.has_input = len(inputs_val) > 0
-        # A single "type+" entry is variadic (append); multiple fixed slots also append.
+        # A single "type+" entry is variadic (append); multiple fixed entries also append.
         if len(inputs_val) == 1 and isinstance(inputs_val[0], str) and inputs_val[0].endswith("+") or len(inputs_val) > 1:
             decl.input_arity = "append"
         else:
