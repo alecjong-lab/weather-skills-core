@@ -10,10 +10,11 @@ def make_data(
     name="precip",
     fill=1.0,
     start="2026-01-01",
+    units="mm",
 ):
     times = np.arange(np.datetime64(start), np.datetime64(start) + np.timedelta64(n_time, "D"))
     data = np.full((n_time, len(lats), len(lons)), fill)
-    return xr.Dataset(
+    ds = xr.Dataset(
         {name: (("time", "latitude", "longitude"), data)},
         coords={
             "time": times.astype("datetime64[ns]"),
@@ -21,6 +22,9 @@ def make_data(
             "longitude": list(lons),
         },
     )
+    if units is not None:
+        ds[name].attrs["units"] = units
+    return ds
 
 
 # Back-compat alias for older test names during migration
@@ -37,15 +41,18 @@ def make_forecast(n_number=3, n_step=4):
     if n_number:
         data = np.ones((n_number, n_step, 2, 2))
         coords["number"] = np.arange(n_number)
-        return xr.Dataset(
+        ds = xr.Dataset(
             {"tp": (("number", "step", "latitude", "longitude"), data)},
             coords=coords,
         )
-    data = np.ones((n_step, 2, 2))
-    return xr.Dataset(
-        {"tp": (("step", "latitude", "longitude"), data)},
-        coords=coords,
-    )
+    else:
+        data = np.ones((n_step, 2, 2))
+        ds = xr.Dataset(
+            {"tp": (("step", "latitude", "longitude"), data)},
+            coords=coords,
+        )
+    ds["tp"].attrs["units"] = "mm"
+    return ds
 
 
 def make_vertical_forecast(n_level=3, n_step=4):

@@ -50,15 +50,22 @@ def stamp_cf_coords(ds, *, long_names: dict | None = None):
     return ds
 
 
-def udunits_error(units, *, catch: tuple = (ValueError,)):
-    """Try parsing ``units`` with cf_units. Return the error, or None if ok.
+def udunits_error(units, *, catch: tuple | None = None):
+    """Try parsing ``units`` with pint (CF/UDUNITS via cf_xarray.units).
 
-    Caller builds the user-facing message. Blank/None may parse as "unknown".
+    Return the error, or None if ok. Caller builds the user-facing message.
+    ``None`` and ``""`` pass through (no raise), matching prior blank handling.
     """
-    import cf_units
+    import cf_xarray.units  # noqa: F401 — configures application_registry
+    from pint import UndefinedUnitError
+    from pint import application_registry as ureg
 
+    if catch is None:
+        catch = (UndefinedUnitError, TypeError, ValueError)
+    if units is None or units == "":
+        return None
     try:
-        cf_units.Unit(units)
+        ureg.Unit(units)
     except catch as exc:
         return exc
     return None

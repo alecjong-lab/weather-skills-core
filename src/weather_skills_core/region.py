@@ -6,6 +6,8 @@ import json
 from functools import lru_cache
 from importlib.resources import files
 
+import geopandas as gpd
+
 from weather_skills_core.errors import DataError, UsageError
 
 
@@ -16,17 +18,7 @@ def _countries() -> dict:
 
 
 def resolve_region(query: str):
-    """Resolve a country name or ISO3 code to ``((N, W, S, E), GeoDataFrame)``.
-
-    Requires ``weather-skills-core[geo]`` (geopandas).
-    """
-    try:
-        import geopandas as gpd
-    except ImportError as exc:
-        raise UsageError(
-            "--region requires geopandas; install weather-skills-core[geo]."
-        ) from exc
-
+    """Resolve a country name or ISO3 code to ``((N, W, S, E), GeoDataFrame)``."""
     text = query.strip()
     if not text:
         raise UsageError("--region must be a non-empty country name or ISO3 code.")

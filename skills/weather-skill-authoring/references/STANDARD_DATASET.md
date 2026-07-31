@@ -80,7 +80,7 @@ normalize common display units (`weather-skills-core[units]`):
 
 | Kind | Standard units |
 | --- | --- |
-| temperature | `degree_Celsius` |
+| temp | `degree_Celsius` |
 | precip rate | `mm day-1` |
 | precip amount | `mm` |
 

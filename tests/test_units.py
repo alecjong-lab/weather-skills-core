@@ -11,6 +11,8 @@ from weather_skills_core.units import (
     TEMP_UNITS,
     classify_variable,
     convert_values,
+    dequantify_dataset,
+    quantify_dataset,
     to_standard_units,
     units_equal,
 )
@@ -22,20 +24,22 @@ def test_units_equal_spelling():
     assert not units_equal("mm", "mm day-1")
 
 
-def test_convert_values_temp_and_precip_bridge():
+def test_convert_values_temp_and_precip_density():
     k, _ = convert_values(np.array([273.15]), "K", TEMP_UNITS)
     np.testing.assert_allclose(k, [0.0], atol=1e-6)
-    mm, bridged = convert_values(np.array([1.0]), "kg m-2", PRECIP_AMOUNT_UNITS)
-    assert bridged
+    mm, density_converted = convert_values(np.array([1.0]), "kg m-2", PRECIP_AMOUNT_UNITS)
+    assert density_converted
     np.testing.assert_allclose(mm, [1.0], atol=1e-6)
-    rate, bridged = convert_values(np.array([1e-3]), "kg m-2 s-1", PRECIP_RATE_UNITS)
-    assert bridged
-    # 1e-3 kg m-2 s-1 ≡ 1e-3 mm/s ≡ 86.4 mm/day
+    rate, density_converted = convert_values(
+        np.array([1e-3]), "kg m-2 s-1", PRECIP_RATE_UNITS
+    )
+    assert density_converted
+    # 1e-3 kg m-2 s-1 / (1000 kg m-3) → 1e-3 mm/s ≡ 86.4 mm/day
     np.testing.assert_allclose(rate, [86.4], rtol=1e-5)
 
 
 def test_classify_variable():
-    assert classify_variable("t2m", units="K", standard_name="air_temperature") == "temperature"
+    assert classify_variable("t2m", units="K", standard_name="air_temperature") == "temp"
     assert classify_variable("tp", units="kg m-2", standard_name="precipitation_amount") == (
         "precip_amount"
     )
@@ -88,3 +92,29 @@ def test_to_standard_units_raises_when_classified_but_not_convertible():
     ds["t2m"].attrs.update(units="m s-1", standard_name="air_temperature")
     with pytest.raises(UsageError, match="not convertible"):
         to_standard_units(ds)
+
+
+def test_quantify_dataset_requires_units_for_temp_precip():
+    ds = make_gridded(name="precip", units=None)
+    with pytest.raises(UsageError, match="requires a units attribute"):
+        quantify_dataset(ds)
+
+
+def test_quantify_dataset_passes_unitless_other_vars():
+    ds = make_gridded(name="humidity", units=None)
+    ds["humidity"].attrs.pop("units", None)
+    q = quantify_dataset(ds)
+    assert q["humidity"].pint.units is None
+    assert not hasattr(q["humidity"].data, "units")
+
+
+def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
+    ds = make_gridded(name="precip", units="mm")
+    ds["latitude"].attrs["units"] = "degrees_north"
+    q = quantify_dataset(ds)
+    assert q["precip"].pint.units is not None
+    assert str(q["precip"].pint.units) in ("millimeter", "mm")
+    assert q["latitude"].pint.units is None
+    assert q["latitude"].attrs["units"] == "degrees_north"
+    plain = dequantify_dataset(q)
+    assert "units" in plain["precip"].attrs

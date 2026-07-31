@@ -276,34 +276,37 @@ class TestVerifyCfDsg:
 
 class TestUdunitsError:
     @pytest.fixture(autouse=True)
-    def _require_cf_units(self):
-        pytest.importorskip("cf_units")
+    def _require_pint(self):
+        pytest.importorskip("pint")
+        pytest.importorskip("pint_xarray")
 
     @pytest.mark.parametrize("units", ["mm", "degC", "kg m-3", "mm day-1", "1"])
     def test_valid_units_return_none(self, units):
         assert dataset.udunits_error(units) is None
 
     def test_invalid_units_return_the_exception(self):
+        from pint import UndefinedUnitError
+
         exc = dataset.udunits_error("definitely ! not a unit")
-        assert isinstance(exc, ValueError)
-        assert "not a unit" in str(exc)
+        assert isinstance(exc, UndefinedUnitError)
+        assert "definitely" in str(exc)
 
     def test_blank_units_pass_through(self):
-        # cf_units.Unit(None) and Unit("") return an "unknown" unit without
-        # raising; rejecting blanks is the caller's guard.
+        # None / "" pass through without raising; rejecting blanks is the caller's guard.
         assert dataset.udunits_error(None) is None
         assert dataset.udunits_error("") is None
 
     def test_catch_widens_the_converted_failures(self):
+        from pint import UndefinedUnitError
+
         class Boom(Exception):
             pass
 
-        # With the default catch, only ValueError converts; a wider catch
-        # returns whatever cf_units raised.
+        # Default catch converts pint parse errors; a narrow catch re-raises.
         assert dataset.udunits_error("degC", catch=(Exception,)) is None
         exc = dataset.udunits_error("definitely ! not a unit", catch=(Exception,))
-        assert isinstance(exc, ValueError)
-        with pytest.raises(ValueError):
+        assert isinstance(exc, UndefinedUnitError)
+        with pytest.raises(UndefinedUnitError):
             dataset.udunits_error("definitely ! not a unit", catch=(Boom,))
 
 

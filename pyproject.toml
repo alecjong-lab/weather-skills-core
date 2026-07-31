@@ -15,6 +15,7 @@ dependencies = [
     "cftime>=1.6",
     "numpy>=2.5",
     "pillow>=10",
+    "pint-xarray>=0.6",
     "xarray>=2026.7",
     "zarr>=3.2",
 ]
@@ -23,14 +24,11 @@ dependencies = [
 weather-skills-core = "weather_skills_core.linting.cli:main"
 
 [project.optional-dependencies]
-# udunits validation: cf.udunits_error
-units = ["cf-units>=3.3.1"]
 # GeoJSON / region: shapely + geopandas (polygon helpers, --region → GeoDataFrame)
 geo = ["shapely>=2.1.2", "geopandas>=1.0"]
 
 [dependency-groups]
 dev = [
-    "cf-units>=3.3.1",
     "geopandas>=1.0",
     "pre-commit>=4.6",
     "pytest>=9.1",
@@ -50,6 +48,8 @@ filterwarnings = [
     # zarr-python warns on every consolidated write; consolidated=True is part
     # of the standard dataset contract, so the warning is expected noise in tests.
     "ignore:Consolidated metadata is currently not part in the Zarr format 3 specification",
+    # cf_xarray.units optionally wires matplotlib; fine to skip in headless tests.
+    "ignore:Import\\(s\\) unavailable to set up matplotlib support",
 ]
 
 [tool.ruff]

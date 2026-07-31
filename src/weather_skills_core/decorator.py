@@ -14,6 +14,7 @@ from weather_skills_core import provenance as provenance_mod
 from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
 from weather_skills_core.errors import SkillError, UsageError
+from weather_skills_core.units import dequantify_dataset, quantify_dataset
 
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
@@ -134,6 +135,9 @@ def write_output(value, out_path, out_spec, history, first_ds):
 
     if out_spec.kind == "zarr" and hasattr(value, "dims"):
         std.validate_input(value, out_spec, f"output {out_path}")
+
+    if hasattr(value, "pint"):
+        value = dequantify_dataset(value)
 
     if first_ds is not None:
         value.attrs = {**first_ds.attrs, **value.attrs}
@@ -292,7 +296,7 @@ def weather_skill(
                     else:
                         ds = xr.open_zarr(path, consolidated=True)
                         std.validate_input(ds, spec, str(path))
-                        opened.append(ds)
+                        opened.append(quantify_dataset(ds))
                         upstream.append(provenance_mod.load_history(path))
 
                 # 4. Call skill

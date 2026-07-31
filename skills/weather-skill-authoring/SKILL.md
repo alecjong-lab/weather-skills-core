@@ -124,7 +124,8 @@ Datasets before return if needed.
 ## Units helpers
 
 `to_standard_units(ds)` / `units_equal(a, b)` — normalize temp → `degree_Celsius`
-and precip → `mm day-1` / `mm` (requires `weather-skills-core[units]` / `cf-units`).
+and precip → `mm day-1` / `mm`. Inputs are quantified by `@weather_skill` via
+`pint-xarray` (temp/precip vars require `units`).
 
 ## Errors
 
