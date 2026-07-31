@@ -8,7 +8,7 @@ from conftest import make_data
 from PIL import Image
 
 from weather_skills_core.decorator import rewrite_bbox_argv, weather_skill
-from weather_skills_core.provenance import HISTORY_ATTR, load_history, load_visualization_history
+from weather_skills_core.provenance import HISTORY_ATTR, load_history, load_figure_history
 
 
 class TestRewriteBbox:
@@ -196,25 +196,25 @@ class TestRunLoop:
         wrap(["-i", str(raw), "-o", str(out)])
         assert out.exists()
 
-    def test_visualization_output(self, tmp_path):
+    def test_figure_output(self, tmp_path):
         src = tmp_path / "in.zarr"
         out = tmp_path / "plot.png"
         make_data().to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill(name="plot", version="0.1.0", inputs=["data"], outputs=["visualization"])
+        @weather_skill(name="plot", version="0.1.0", inputs=["data"], outputs=["figure"])
         def plot(ds, output, **kwargs):
             Image.new("RGB", (8, 8), color=(1, 2, 3)).save(output)
             return output
 
         plot(["-i", str(src), "-o", str(out)])
         assert out.exists()
-        assert load_visualization_history(out)[-1]["skill"] == "plot"
+        assert load_figure_history(out)[-1]["skill"] == "plot"
 
-    def test_visualization_wrong_path_exits(self, tmp_path):
+    def test_figure_wrong_path_exits(self, tmp_path):
         out = tmp_path / "plot.png"
         wrong = tmp_path / "other.png"
 
-        @weather_skill(name="plot", version="0.1.0", outputs=["visualization"])
+        @weather_skill(name="plot", version="0.1.0", outputs=["figure"])
         def plot(output, **kwargs):
             Image.new("RGB", (4, 4)).save(wrong)
             return wrong

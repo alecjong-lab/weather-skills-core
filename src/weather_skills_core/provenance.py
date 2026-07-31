@@ -198,7 +198,7 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
     zarr.consolidate_metadata(str(zarr_path))
 
 
-def stamp_visualization(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
+def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
     """Embed ``weather_skills_history`` JSON into a PNG, JPEG, or HTML file."""
     from weather_skills_core.errors import SkillError
 
@@ -243,13 +243,13 @@ def stamp_visualization(path: Path, history: list, *, software: str = DEFAULT_SO
         return
 
     raise SkillError(
-        f"unsupported visualization type {suffix!r} for {path}; "
+        f"unsupported figure type {suffix!r} for {path}; "
         "expected .png, .jpg/.jpeg, or .html/.htm"
     )
 
 
-def load_visualization_history(path: Path) -> list | None:
-    """Read history from a stamped visualization file, or None if absent."""
+def load_figure_history(path: Path) -> list | None:
+    """Read history from a stamped figure file, or None if absent."""
     path = Path(path)
     suffix = path.suffix.lower()
 

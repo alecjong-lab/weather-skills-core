@@ -1,12 +1,14 @@
 # WeatherSkills standard dataset
 
-Skills read and write CF-compliant Zarr stores. Name your dimensions with the
-list below. Skills declare what they need either by those names, or by a short
-**type** that stands for a fixed set of them.
+Skills read and write [CF-compliant](https://cfconventions.org/) Zarr stores.
+We standardize dimensions so weather data from different sources can move
+through the same pipeline: a skill declares what it needs, and the decorator
+checks that the Zarr has those dimensions.
+
+Use the dimension names below, or a **type** — an alias for a fixed set of
+required dimensions.
 
 ## Dimensions
-
-Use these names:
 
 | Name | Meaning |
 | --- | --- |
@@ -22,17 +24,16 @@ Use these names:
 
 ## Types
 
-A type is a shortcut for a set of dimensions. Prefer the primary name; aliases
-mean the same thing.
+Types are aliases for specific required dimensions:
 
-| Type (primary first) | Required dimensions |
+| Type aliases | Required dimensions |
 | --- | --- |
 | `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
 | `forecast` | `space` + `init_time` + `prediction_timedelta` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 
-Also: `any` (any Zarr), `unstructured` (file path), `visualization` (PNG / JPEG / HTML).
+Also: `any` (any Zarr), `unstructured` (file path), `figure` (PNG / JPEG / HTML).
 
 ## Declaring I/O on a skill
 

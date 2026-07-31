@@ -49,22 +49,25 @@ if __name__ == "__main__":
 ```
 
 `@weather_skill.argument(...)` mirrors
-`argparse.ArgumentParser.add_argument(*option_strings, **kwargs)`. Stack one
-decorator per flag under `@weather_skill(...)`. The skill function **must**
-accept `**kwargs`.
+`argparse.ArgumentParser.add_argument`. Stack one decorator per flag. The skill
+function **must** accept `**kwargs`.
 
-Canonical dests get automatic help and post-parse conversion:
+## Standard arguments
 
-| Dest | Flags | Conversion |
+Shared by many weather skills. Declare them with the names below and the
+decorator handles help, parsing, and checks for you.
+
+| Argument | Flag | What you get |
 | --- | --- | --- |
-| `bbox` | `--bbox` | `parse_bbox` → `(N,W,S,E)` |
-| `date` | `--date` | `parse_date` → `datetime.date` |
-| `start_time` | `--start-time` | `parse_date` → `datetime.date` |
-| `end_time` | `--end-time` | `parse_date` → `datetime.date` |
+| `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
+| `date` | `--date` | `datetime.date` |
+| `start_time` | `--start-time` | Range start as `datetime.date` |
+| `end_time` | `--end-time` | Range end as `datetime.date` |
+| `variable` | `--variable` / `-v` | Variable name(s) |
 
-If both `start_time` and `end_time` are set, the decorator also requires
-`start_time <= end_time`. It does **not** XOR `--date` with the range flags;
-skills that need that check do it in-body.
+When both `start_time` and `end_time` are set, start must be ≤ end. For named
+regions, use `resolve-region` to get a bbox (and optional polygon), then pass
+`--bbox` into skills.
 
 ## Skill shapes
 
@@ -72,24 +75,26 @@ skills that need that check do it in-body.
 | --- | --- | --- |
 | Transform | `inputs=[...]`, `outputs=[…]` | Dataset or Path |
 | Fetcher | `inputs=[]` (or omit), zarr `outputs` | Dataset or Path |
-| Visualization | `outputs=["visualization"]` | Path (write to `kwargs["output"]`) |
+| Figure | `outputs=["figure"]` | Path (write to `kwargs["output"]`) |
 | Unstructured input | `inputs=["unstructured"]` | skill receives a `Path` |
 | Variadic inputs | `inputs=["any+"]` (or `time+`, …) | skill receives a `list` of opened inputs |
 | No-artifact | omit / empty `outputs` | anything (ignored) |
 
 ## Inputs / outputs
 
-Standard dimension names: `space`, `time`, `init_time`, `prediction_timedelta`,
-`member`, `day_of_year`, `point_id`, `x`, `y`.
+CF-based standard dimensions: `space`, `time`, `init_time`,
+`prediction_timedelta`, `member`, `day_of_year`, `point_id`, `x`, `y`.
 
-| Type (primary first) | Required dimensions |
+Types are aliases for specific required dimensions:
+
+| Type aliases | Required dimensions |
 | --- | --- |
 | `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
 | `forecast` | `space` + `init_time` + `prediction_timedelta` |
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 
-Also: `any`, `unstructured`, `visualization`.
+Also: `any`, `unstructured`, `figure`.
 
 Example: `inputs=["space"]` for clip; `inputs=["forecast"]` for a forecast-only
 skill. See `references/STANDARD_DATASET.md`.

@@ -29,7 +29,7 @@ DIM_ALIASES = {"doy": DAY_OF_YEAR}
 
 # Non-dim I/O kinds
 UNSTRUCTURED = "unstructured"
-VISUALIZATION = "visualization"
+FIGURE = "figure"
 ANY = "any"
 
 # Primary type names (and a few back-compat constants)
@@ -44,8 +44,7 @@ _FORECAST = frozenset({SPACE, INIT_TIME, PREDICTION_TIMEDELTA})
 _ENSEMBLE = _FORECAST | {MEMBER}
 _POINT_OBS = frozenset({POINT_ID, TIME})
 
-# Canonical shorthand → required ontology dims (AND).
-# Primary names first; aliases share the same dim set.
+# Type name → required ontology dims (AND). Several names may share one set.
 CANONICAL: dict[str, frozenset[str]] = {
     "observations": _OBS,
     "obs": _OBS,
@@ -72,7 +71,7 @@ _POINT_NAMES = ("station_id", "point_id")
 class SlotSpec:
     """One inputs=/outputs= slot after normalization."""
 
-    kind: str  # "zarr" | "unstructured" | "visualization"
+    kind: str  # "zarr" | "unstructured" | "figure"
     alternatives: tuple[frozenset[str], ...] | None  # None = any (no dim constraints)
     variadic: bool = False
     label: str = ""  # human-readable for help/errors
@@ -87,7 +86,7 @@ def expand_atom(atom: str) -> frozenset[str]:
         return frozenset({dim})
     raise ValueError(
         f"unknown IO atom {atom!r}; expected a dimension {sorted(DIMS)}, "
-        f"a canonical {sorted(CANONICAL)}, or any/unstructured/visualization"
+        f"a canonical {sorted(CANONICAL)}, or any/unstructured/figure"
     )
 
 
@@ -156,11 +155,11 @@ def normalize_slot(raw, *, allow_variadic: bool = False, for_input: bool = True)
             return SlotSpec(
                 kind="unstructured", alternatives=None, variadic=variadic, label=raw
             )
-        if raw == VISUALIZATION:
+        if raw == FIGURE:
             if for_input:
-                raise ValueError("visualization is output-only")
+                raise ValueError("figure is output-only")
             return SlotSpec(
-                kind="visualization", alternatives=None, variadic=False, label=raw
+                kind="figure", alternatives=None, variadic=False, label=raw
             )
 
     alternatives = parse_alternatives(raw)

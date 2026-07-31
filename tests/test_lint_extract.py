@@ -72,7 +72,7 @@ class TestDeclarationExtraction:
                 name="some-skill",
                 version=_SKILL_VERSION,
                 inputs=["observations", "forecast"],
-                outputs=["visualization"],
+                outputs=["figure"],
             )
             @weather_skill.argument("--start-time", required=True)
             @weather_skill.argument("--end-time", required=True)

@@ -1,4 +1,4 @@
-"""Provenance helpers: history load/stamp and visualization metadata."""
+"""Provenance helpers: history load/stamp and figure metadata."""
 
 from conftest import make_data
 from PIL import Image
@@ -63,20 +63,20 @@ class TestVisualization:
         path = tmp_path / "x.png"
         Image.new("RGB", (4, 4)).save(path)
         chain = [entry()]
-        provenance.stamp_visualization(path, chain)
-        assert provenance.load_visualization_history(path) == chain
+        provenance.stamp_figure(path, chain)
+        assert provenance.load_figure_history(path) == chain
 
     def test_html(self, tmp_path):
         path = tmp_path / "x.html"
         path.write_text("<html><head></head><body></body></html>", encoding="utf-8")
         chain = [entry()]
-        provenance.stamp_visualization(path, chain)
-        assert provenance.load_visualization_history(path) == chain
+        provenance.stamp_figure(path, chain)
+        assert provenance.load_figure_history(path) == chain
         assert "weather_skills_history" in path.read_text(encoding="utf-8")
 
     def test_jpeg(self, tmp_path):
         path = tmp_path / "x.jpg"
         Image.new("RGB", (4, 4)).save(path, quality=90)
         chain = [entry()]
-        provenance.stamp_visualization(path, chain)
-        assert provenance.load_visualization_history(path) == chain
+        provenance.stamp_figure(path, chain)
+        assert provenance.load_figure_history(path) == chain

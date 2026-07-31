@@ -105,8 +105,8 @@ def standard_parameters():
 def _slot_help_label(slot: _dataset.SlotSpec) -> str:
     if slot.kind == "unstructured":
         return "unstructured"
-    if slot.kind == "visualization":
-        return "visualization"
+    if slot.kind == "figure":
+        return "figure"
     if slot.alternatives is None:
         return "any"
     if len(slot.alternatives) == 1:
@@ -168,7 +168,7 @@ def weather_skill(
     ``outputs``: lists of IO slots. Within a slot, a **list** is OR, a
     **tuple** is AND, and a **string** is a canonical shorthand
     (``observations``, ``forecast``, …), a dimension name, ``any``,
-    ``unstructured``, or (outputs only) ``visualization``. A single ``…+``
+    ``unstructured``, or (outputs only) ``figure``. A single ``…+``
     string in ``inputs`` is variadic.
 
     Extra CLI flags: stack ``@weather_skill.argument(...)`` under this decorator
@@ -383,17 +383,17 @@ def weather_skill(
                 for value, out_path, out_slot in zip(
                     results, output_paths, output_slots, strict=True
                 ):
-                    if out_slot.kind == _dataset.VISUALIZATION:
+                    if out_slot.kind == _dataset.FIGURE:
                         if not isinstance(value, (str, Path)):
                             raise SkillError(
-                                "visualization outputs must return a Path to the written file"
+                                "figure outputs must return a Path to the written file"
                             )
                         written = Path(value)
                         if written.resolve() != out_path.resolve():
                             raise SkillError(
-                                f"visualization path {written} does not match --output {out_path}"
+                                f"figure path {written} does not match --output {out_path}"
                             )
-                        _provenance.stamp_visualization(written, history)
+                        _provenance.stamp_figure(written, history)
                         print(f"Wrote: {out_path}", file=sys.stderr)
                         continue
 
