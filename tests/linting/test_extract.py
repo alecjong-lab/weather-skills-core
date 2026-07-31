@@ -3,12 +3,12 @@
 import textwrap
 from pathlib import Path
 
-from weather_skills_core.lint.extract import (
+from weather_skills_core.linting.extract import (
     extract_script,
     normalize_requirement_name,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures" / "lint"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "linting"
 
 
 def write_script(tmp_path, body):

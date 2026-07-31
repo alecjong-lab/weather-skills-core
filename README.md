@@ -157,6 +157,7 @@ uv run pre-commit run --all-files
 
 To author a skill, see
 [`skills/weather-skill-authoring/SKILL.md`](skills/weather-skill-authoring/SKILL.md)
-and the lint CLI (`weather-skills-core lint`). Contributions that improve the
-decorator, the standard dataset contract, or contributor docs are welcome —
-open a PR against this repository.
+and the linting CLI (`weather-skills-core lint`; implementation lives under
+`weather_skills_core.linting`). Contributions that improve the decorator, the
+standard dataset contract, or contributor docs are welcome — open a PR against
+this repository.

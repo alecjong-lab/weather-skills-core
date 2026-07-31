@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weather_skills_core.errors import UsageError
-from weather_skills_core.lint.corpus import build_corpus
-from weather_skills_core.lint.rules import (
+from weather_skills_core.linting.corpus import build_corpus
+from weather_skills_core.linting.rules import (
     CROSS_SKILL_RULES,
     PER_SKILL_RULES,
     RULES,

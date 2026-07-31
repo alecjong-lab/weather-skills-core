@@ -1,6 +1,7 @@
 """Cross-check standard_parameters() against the decorator's parser."""
 
-from weather_skills_core.decorator import standard_parameters, weather_skill
+from weather_skills_core.decorator import weather_skill
+from weather_skills_core.standard_args import standard_parameters
 
 
 @weather_skill(

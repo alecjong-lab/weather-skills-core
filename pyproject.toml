@@ -20,12 +20,12 @@ dependencies = [
 ]
 
 [project.scripts]
-weather-skills-core = "weather_skills_core.cli:main"
+weather-skills-core = "weather_skills_core.linting.cli:main"
 
 [project.optional-dependencies]
-# udunits validation: dataset.udunits_error
+# udunits validation: cf.udunits_error
 units = ["cf-units>=3.3.1"]
-# GeoJSON geometry: dataset.polygon_from_geojson
+# GeoJSON geometry: standard_args.polygon_from_geojson
 geo = ["shapely>=2.1.2"]
 
 [dependency-groups]
@@ -53,7 +53,7 @@ line-length = 100
 target-version = "py312"
 # The broken-syntax lint fixture deliberately does not parse (it exercises the
 # linter's unparseable-script finding); ruff must not try to check it.
-extend-exclude = ["tests/fixtures/lint/errors_tree/skills/broken-syntax"]
+extend-exclude = ["tests/fixtures/linting/errors_tree/skills/broken-syntax"]
 
 [tool.ruff.lint]
 extend-select = ["I", "B", "UP"]

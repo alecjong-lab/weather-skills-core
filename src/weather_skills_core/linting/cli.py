@@ -94,8 +94,8 @@ def main(argv=None) -> int:
 
 def _lint(args) -> int:
     from weather_skills_core.errors import UsageError
-    from weather_skills_core.lint.render import render_json, render_text
-    from weather_skills_core.lint.run import run_lint
+    from weather_skills_core.linting.render import render_json, render_text
+    from weather_skills_core.linting.run import run_lint
 
     try:
         report = run_lint(

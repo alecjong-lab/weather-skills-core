@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from weather_skills_core.errors import UsageError
-from weather_skills_core.lint.extract import SkillDeclaration, extract_skill
+from weather_skills_core.linting.extract import SkillDeclaration, extract_skill
 
 #: Ceiling on any one git subprocess. The fetches are shallow and
 #: blob-filtered, so a healthy clone finishes well inside this; expiry is a

@@ -18,9 +18,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from weather_skills_core.decorator import StandardParameter, standard_parameters
-from weather_skills_core.lint.corpus import CorpusSkill
-from weather_skills_core.lint.extract import ArgShape, SkillDeclaration, normalize_requirement_name
+from weather_skills_core.standard_args import StandardParameter, standard_parameters
+from weather_skills_core.linting.corpus import CorpusSkill
+from weather_skills_core.linting.extract import ArgShape, SkillDeclaration, normalize_requirement_name
 
 CORE_PACKAGE = "weather-skills-core"
 
@@ -402,7 +402,7 @@ def lint_corpus(
     """Evaluate the active rules over the corpus; findings only for target skills.
 
     ``active_rules`` is the resolved rule set (see
-    :func:`weather_skills_core.lint.run.resolve_rule_set`). Only findings whose
+    :func:`weather_skills_core.linting.run.resolve_rule_set`). Only findings whose
     rule is active are returned, and the cross-skill pass is skipped entirely
     when no cross-skill rule is active.
     """

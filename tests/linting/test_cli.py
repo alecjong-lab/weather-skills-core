@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from weather_skills_core.cli import main
+from weather_skills_core.linting.cli import main
 
-FIXTURES = Path(__file__).parent / "fixtures" / "lint"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "linting"
 
 
 class TestExitCodes:

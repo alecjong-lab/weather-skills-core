@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 
 from weather_skills_core.errors import UsageError
-from weather_skills_core.lint.rules import default_rule_set
-from weather_skills_core.lint.run import resolve_rule_set, run_lint
+from weather_skills_core.linting.rules import default_rule_set
+from weather_skills_core.linting.run import resolve_rule_set, run_lint
 
-FIXTURES = Path(__file__).parent / "fixtures" / "lint"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "linting"
 
 
 def findings_for(report, skill):

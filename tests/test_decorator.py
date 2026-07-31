@@ -7,7 +7,8 @@ import xarray as xr
 from conftest import make_data
 from PIL import Image
 
-from weather_skills_core.decorator import rewrite_bbox_argv, weather_skill
+from weather_skills_core.decorator import weather_skill
+from weather_skills_core.standard_args import rewrite_bbox_argv
 from weather_skills_core.provenance import HISTORY_ATTR, load_history, load_figure_history
 
 

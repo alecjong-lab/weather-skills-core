@@ -11,7 +11,7 @@ strings). New keys may be added; existing keys keep their meaning.
 import json
 from dataclasses import asdict
 
-from weather_skills_core.lint.run import LintReport
+from weather_skills_core.linting.run import LintReport
 
 
 def render_text(report: LintReport) -> str:
