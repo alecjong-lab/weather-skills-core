@@ -1,19 +1,7 @@
-"""Standard-dataset dim ontology, CF dim detection, and bbox subsetting.
+"""Standard-dataset dimensions, types, CF helpers, and bbox subsetting.
 
-Zarr inputs/outputs are declared as required **dimensions**, or as a **type**
-that expands to dims. Within one IO slot:
-
-- a **list** is OR (any alternative may match)
-- a **tuple** is AND (every entry required)
-- a **string** is a type, a single dim name, ``any``, ``unstructured``, or
-  ``visualization``
-
-Types (prefer the primary name):
-
-- ``observations`` (+ analysis/retrieval/field/data) → space, time
-- ``forecast`` → space, init_time, prediction_timedelta
-- ``ensemble_forecast`` → space, init_time, prediction_timedelta, member
-- ``station`` → point_id, time
+Skills declare I/O with fixed dimension names (``space``, ``time``, …) or short
+types that expand to those dims (``observations``, ``forecast``, …).
 """
 
 from __future__ import annotations

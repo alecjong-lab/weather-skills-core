@@ -79,22 +79,21 @@ skills that need that check do it in-body.
 
 ## Inputs / outputs
 
-**Dimensions:** `space`, `time`, `init_time`, `prediction_timedelta`, `member`,
-`day_of_year` (`doy`), `point_id`, `x`, `y`.
+Standard dimension names: `space`, `time`, `init_time`, `prediction_timedelta`,
+`member`, `day_of_year`, `point_id`, `x`, `y`.
 
-**Types → dims:**
-
-| Type | Dimensions |
+| Type | Requires |
 | --- | --- |
 | `observations` | `space`, `time` |
 | `forecast` | `space`, `init_time`, `prediction_timedelta` |
 | `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
 | `station` | `point_id`, `time` |
+| `any` | any Zarr |
+| `unstructured` | file path |
+| `visualization` | PNG / JPEG / HTML |
 
-Also `any`, `unstructured`, `visualization`. Within one slot: string = type/dim,
-tuple = AND, list = OR, `…+` = variadic. Prefer a type when the contract is a
-known shape (`inputs=["forecast"]`); a bare dim when narrower
-(`inputs=["space"]` for clip). See `references/STANDARD_DATASET.md`.
+Example: `inputs=["space"]` for clip; `inputs=["forecast"]` for a forecast-only
+skill. See `references/STANDARD_DATASET.md`.
 
 ## Provenance
 

@@ -1,95 +1,79 @@
 # WeatherSkills standard dataset
 
-Zarr inputs and outputs are declared by **required dimensions**, or by a
-**type** name that expands to a fixed set of dimensions.
+Skills read and write CF-compliant Zarr stores. Name your dimensions with the
+list below. Skills declare what they need either by those names, or by a short
+**type** that stands for a fixed set of them.
 
 ## Dimensions
 
-| Dimension | Meaning | Detected on disk as |
-| --- | --- | --- |
-| `space` | Horizontal grid | Lat/lon pair (CF attrs or name heuristics) |
-| `time` | Wall-clock / valid time | Time-like dim (CF / `time`) |
-| `init_time` | Forecast initialization | `init_time`, or scalar `time` plus a step dim |
-| `prediction_timedelta` | Forecast lead | `step`, `prediction_timedelta`, or `lead_time` |
-| `member` | Ensemble member | `number`, `member`, or `realization` |
-| `day_of_year` | Day of year (`doy` alias) | Day-of-year dim |
-| `point_id` | Station / point | `station_id` or `point_id`, with lat/lon on that dim |
-| `x` | Projected X | Declared explicitly (not inferred) |
-| `y` | Projected Y | Declared explicitly (not inferred) |
+Use these names:
 
-A skill can require any of these directly, e.g. `inputs=["space"]` or
-`inputs=[("space", "time")]`.
+| Name | Meaning |
+| --- | --- |
+| `space` | Horizontal grid (`latitude` + `longitude`) |
+| `time` | Valid time |
+| `init_time` | Forecast initialization time |
+| `prediction_timedelta` | Forecast lead time |
+| `member` | Ensemble member |
+| `day_of_year` | Day of year |
+| `point_id` | Station or point id |
+| `x` | Projected X |
+| `y` | Projected Y |
 
 ## Types
 
-Each type is a named shorthand for a set of required dimensions. Prefer the
-primary name in skill declarations; aliases are accepted and mean the same thing.
+A type is a shortcut for a set of dimensions:
 
-| Type | Implied dimensions | Aliases |
-| --- | --- | --- |
-| `observations` | `space`, `time` | `analysis`, `retrieval`, `field`, `data` |
-| `forecast` | `space`, `init_time`, `prediction_timedelta` | — |
-| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` | — |
-| `station` | `point_id`, `time` | — |
-
-Special (not dimension-validated):
-
-| Kind | Meaning |
+| Type | Requires |
 | --- | --- |
-| `any` | Zarr with no dim requirements |
-| `unstructured` | Opaque file path (`Path`) |
-| `visualization` | Output-only PNG / JPEG / HTML |
+| `observations` | `space`, `time` |
+| `forecast` | `space`, `init_time`, `prediction_timedelta` |
+| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
+| `station` | `point_id`, `time` |
+| `any` | any Zarr (no dimension check) |
+| `unstructured` | a file path (not Zarr) |
+| `visualization` | a plot file (PNG / JPEG / HTML) |
 
-## Declaring slots
+## Declaring I/O on a skill
 
-`inputs=` / `outputs=` are lists of **slots** (one per `--input` / `--output`).
-Within one slot:
+```python
+@weather_skill(
+    name="clip-region",
+    version=_SKILL_VERSION,
+    inputs=["space"],          # needs a horizontal grid
+    outputs=["space"],
+)
+```
 
-| Form | Meaning | Example |
+- One entry per `--input` / `--output`
+- Use a type or a dimension name
+- Tuple = all required: `("space", "time")`
+- List = any one is fine: `["forecast", "ensemble_forecast"]`
+- Trailing `+` = one or more paths: `"any+"`
+
+## Provenance attrs
+
+| Attr | Who sets it | Meaning |
 | --- | --- | --- |
-| type or dimension string | Require that type's dims, or that one dim | `"forecast"`, `"time"` |
-| `"any"` | No dim requirements | `"any"` |
-| string with `+` | Variadic (≥1 paths), same requirements each | `"any+"`, `"time+"` |
-| **tuple** | **AND** — every entry required | `("space", "time")` |
-| **list** | **OR** — any alternative matches | `["forecast", "ensemble_forecast"]` |
+| `weather_skills_source` | fetchers (optional) | Where the data came from, e.g. `chirps` |
+| `weather_skills_history` | every writing skill | JSON list of steps that produced the file |
 
-## Attrs
+Each history entry has `skill`, `version`, `args`, and `input` (with basename and
+content `hash`). Plots store the same JSON in file metadata.
 
-| Attr | Set by | Meaning |
-|---|---|---|
-| `weather_skills_source` | fetchers (optional) | e.g. `ecmwf-s2s`, `chirps` |
-| `weather_skills_history` | every artifact-writing skill | JSON append-only provenance chain |
+## Units
 
-### `weather_skills_history` schema
+Give data variables a udunits-parseable `units` attr. Optional helpers can
+normalize common display units (`weather-skills-core[units]`):
 
-JSON array, oldest first. Each entry:
+| Kind | Standard units |
+| --- | --- |
+| temperature | `degree_Celsius` |
+| precip rate | `mm day-1` |
+| precip amount | `mm` |
 
-- `skill` — canonical skill name
-- `version` — `_SKILL_VERSION` at write time
-- `args` — argparse namespace minus input/output paths (resolved absolute dates as ISO strings)
-- `input` — `null` for fetchers; `{basename, hash}` for one input; list of `{basename, hash, history}` for multi-input
+## Writing Zarr
 
-Visualization files embed the same JSON under the key `weather_skills_history`
-(PNG `tEXt`, JPEG EXIF UserComment, HTML `<meta name="weather_skills_history">`).
-
-## Data-variable units
-
-Data variables should carry udunits-parseable `units`. Incoming CF stores are
-accepted as-is. Optional helpers in `weather_skills_core.units` (extra
-`weather-skills-core[units]`) normalize common display units:
-
-| Kind | Standard units | Typical `standard_name` |
-| --- | --- | --- |
-| temperature | `degree_Celsius` | keep existing |
-| precip rate / flux | `mm day-1` | `lwe_precipitation_rate` |
-| precip amount / depth | `mm` | `lwe_thickness_of_precipitation_amount` |
-
-Use `to_standard_units(ds)` / `units_equal(a, b)` from fetchers, plots, or
-`unit-convert --to-standard`.
-
-## Conventions
-
-- CF-compliant Zarr; use cf-xarray for coord identification.
-- Write with `consolidated=True`.
-- Missing data is NaN.
-- Per-variable `encoding` is not part of the contract; clear `.encoding` before `to_zarr`.
+- CF-compliant, `consolidated=True`
+- Missing values are NaN
+- Clear `.encoding` before `to_zarr`

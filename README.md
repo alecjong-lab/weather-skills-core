@@ -31,35 +31,35 @@ signature as `argparse.ArgumentParser.add_argument`.
 
 ## Inputs and outputs
 
-Zarr slots are declared by **dimensions** or by a **type** that expands to dims.
+Declare what a skill needs with fixed dimension names, or a short type name.
 
 ### Dimensions
 
-| Dimension | Detected on disk as |
+| Name | Meaning |
 | --- | --- |
-| `space` | Lat/lon pair (CF / name heuristics) |
-| `time` | Time-like dim (CF / `time`) |
-| `init_time` | `init_time`, or scalar `time` + step |
-| `prediction_timedelta` | `step`, `prediction_timedelta`, or `lead_time` |
-| `member` | `number`, `member`, or `realization` |
-| `day_of_year` (`doy`) | Day-of-year dim |
-| `point_id` | `station_id` / `point_id` with lat/lon on that dim |
-| `x`, `y` | Projected axes (declared explicitly) |
+| `space` | Horizontal grid (`latitude` + `longitude`) |
+| `time` | Valid time |
+| `init_time` | Forecast initialization time |
+| `prediction_timedelta` | Forecast lead time |
+| `member` | Ensemble member |
+| `day_of_year` | Day of year |
+| `point_id` | Station or point id |
+| `x`, `y` | Projected coordinates |
 
 ### Types
 
-| Type | Implied dimensions | Aliases |
-| --- | --- | --- |
-| `observations` | `space`, `time` | `analysis`, `retrieval`, `field`, `data` |
-| `forecast` | `space`, `init_time`, `prediction_timedelta` | — |
-| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` | — |
-| `station` | `point_id`, `time` | — |
+| Type | Requires |
+| --- | --- |
+| `observations` | `space`, `time` |
+| `forecast` | `space`, `init_time`, `prediction_timedelta` |
+| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
+| `station` | `point_id`, `time` |
+| `any` | any Zarr |
+| `unstructured` | file path |
+| `visualization` | PNG / JPEG / HTML |
 
-Also: `any` (no dim constraints), `unstructured` (opaque `Path`),
-`visualization` (output-only PNG/JPEG/HTML).
-
-`inputs=` / `outputs=` are lists of slots (one per `--input` / `--output`).
-Within a slot: string = type or dim; tuple = AND; list = OR; `…+` = variadic.
+One `inputs=` / `outputs=` entry per CLI path. Tuple = all required; list = any
+one; trailing `+` = one or more paths.
 
 Full details:
 [`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
