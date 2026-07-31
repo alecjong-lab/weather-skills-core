@@ -8,21 +8,26 @@ different skills must have the same name.
 `@weather_skill.argument(...)`. The conformance linter checks naming
 (WSK101 / WSK201 / WSK202).
 
-## Canonical names
+## Standard names
+
+Shared flag names so skills behave the same way. Declare them with
+`@weather_skill.argument(...)` and the decorator parses them for you (see the
+core README). Types and dimensions live in STANDARD_DATASET.md (`figure` for
+plots, `point_obs` for station/point time series).
 
 ### Inputs and outputs
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `…+` entry means ≥1 paths (variadic). Slot grammar: list=OR, tuple=AND (see STANDARD_DATASET.md). |
+| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `…+` entry means ≥1 paths (variadic). |
 | Outputs | `--output` / `-o`, repeated | Exactly `len(outputs)` paths, in order. Passed to the skill as `output` in `**kwargs`. |
 
 ### Region
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Bounding box | `--bbox` | `N/W/S/E` decimal degrees. Declare `@weather_skill.argument("--bbox", ...)`. Auto help + `parse_bbox`. |
-| Country code | positional `<CODE>` | `resolve-region` skill (ISO 3166-1 alpha-3). |
+| Bounding box | `--bbox` | `N/W/S/E` decimal degrees. Auto help + parse to `(N, W, S, E)`. |
+| Country / region name | via `resolve-region` | Returns a bbox (and optional polygon) to pass into `--bbox`. |
 | Boundary GeoJSON | `--geojson` / `--mask-geojson` | Skill-specific. |
 
 ### Time
