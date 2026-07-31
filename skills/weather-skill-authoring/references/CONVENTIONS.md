@@ -26,7 +26,7 @@ plots, `point_obs` for station/point time series).
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Bounding box | `--bbox` | `N/W/S/E` decimal degrees. Auto help + parse to `(N, W, S, E)`. |
+| Bounding box | `--bbox` | CLI is `N/W/S/E` decimal degrees. Skill receives `(N, W, S, E)` floats — do not re-parse. |
 | Country / region name | via `resolve-region` | Returns a bbox (and optional polygon) to pass into `--bbox`. |
 | Boundary GeoJSON | `--geojson` / `--mask-geojson` | Skill-specific. |
 
@@ -34,8 +34,8 @@ plots, `point_obs` for station/point time series).
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Date range | `--start-time` / `--end-time` | Absolute `YYYY-MM-DD`; both ends inclusive; when both set, `start_time <= end_time`. |
-| Single date | `--date` | Absolute `YYYY-MM-DD`. |
+| Date range | `--start-time` / `--end-time` | CLI is absolute `YYYY-MM-DD` (inclusive). Skill receives `datetime.date`; when both set, `start_time <= end_time`. Do not re-parse. |
+| Single date | `--date` | CLI is absolute `YYYY-MM-DD`. Skill receives `datetime.date`. |
 
 Relative / rolling dates (`now`, `latest`, offsets) are resolved by the caller
 before invoking weather skills. Mutual exclusion of `--date` vs the range flags

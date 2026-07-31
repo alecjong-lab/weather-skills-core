@@ -54,8 +54,12 @@ function **must** accept `**kwargs`.
 
 ## Standard arguments
 
-Shared by many weather skills. Declare them with the names below and the
-decorator handles help, parsing, and checks for you.
+Shared by many weather skills. Declare them with the canonical flags below;
+the decorator adds help, parses CLI strings, and injects kwargs. The skill body
+must **not** re-parse those values (no `bbox.split("/")`, no
+`date.fromisoformat` on `bbox` / `date` / `start_time` / `end_time`). Format for
+APIs with `.isoformat()` if needed, or apply a spatial subset in the skill
+itself.
 
 | Argument | Flag | What you get |
 | --- | --- | --- |

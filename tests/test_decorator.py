@@ -103,6 +103,8 @@ class TestRunLoop:
         assert load_history(out)[-1]["skill"] == "copy"
 
     def test_bbox_passed_as_tuple(self, tmp_path):
+        from datetime import date
+
         src = tmp_path / "in.zarr"
         out = tmp_path / "out.zarr"
         make_data().to_zarr(src, mode="w", consolidated=True)
@@ -114,7 +116,8 @@ class TestRunLoop:
         @weather_skill.argument("--end-time", required=True)
         def skill(ds, bbox, start_time, end_time, **kwargs):
             seen["bbox"] = bbox
-            seen["start"] = start_time.isoformat()
+            seen["start_time"] = start_time
+            seen["end_time"] = end_time
             return ds
 
         skill(
@@ -132,7 +135,9 @@ class TestRunLoop:
             ]
         )
         assert seen["bbox"] == (10.0, 20.0, 0.0, 30.0)
-        assert seen["start"] == "2026-01-01"
+        assert seen["start_time"] == date(2026, 1, 1)
+        assert isinstance(seen["start_time"], date)
+        assert seen["end_time"] == date(2026, 1, 10)
 
     def test_start_after_end_exits(self, tmp_path):
         out = tmp_path / "out.zarr"
