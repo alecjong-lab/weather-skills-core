@@ -14,7 +14,7 @@ different skills must have the same name.
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `…+` entry means ≥1 paths (variadic). Slot grammar: list=OR, tuple=AND (see ENVELOPE.md). |
+| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `…+` entry means ≥1 paths (variadic). Slot grammar: list=OR, tuple=AND (see STANDARD_DATASET.md). |
 | Outputs | `--output` / `-o`, repeated | Exactly `len(outputs)` paths, in order. Passed to the skill as `output` in `**kwargs`. |
 
 ### Region

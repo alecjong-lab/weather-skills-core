@@ -6,12 +6,12 @@ description: Playbook for writing a weather skill on the @weather_skill decorato
 # weather-skill-authoring
 
 A skill is `skills/<name>/` with a **SKILL.md** and `scripts/<name>.py`. The
-`@weather_skill` decorator owns the CLI, input opening, envelope validation,
+`@weather_skill` decorator owns the CLI, input opening, standard-dataset validation,
 provenance, and output writing. The script body is domain logic only.
 
 ## References
 
-- `references/ENVELOPE.md` — dim ontology, Zarr shapes, and `weather_skills_history`
+- `references/STANDARD_DATASET.md` — dim ontology, Zarr shapes, and `weather_skills_history`
 - `references/CONVENTIONS.md` — canonical CLI flag names
 
 ## Declaration
@@ -87,7 +87,7 @@ Canonicals (prefer primary): `observations` (+ aliases analysis/retrieval/field)
 `prediction_timedelta`, `member`, `day_of_year`/`doy`, `point_id`, `x`, `y`.
 
 Be specific when the skill's contract is dimensional (`inputs=["space"]` for
-clip); use `any` / `any+` when shape-agnostic. See `references/ENVELOPE.md`.
+clip); use `any` / `any+` when shape-agnostic. See `references/STANDARD_DATASET.md`.
 
 ## Provenance
 
@@ -98,6 +98,11 @@ skip that check).
 
 Do not clear or rewrite history yourself; set `weather_skills_source` on fetcher
 Datasets before return if needed.
+
+## Units helpers
+
+`to_standard_units(ds)` / `units_equal(a, b)` — normalize temp → `degree_Celsius`
+and precip → `mm day-1` / `mm` (requires `weather-skills-core[units]` / `cf-units`).
 
 ## Errors
 

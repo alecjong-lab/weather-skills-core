@@ -1,7 +1,7 @@
 # weather-skills-core
 
 Core library for weather skills. The `@weather_skill` decorator owns CLI
-construction, input opening, envelope validation, absolute-date parsing,
+construction, input opening, standard-dataset validation, absolute-date parsing,
 provenance stamping (`weather_skills_history`), and output writing.
 
 ```python
@@ -70,8 +70,8 @@ Prefer the **primary** name when declaring. Aliases expand to the same dims.
 | `point_id` | `station_id` / `point_id` with lat/lon on that dim |
 | `x` / `y` | Projected axes (when declared explicitly) |
 
-Full envelope details live in
-[`skills/weather-skill-authoring/references/ENVELOPE.md`](skills/weather-skill-authoring/references/ENVELOPE.md).
+Full standard-dataset details live in
+[`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
 
 ## Automatic argument processing
 

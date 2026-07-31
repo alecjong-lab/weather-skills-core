@@ -5,84 +5,84 @@ import pytest
 import xarray as xr
 from conftest import make_forecast, make_gridded, make_station
 
-from weather_skills_core import envelope
+from weather_skills_core import dataset
 from weather_skills_core.errors import DataError, UsageError
 
 
 class TestParseBbox:
     def test_valid(self):
-        assert envelope.parse_bbox("1/2/3/4") == (1.0, 2.0, 3.0, 4.0)
+        assert dataset.parse_bbox("1/2/3/4") == (1.0, 2.0, 3.0, 4.0)
 
     def test_negative_values(self):
-        assert envelope.parse_bbox("-1/32/-5/42") == (-1.0, 32.0, -5.0, 42.0)
+        assert dataset.parse_bbox("-1/32/-5/42") == (-1.0, 32.0, -5.0, 42.0)
 
     @pytest.mark.parametrize("value", ["1/2/3", "1/2/3/4/5", "a/b/c/d", ""])
     def test_malformed(self, value):
         with pytest.raises(UsageError, match="N/W/S/E"):
-            envelope.parse_bbox(value)
+            dataset.parse_bbox(value)
 
 
 class TestDetectSpatialDims:
     def test_canonical_names(self):
-        assert envelope.detect_spatial_dims(make_gridded()) == ("latitude", "longitude")
+        assert dataset.detect_spatial_dims(make_gridded()) == ("latitude", "longitude")
 
     def test_alias_names(self):
         ds = make_gridded().rename({"latitude": "lat", "longitude": "lon"})
-        assert envelope.detect_spatial_dims(ds) == ("lat", "lon")
+        assert dataset.detect_spatial_dims(ds) == ("lat", "lon")
 
     def test_override_wins(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        assert envelope.detect_spatial_dims(ds, "yy,xx") == ("yy", "xx")
+        assert dataset.detect_spatial_dims(ds, "yy,xx") == ("yy", "xx")
 
     def test_override_names_must_exist(self):
         with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.detect_spatial_dims(make_gridded(), "a,b")
+            dataset.detect_spatial_dims(make_gridded(), "a,b")
 
     def test_override_must_be_two_names(self):
         with pytest.raises(UsageError, match="LAT,LON"):
-            envelope.detect_spatial_dims(make_gridded(), "onlyone")
+            dataset.detect_spatial_dims(make_gridded(), "onlyone")
 
     def test_unidentifiable(self):
         ds = make_gridded().rename({"latitude": "row", "longitude": "col"})
         with pytest.raises(UsageError, match="Pass --dims"):
-            envelope.detect_spatial_dims(ds)
+            dataset.detect_spatial_dims(ds)
 
     def test_cf_attrs_resolve_nonstandard_names(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
         ds["yy"].attrs.update(standard_name="latitude", units="degrees_north")
         ds["xx"].attrs.update(standard_name="longitude", units="degrees_east")
-        assert envelope.detect_spatial_dims(ds) == ("yy", "xx")
+        assert dataset.detect_spatial_dims(ds) == ("yy", "xx")
 
 
 class TestDetectTimeDim:
     def test_literal_time(self):
-        assert envelope.detect_time_dim(make_gridded()) == "time"
+        assert dataset.detect_time_dim(make_gridded()) == "time"
 
     def test_override(self):
         ds = make_gridded().rename({"time": "t"})
-        assert envelope.detect_time_dim(ds, "t") == "t"
+        assert dataset.detect_time_dim(ds, "t") == "t"
 
     def test_override_must_exist(self):
         with pytest.raises(UsageError, match="not in dataset dims"):
-            envelope.detect_time_dim(make_gridded(), "t")
+            dataset.detect_time_dim(make_gridded(), "t")
 
     def test_unidentifiable(self):
         ds = make_gridded().rename({"time": "record"}).drop_vars("record")
         with pytest.raises(UsageError, match="Pass --time-dim"):
-            envelope.detect_time_dim(ds)
+            dataset.detect_time_dim(ds)
 
 
 class TestDetectType:
     def test_gridded(self):
-        assert envelope.detect_type(make_gridded()) == envelope.OBSERVATIONS
+        assert dataset.detect_type(make_gridded()) == dataset.OBSERVATIONS
 
     def test_forecast(self):
-        assert envelope.detect_type(make_forecast(n_number=0)) == envelope.FORECAST
+        assert dataset.detect_type(make_forecast(n_number=0)) == dataset.FORECAST
         # Default fixture includes a member dim → ensemble_forecast
-        assert envelope.detect_type(make_forecast()) == "ensemble_forecast"
+        assert dataset.detect_type(make_forecast()) == "ensemble_forecast"
 
     def test_station(self):
-        assert envelope.detect_type(make_station()) == envelope.STATION
+        assert dataset.detect_type(make_station()) == dataset.STATION
 
     def test_step_with_time_dim_is_not_forecast(self):
         # Forecast needs scalar init (time) + step; a step dim alongside a
@@ -90,22 +90,22 @@ class TestDetectType:
         ds = make_forecast()
         ds = ds.drop_vars("time")
         ds = ds.expand_dims(time=np.array(["2026-01-01"], dtype="datetime64[ns]"))
-        assert envelope.detect_type(ds) == envelope.OBSERVATIONS
+        assert dataset.detect_type(ds) == dataset.OBSERVATIONS
 
 
 class TestParseIoSpec:
     def test_canonical_observations(self):
-        assert envelope.parse_alternatives("observations") == (
+        assert dataset.parse_alternatives("observations") == (
             frozenset({"space", "time"}),
         )
 
     def test_alias_analysis_same_as_observations(self):
-        assert envelope.parse_alternatives("analysis") == envelope.parse_alternatives(
+        assert dataset.parse_alternatives("analysis") == dataset.parse_alternatives(
             "observations"
         )
 
     def test_or_list(self):
-        alts = envelope.parse_alternatives(["forecast", "ensemble_forecast"])
+        alts = dataset.parse_alternatives(["forecast", "ensemble_forecast"])
         assert len(alts) == 2
         assert frozenset({"space", "init_time", "prediction_timedelta"}) in alts
         assert (
@@ -113,27 +113,27 @@ class TestParseIoSpec:
         )
 
     def test_and_tuple(self):
-        assert envelope.parse_alternatives(("space", "time")) == (
+        assert dataset.parse_alternatives(("space", "time")) == (
             frozenset({"space", "time"}),
         )
 
     def test_single_dim(self):
-        assert envelope.parse_alternatives("time") == (frozenset({"time"}),)
+        assert dataset.parse_alternatives("time") == (frozenset({"time"}),)
 
 
 class TestValidateInput:
     def test_matching_type_passes(self):
         assert (
-            envelope.validate_input(make_gridded(), "observations", "in.zarr")
+            dataset.validate_input(make_gridded(), "observations", "in.zarr")
             == "observations"
         )
 
     def test_legacy_data_alias(self):
-        assert envelope.validate_input(make_gridded(), "data", "in.zarr") == "observations"
+        assert dataset.validate_input(make_gridded(), "data", "in.zarr") == "observations"
 
     def test_list_of_alternatives(self):
         assert (
-            envelope.validate_input(
+            dataset.validate_input(
                 make_forecast(n_number=0), ["observations", "forecast"], "in.zarr"
             )
             == "forecast"
@@ -141,115 +141,115 @@ class TestValidateInput:
 
     def test_or_canonical_list(self):
         assert (
-            envelope.validate_input(
+            dataset.validate_input(
                 make_forecast(), ["forecast", "ensemble_forecast"], "in.zarr"
             )
             == "ensemble_forecast"
         )
 
     def test_dim_only_space(self):
-        assert envelope.validate_input(make_gridded(), "space", "in.zarr") == "observations"
+        assert dataset.validate_input(make_gridded(), "space", "in.zarr") == "observations"
 
     def test_gridded_rejected_when_forecast_expected(self):
         with pytest.raises(UsageError, match="prediction_timedelta|init_time"):
-            envelope.validate_input(make_gridded(), "forecast", "in.zarr")
+            dataset.validate_input(make_gridded(), "forecast", "in.zarr")
 
     def test_forecast_rejected_when_station_expected(self):
         with pytest.raises(UsageError, match="point_id"):
-            envelope.validate_input(make_forecast(), "station", "in.zarr")
+            dataset.validate_input(make_forecast(), "station", "in.zarr")
 
     def test_error_names_the_input(self):
         with pytest.raises(UsageError, match="my/path.zarr"):
-            envelope.validate_input(make_gridded(), "station", "my/path.zarr")
+            dataset.validate_input(make_gridded(), "station", "my/path.zarr")
 
     def test_station_missing_latitude_coord(self):
         ds = make_station().drop_vars("latitude")
         with pytest.raises(UsageError, match="point_id"):
-            envelope.validate_input(ds, "station", "in.zarr")
+            dataset.validate_input(ds, "station", "in.zarr")
 
     def test_station_latitude_on_wrong_dim(self):
         ds = make_station()
         ds = ds.assign_coords(latitude=("time", np.zeros(ds.sizes["time"])))
         with pytest.raises(UsageError, match="point_id"):
-            envelope.validate_input(ds, "station", "in.zarr")
+            dataset.validate_input(ds, "station", "in.zarr")
 
     def test_unknown_declared_type_is_a_programming_error(self):
         with pytest.raises(ValueError, match="unknown IO atom"):
-            envelope.validate_input(make_gridded(), "grid", "in.zarr")
+            dataset.validate_input(make_gridded(), "grid", "in.zarr")
 
     def test_dims_override_validates_undetectable_gridded(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
         with pytest.raises(UsageError, match="space"):
-            envelope.validate_input(ds, "observations", "in.zarr")
+            dataset.validate_input(ds, "observations", "in.zarr")
         assert (
-            envelope.validate_input(ds, "observations", "in.zarr", dims="yy,xx")
+            dataset.validate_input(ds, "observations", "in.zarr", dims="yy,xx")
             == "observations"
         )
 
     def test_dims_override_names_must_exist(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
         with pytest.raises(UsageError, match="space"):
-            envelope.validate_input(ds, "observations", "in.zarr", dims="a,b")
+            dataset.validate_input(ds, "observations", "in.zarr", dims="a,b")
 
     def test_time_dim_override_must_exist(self):
         with pytest.raises(UsageError, match="time"):
-            envelope.validate_input(make_gridded(), "observations", "in.zarr", time_dim="t")
+            dataset.validate_input(make_gridded(), "observations", "in.zarr", time_dim="t")
         ds = make_gridded().rename({"time": "t"})
         assert (
-            envelope.validate_input(ds, "observations", "in.zarr", time_dim="t")
+            dataset.validate_input(ds, "observations", "in.zarr", time_dim="t")
             == "observations"
         )
 
     def test_any_accepts_all(self):
         for ds in (make_gridded(), make_forecast(), make_station()):
-            envelope.validate_input(ds, "any", "in.zarr")
+            dataset.validate_input(ds, "any", "in.zarr")
 
 
 class TestBboxSubset:
     def test_ascending_latitude(self):
         ds = make_gridded(lats=(1.0, 2.0, 3.0), lons=(10.0, 11.0, 12.0, 13.0))
-        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
+        sub = dataset.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
         assert list(sub["latitude"].values) == [1.0, 2.0]
         assert list(sub["longitude"].values) == [11.0, 12.0]
 
     def test_descending_latitude_same_bbox(self):
         ds = make_gridded(lats=(3.0, 2.0, 1.0))
-        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
+        sub = dataset.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
         assert list(sub["latitude"].values) == [2.0, 1.0]
 
     def test_lon_0_360_normalized(self):
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0, 359.0))
-        sub = envelope.bbox_subset(ds, (3.0, -95.0, 1.0, -85.0))
+        sub = dataset.bbox_subset(ds, (3.0, -95.0, 1.0, -85.0))
         assert list(sub["longitude"].values) == [-90.0]
 
     def test_antimeridian_keeps_wings_drops_interior(self):
         ds = make_gridded(lons=(-179.0, -100.0, 0.0, 100.0, 179.0))
-        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        sub = dataset.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
         assert list(sub["longitude"].values) == [-179.0, 179.0]
 
     def test_single_row_latitude_passes_through(self):
         ds = make_gridded(lats=(1.0,))
-        sub = envelope.bbox_subset(ds, (60.0, 10.5, 50.0, 12.5))
+        sub = dataset.bbox_subset(ds, (60.0, 10.5, 50.0, 12.5))
         assert list(sub["latitude"].values) == [1.0]
 
     def test_non_monotonic_latitude_rejected(self):
         ds = make_gridded(lats=(1.0, 3.0, 2.0))
         with pytest.raises(UsageError, match="lat axis is non-monotonic"):
-            envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+            dataset.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
 
     def test_non_monotonic_longitude_rejected(self):
         ds = make_gridded(lons=(10.0, 12.0, 11.0, 13.0))
         with pytest.raises(UsageError, match="lon axis is non-monotonic"):
-            envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+            dataset.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
 
     def test_empty_longitude_axis_rejected(self):
         ds = make_gridded(lons=())
         with pytest.raises(UsageError, match="lon axis has length 0"):
-            envelope.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
+            dataset.bbox_subset(ds, (3.0, 10.0, 1.0, 13.0))
 
     def test_descending_longitude_contiguous_span(self):
         ds = make_gridded(lons=(13.0, 12.0, 11.0, 10.0))
-        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
+        sub = dataset.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
         assert list(sub["longitude"].values) == [12.0, 11.0]
 
     def test_antimeridian_preserves_integer_dtype(self):
@@ -258,19 +258,19 @@ class TestBboxSubset:
             ("time", "latitude", "longitude"),
             np.ones((2, 3, 5), dtype=np.int32),
         )
-        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        sub = dataset.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
         assert sub["count"].dtype == np.int32
         assert list(sub["longitude"].values) == [-179.0, 179.0]
 
     def test_antimeridian_descending_longitude_keeps_native_order(self):
         ds = make_gridded(lons=(179.0, 100.0, 0.0, -100.0, -179.0))
-        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        sub = dataset.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
         assert list(sub["longitude"].values) == [179.0, -179.0]
 
     def test_antimeridian_leaves_non_longitude_variables_alone(self):
         ds = make_gridded(lons=(-179.0, 0.0, 179.0))
         ds["tavg"] = (("time",), np.array([5, 6], dtype=np.int16))
-        sub = envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+        sub = dataset.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
         assert sub["tavg"].dims == ("time",)
         assert sub["tavg"].dtype == np.int16
         assert list(sub["tavg"].values) == [5, 6]
@@ -278,32 +278,32 @@ class TestBboxSubset:
     def test_empty_result_is_data_error(self):
         ds = make_gridded()
         with pytest.raises(DataError, match="selects no grid cells"):
-            envelope.bbox_subset(ds, (60.0, 10.0, 50.0, 13.0))
+            dataset.bbox_subset(ds, (60.0, 10.0, 50.0, 13.0))
 
     def test_empty_antimeridian_result_names_the_crossing(self):
         ds = make_gridded(lons=(-10.0, 0.0, 10.0))
         with pytest.raises(DataError, match="antimeridian"):
-            envelope.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
+            dataset.bbox_subset(ds, (3.0, 170.0, 1.0, -170.0))
 
     def test_string_bbox_accepted(self):
-        sub = envelope.bbox_subset(make_gridded(), "2.5/10.5/0.5/12.5")
+        sub = dataset.bbox_subset(make_gridded(), "2.5/10.5/0.5/12.5")
         assert list(sub["latitude"].values) == [1.0, 2.0]
 
     def test_explicit_dims(self):
         ds = make_gridded().rename({"latitude": "yy", "longitude": "xx"})
-        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5), lat_dim="yy", lon_dim="xx")
+        sub = dataset.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5), lat_dim="yy", lon_dim="xx")
         assert list(sub["yy"].values) == [1.0, 2.0]
 
     def test_data_selected_matches_coords(self):
         ds = make_gridded()
-        sub = envelope.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
+        sub = dataset.bbox_subset(ds, (2.5, 10.5, 0.5, 12.5))
         assert sub["precip"].shape == (2, 2, 2)
         assert isinstance(sub, xr.Dataset)
 
 
 class TestStampCfAttrs:
     def test_canonical_names(self):
-        ds = envelope.stamp_cf_attrs(make_gridded())
+        ds = dataset.stamp_cf_attrs(make_gridded())
         assert ds["latitude"].attrs == {
             "standard_name": "latitude",
             "units": "degrees_north",
@@ -317,7 +317,7 @@ class TestStampCfAttrs:
         assert ds["time"].attrs == {"standard_name": "time", "axis": "T"}
 
     def test_alias_names(self):
-        ds = envelope.stamp_cf_attrs(make_gridded().rename({"latitude": "lat", "longitude": "lon"}))
+        ds = dataset.stamp_cf_attrs(make_gridded().rename({"latitude": "lat", "longitude": "lon"}))
         assert ds["lat"].attrs["standard_name"] == "latitude"
         assert ds["lon"].attrs["standard_name"] == "longitude"
 
@@ -325,27 +325,27 @@ class TestStampCfAttrs:
         ds = make_gridded()
         ds["latitude"].attrs["units"] = "degree_north"
         ds["time"].attrs["standard_name"] = "forecast_reference_time"
-        envelope.stamp_cf_attrs(ds)
+        dataset.stamp_cf_attrs(ds)
         assert ds["latitude"].attrs["units"] == "degree_north"
         assert ds["latitude"].attrs["axis"] == "Y"
         assert ds["time"].attrs["standard_name"] == "forecast_reference_time"
 
     def test_missing_coords_are_skipped(self):
         ds = make_gridded().rename({"latitude": "row", "longitude": "col"}).drop_vars("time")
-        out = envelope.stamp_cf_attrs(ds)
+        out = dataset.stamp_cf_attrs(ds)
         assert out["row"].attrs == {}
         assert out["col"].attrs == {}
 
     def test_returns_dataset(self):
         ds = make_gridded()
-        assert envelope.stamp_cf_attrs(ds) is ds
+        assert dataset.stamp_cf_attrs(ds) is ds
 
 
 class TestStampCfCoords:
     def test_overwrites_prior_values(self):
         ds = make_gridded()
         ds["latitude"].attrs.update(standard_name="wrong", units="wrong", axis="Z")
-        envelope.stamp_cf_coords(ds)
+        dataset.stamp_cf_coords(ds)
         assert ds["latitude"].attrs == {
             "standard_name": "latitude",
             "units": "degrees_north",
@@ -358,13 +358,13 @@ class TestStampCfCoords:
         }
 
     def test_time_gets_no_units(self):
-        ds = envelope.stamp_cf_coords(make_gridded())
+        ds = dataset.stamp_cf_coords(make_gridded())
         assert ds["time"].attrs == {"standard_name": "time", "axis": "T"}
 
     def test_long_names_applied_with_setdefault(self):
         ds = make_gridded()
         ds["latitude"].attrs["long_name"] = "source latitude"
-        envelope.stamp_cf_coords(
+        dataset.stamp_cf_coords(
             ds, long_names={"latitude": "Latitude", "longitude": "Longitude", "time": "Time"}
         )
         assert ds["latitude"].attrs["long_name"] == "source latitude"
@@ -372,86 +372,86 @@ class TestStampCfCoords:
         assert ds["time"].attrs["long_name"] == "Time"
 
     def test_no_long_name_by_default(self):
-        ds = envelope.stamp_cf_coords(make_gridded())
+        ds = dataset.stamp_cf_coords(make_gridded())
         assert "long_name" not in ds["latitude"].attrs
 
     def test_missing_coords_are_skipped(self):
         ds = make_gridded().drop_vars("time")
-        out = envelope.stamp_cf_coords(ds)
+        out = dataset.stamp_cf_coords(ds)
         assert out["latitude"].attrs["axis"] == "Y"
 
     def test_alias_names_are_not_stamped(self):
         # Only the canonical post-rename names are asserted; a fetcher stamps
         # after renaming to latitude/longitude.
-        ds = envelope.stamp_cf_coords(make_gridded().rename({"latitude": "lat"}))
+        ds = dataset.stamp_cf_coords(make_gridded().rename({"latitude": "lat"}))
         assert ds["lat"].attrs == {}
 
     def test_returns_dataset(self):
         ds = make_gridded()
-        assert envelope.stamp_cf_coords(ds) is ds
+        assert dataset.stamp_cf_coords(ds) is ds
 
 
 class TestCfDim:
     def test_resolves_stamped_coord(self):
         ds = make_gridded().rename({"latitude": "yy"})
         ds["yy"].attrs.update(standard_name="latitude", units="degrees_north")
-        assert envelope.cf_dim(ds, "latitude") == "yy"
+        assert dataset.cf_dim(ds, "latitude") == "yy"
 
     def test_unresolvable_returns_none(self):
         ds = make_gridded().rename({"latitude": "yy"})
-        assert envelope.cf_dim(ds, "latitude") is None
+        assert dataset.cf_dim(ds, "latitude") is None
 
     def test_works_on_dataarrays(self):
-        ds = envelope.stamp_cf_attrs(make_gridded())
-        assert envelope.cf_dim(ds["precip"], "longitude") == "longitude"
+        ds = dataset.stamp_cf_attrs(make_gridded())
+        assert dataset.cf_dim(ds["precip"], "longitude") == "longitude"
 
 
 class TestAutoVariable:
     def test_picks_the_first_data_var(self):
-        assert envelope.auto_variable(make_gridded()) == "precip"
+        assert dataset.auto_variable(make_gridded()) == "precip"
 
     def test_skips_grid_mapping_container_and_targets(self):
         ds = make_gridded()
         ds["crs"] = xr.DataArray(0, attrs={"grid_mapping_name": "latitude_longitude"})
         ds["precip"].attrs["grid_mapping"] = "crs"
-        assert envelope.auto_variable(ds) == "precip"
+        assert dataset.auto_variable(ds) == "precip"
         # A var NAMED by another var's grid_mapping attr is skipped even
         # without its own grid_mapping_name attr.
         ds2 = make_gridded()
         ds2["other"] = xr.DataArray(0)
         ds2["precip"].attrs["grid_mapping"] = "other"
-        assert envelope.auto_variable(ds2) == "precip"
+        assert dataset.auto_variable(ds2) == "precip"
 
     def test_prefers_multidim_vars(self):
         ds = make_gridded()
         ds = ds[["precip"]]
         ds["scalar_first"] = xr.DataArray(1.0)
         ds = ds[["scalar_first", "precip"]]
-        assert envelope.auto_variable(ds) == "precip"
+        assert dataset.auto_variable(ds) == "precip"
 
     def test_falls_back_to_one_dim_candidate(self):
         ds = make_gridded()
         ds["series"] = ("time", np.ones(ds.sizes["time"]))
         ds = ds[["series"]]
-        assert envelope.auto_variable(ds) == "series"
+        assert dataset.auto_variable(ds) == "series"
 
     def test_no_candidates_returns_none(self):
         ds = make_gridded()[[]]
-        assert envelope.auto_variable(ds) is None
+        assert dataset.auto_variable(ds) is None
 
 
 class TestLatSlice:
     def test_ascending(self):
-        assert envelope.lat_slice(np.array([1.0, 2.0, 3.0]), 3.0, 1.0) == slice(1.0, 3.0)
+        assert dataset.lat_slice(np.array([1.0, 2.0, 3.0]), 3.0, 1.0) == slice(1.0, 3.0)
 
     def test_descending(self):
-        assert envelope.lat_slice(np.array([3.0, 2.0, 1.0]), 3.0, 1.0) == slice(3.0, 1.0)
+        assert dataset.lat_slice(np.array([3.0, 2.0, 1.0]), 3.0, 1.0) == slice(3.0, 1.0)
 
     def test_empty_axis_defaults_to_ascending(self):
-        assert envelope.lat_slice(np.array([]), 3.0, 1.0) == slice(1.0, 3.0)
+        assert dataset.lat_slice(np.array([]), 3.0, 1.0) == slice(1.0, 3.0)
 
     def test_single_value(self):
-        assert envelope.lat_slice(np.array([2.0]), 3.0, 1.0) == slice(1.0, 3.0)
+        assert dataset.lat_slice(np.array([2.0]), 3.0, 1.0) == slice(1.0, 3.0)
 
 
 class TestPolygonFromGeojson:
@@ -480,99 +480,99 @@ class TestPolygonFromGeojson:
                 {"type": "Feature", "geometry": None},
             ],
         }
-        poly = envelope.polygon_from_geojson(self.write(tmp_path, payload))
+        poly = dataset.polygon_from_geojson(self.write(tmp_path, payload))
         assert poly.area == pytest.approx(2.0)
 
     def test_single_feature(self, tmp_path):
         payload = {"type": "Feature", "geometry": self.square}
-        poly = envelope.polygon_from_geojson(self.write(tmp_path, payload))
+        poly = dataset.polygon_from_geojson(self.write(tmp_path, payload))
         assert poly.area == pytest.approx(1.0)
 
     def test_bare_geometry(self, tmp_path):
-        poly = envelope.polygon_from_geojson(self.write(tmp_path, self.square))
+        poly = dataset.polygon_from_geojson(self.write(tmp_path, self.square))
         assert poly.area == pytest.approx(1.0)
 
     def test_missing_file(self, tmp_path):
         with pytest.raises(UsageError, match="--mask-geojson file not found"):
-            envelope.polygon_from_geojson(tmp_path / "nope.geojson")
+            dataset.polygon_from_geojson(tmp_path / "nope.geojson")
 
     def test_unreadable_json(self, tmp_path):
         p = tmp_path / "mask.geojson"
         p.write_text("{not json")
         with pytest.raises(UsageError, match="could not read --mask-geojson"):
-            envelope.polygon_from_geojson(p)
+            dataset.polygon_from_geojson(p)
 
     def test_no_usable_geometry(self, tmp_path):
         payload = {"type": "FeatureCollection", "features": []}
         with pytest.raises(UsageError, match="has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
     def test_top_level_array_is_no_usable_geometry(self, tmp_path):
         with pytest.raises(UsageError, match="has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, [self.square]))
+            dataset.polygon_from_geojson(self.write(tmp_path, [self.square]))
 
     def test_top_level_scalar_is_no_usable_geometry(self, tmp_path):
         with pytest.raises(UsageError, match="has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, "Polygon"))
+            dataset.polygon_from_geojson(self.write(tmp_path, "Polygon"))
 
     def test_flag_names_the_source_flag(self, tmp_path):
         with pytest.raises(UsageError, match="--clip-geojson file not found"):
-            envelope.polygon_from_geojson(tmp_path / "nope.geojson", flag="--clip-geojson")
+            dataset.polygon_from_geojson(tmp_path / "nope.geojson", flag="--clip-geojson")
 
     def test_non_list_features_value_raises_usage_error(self, tmp_path):
         payload = {"type": "FeatureCollection", "features": {"not": "a list"}}
         with pytest.raises(UsageError, match="'features' is not a list"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
     def test_non_object_feature_entry_raises_usage_error(self, tmp_path):
         payload = {"type": "FeatureCollection", "features": ["not-an-object"]}
         with pytest.raises(UsageError, match="a feature is not a JSON object"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
     def test_unknown_geometry_type_raises_usage_error_naming_the_flag(self, tmp_path):
         payload = {"type": "Bogus", "coordinates": [0, 0]}
         with pytest.raises(UsageError, match="--mask-geojson.*has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
     def test_geometry_missing_coordinates_raises_usage_error(self, tmp_path):
         payload = {"type": "Feature", "geometry": {"type": "Point"}}
         with pytest.raises(UsageError, match="has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
     def test_malformed_coordinates_raise_usage_error_not_a_traceback(self, tmp_path):
         # A string where a coordinate array is expected makes shape() raise a
         # TypeError; it must convert to a flag-named UsageError.
         payload = {"type": "Point", "coordinates": "nope"}
         with pytest.raises(UsageError, match="has no usable geometry"):
-            envelope.polygon_from_geojson(self.write(tmp_path, payload))
+            dataset.polygon_from_geojson(self.write(tmp_path, payload))
 
 
 class TestNormalizeLongitude:
     def test_0_360_axis_wraps_and_sorts(self):
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         assert list(out["longitude"].values) == [-180.0, -90.0, 0.0, 90.0]
 
     def test_values_follow_their_cells(self):
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
         ds["precip"][:, :, 3] = 7.0  # the 270 column
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         assert float(out["precip"].sel(longitude=-90.0).isel(time=0, latitude=0)) == 7.0
 
     def test_already_normalized_axis_is_unchanged(self):
         ds = make_gridded(lons=(-90.0, 0.0, 90.0))
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         assert list(out["longitude"].values) == [-90.0, 0.0, 90.0]
 
     def test_custom_dim_name(self):
         ds = make_gridded(lons=(0.0, 270.0)).rename({"longitude": "lon"})
-        out = envelope.normalize_longitude(ds, lon_dim="lon")
+        out = dataset.normalize_longitude(ds, lon_dim="lon")
         assert list(out["lon"].values) == [-90.0, 0.0]
 
     def test_longitude_attrs_preserved_across_the_wrap(self):
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
         ds["longitude"].attrs = {"standard_name": "longitude", "units": "degrees_east", "axis": "X"}
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         assert out["longitude"].attrs == {
             "standard_name": "longitude",
             "units": "degrees_east",
@@ -583,7 +583,7 @@ class TestNormalizeLongitude:
         # 0.0 and 360.0 both wrap onto 0.0; the duplicate is dropped and the
         # axis remains a valid, ascending index.
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0, 360.0))
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         lons = list(out["longitude"].values)
         assert lons == [-180.0, -90.0, 0.0, 90.0]
         assert len(lons) == len(set(lons))
@@ -594,7 +594,7 @@ class TestNormalizeLongitude:
         ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0, 360.0))
         ds["precip"][:, :, 0] = 5.0  # the original 0.0 column
         ds["precip"][:, :, 4] = 9.0  # the original 360.0 column
-        out = envelope.normalize_longitude(ds)
+        out = dataset.normalize_longitude(ds)
         assert float(out["precip"].sel(longitude=0.0).isel(time=0, latitude=0)) == 5.0
 
 
@@ -613,7 +613,7 @@ class TestStampCfDsg:
                 }
             }
         )
-        return envelope.stamp_cf_dsg(
+        return dataset.stamp_cf_dsg(
             ds,
             var_attrs,
             station_id_long_name="GHCN station identifier",
@@ -692,19 +692,19 @@ class TestStampCfDsg:
 class TestVerifyCfDsg:
     def test_stamped_dataset_passes(self):
         ds = make_station()
-        envelope.stamp_cf_dsg(
+        dataset.stamp_cf_dsg(
             ds,
             {"precip": {"units": "mm", "long_name": "precip"}},
             station_id_long_name="id",
             name_long_name="name",
         )
-        envelope.verify_cf_dsg(ds)
+        dataset.verify_cf_dsg(ds)
 
     def test_unstamped_dataset_lists_every_problem(self):
         ds = make_station()
         ds = ds.rename({"latitude": "row", "longitude": "col", "time": "record"})
         with pytest.raises(DataError) as excinfo:
-            envelope.verify_cf_dsg(ds)
+            dataset.verify_cf_dsg(ds)
         message = str(excinfo.value)
         assert message.startswith("CF-1.13 DSG verification failed before write:")
         assert "cf_role timeseries_id did not resolve to station_id" in message
@@ -713,7 +713,7 @@ class TestVerifyCfDsg:
 
     def test_missing_cf_role_alone(self):
         ds = make_station()
-        envelope.stamp_cf_dsg(
+        dataset.stamp_cf_dsg(
             ds,
             {"precip": {"units": "mm"}},
             station_id_long_name="id",
@@ -721,7 +721,7 @@ class TestVerifyCfDsg:
         )
         del ds["station_id"].attrs["cf_role"]
         with pytest.raises(DataError, match="timeseries_id did not resolve"):
-            envelope.verify_cf_dsg(ds)
+            dataset.verify_cf_dsg(ds)
 
 
 class TestUdunitsError:
@@ -731,18 +731,18 @@ class TestUdunitsError:
 
     @pytest.mark.parametrize("units", ["mm", "degC", "kg m-3", "mm day-1", "1"])
     def test_valid_units_return_none(self, units):
-        assert envelope.udunits_error(units) is None
+        assert dataset.udunits_error(units) is None
 
     def test_invalid_units_return_the_exception(self):
-        exc = envelope.udunits_error("definitely ! not a unit")
+        exc = dataset.udunits_error("definitely ! not a unit")
         assert isinstance(exc, ValueError)
         assert "not a unit" in str(exc)
 
     def test_blank_units_pass_through(self):
         # cf_units.Unit(None) and Unit("") return an "unknown" unit without
         # raising; rejecting blanks is the caller's guard.
-        assert envelope.udunits_error(None) is None
-        assert envelope.udunits_error("") is None
+        assert dataset.udunits_error(None) is None
+        assert dataset.udunits_error("") is None
 
     def test_catch_widens_the_converted_failures(self):
         class Boom(Exception):
@@ -750,17 +750,17 @@ class TestUdunitsError:
 
         # With the default catch, only ValueError converts; a wider catch
         # returns whatever cf_units raised.
-        assert envelope.udunits_error("degC", catch=(Exception,)) is None
-        exc = envelope.udunits_error("definitely ! not a unit", catch=(Exception,))
+        assert dataset.udunits_error("degC", catch=(Exception,)) is None
+        exc = dataset.udunits_error("definitely ! not a unit", catch=(Exception,))
         assert isinstance(exc, ValueError)
         with pytest.raises(ValueError):
-            envelope.udunits_error("definitely ! not a unit", catch=(Boom,))
+            dataset.udunits_error("definitely ! not a unit", catch=(Boom,))
 
 
 class TestCfAxesMissing:
     def test_all_resolved(self):
-        ds = envelope.stamp_cf_attrs(make_gridded())
-        assert envelope.cf_axes_missing(ds) == []
+        ds = dataset.stamp_cf_attrs(make_gridded())
+        assert dataset.cf_axes_missing(ds) == []
 
     def test_partially_stamped_dataset_misses_x_and_y(self):
         # Axis resolution keys on the CF attrs (an unrenamed bare `time` name
@@ -768,13 +768,13 @@ class TestCfAxesMissing:
         # stamped coord resolves.
         ds = make_gridded().rename({"latitude": "row", "longitude": "col"})
         ds["time"].attrs["axis"] = "T"
-        assert envelope.cf_axes_missing(ds) == ["X", "Y"]
+        assert dataset.cf_axes_missing(ds) == ["X", "Y"]
 
     def test_all_missing_on_unstamped_dataset(self):
-        assert envelope.cf_axes_missing(make_gridded()) == ["X", "Y", "T"]
+        assert dataset.cf_axes_missing(make_gridded()) == ["X", "Y", "T"]
 
     def test_custom_axes(self):
         ds = make_gridded()
         ds["time"].attrs["axis"] = "T"
-        assert envelope.cf_axes_missing(ds, axes=("T",)) == []
-        assert envelope.cf_axes_missing(ds, axes=("Y",)) == ["Y"]
+        assert dataset.cf_axes_missing(ds, axes=("T",)) == []
+        assert dataset.cf_axes_missing(ds, axes=("Y",)) == ["Y"]

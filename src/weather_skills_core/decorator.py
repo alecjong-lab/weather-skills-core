@@ -18,8 +18,8 @@ from pathlib import Path
 
 import xarray as xr
 
+from weather_skills_core import dataset as _dataset
 from weather_skills_core import dates as _dates
-from weather_skills_core import envelope as _envelope
 from weather_skills_core import provenance as _provenance
 from weather_skills_core.errors import SkillError, UsageError
 
@@ -102,7 +102,7 @@ def standard_parameters():
     )
 
 
-def _slot_help_label(slot: _envelope.SlotSpec) -> str:
+def _slot_help_label(slot: _dataset.SlotSpec) -> str:
     if slot.kind == "unstructured":
         return "unstructured"
     if slot.kind == "visualization":
@@ -179,10 +179,10 @@ def weather_skill(
     raw_inputs = list(inputs or [])
     raw_outputs = list(outputs or [])
     try:
-        input_slots, variadic_input = _envelope.normalize_io_list(
+        input_slots, variadic_input = _dataset.normalize_io_list(
             raw_inputs, allow_variadic=True, for_input=True
         )
-        output_slots, _ = _envelope.normalize_io_list(
+        output_slots, _ = _dataset.normalize_io_list(
             raw_outputs, allow_variadic=False, for_input=False
         )
     except ValueError as exc:
@@ -282,10 +282,8 @@ def weather_skill(
                     dest = arg.dest
                     raw = getattr(args, dest)
                     if dest == "bbox":
-                        params[dest] = _envelope.parse_bbox(raw) if raw is not None else None
-                    elif dest == "date":
-                        params[dest] = _dates.parse_date(raw) if raw is not None else None
-                    elif dest in ("start_time", "end_time"):
+                        params[dest] = _dataset.parse_bbox(raw) if raw is not None else None
+                    elif dest == "date" or dest in ("start_time", "end_time"):
                         params[dest] = _dates.parse_date(raw) if raw is not None else None
                     else:
                         params[dest] = raw
@@ -301,12 +299,12 @@ def weather_skill(
                 opened = []
                 upstream = []
                 for path, slot in zip(input_paths, path_slots, strict=True):
-                    if slot.kind == _envelope.UNSTRUCTURED:
+                    if slot.kind == _dataset.UNSTRUCTURED:
                         opened.append(path)
                         upstream.append([])
                     else:
                         ds = xr.open_zarr(path, consolidated=True)
-                        _envelope.validate_input(ds, slot, str(path))
+                        _dataset.validate_input(ds, slot, str(path))
                         opened.append(ds)
                         upstream.append(_provenance.load_history(path))
 
@@ -344,7 +342,7 @@ def weather_skill(
                     input_field = None
                     base_history = []
                 elif len(input_paths) == 1:
-                    if path_slots[0].kind == _envelope.UNSTRUCTURED:
+                    if path_slots[0].kind == _dataset.UNSTRUCTURED:
                         input_field = {
                             "basename": input_paths[0].name,
                             "hash": _provenance.hash_file(input_paths[0]),
@@ -355,7 +353,7 @@ def weather_skill(
                 else:
                     input_field = []
                     for path, slot, hist in zip(input_paths, path_slots, upstream, strict=True):
-                        if slot.kind == _envelope.UNSTRUCTURED:
+                        if slot.kind == _dataset.UNSTRUCTURED:
                             input_field.append(
                                 {
                                     "basename": path.name,
@@ -385,7 +383,7 @@ def weather_skill(
                 for value, out_path, out_slot in zip(
                     results, output_paths, output_slots, strict=True
                 ):
-                    if out_slot.kind == _envelope.VISUALIZATION:
+                    if out_slot.kind == _dataset.VISUALIZATION:
                         if not isinstance(value, (str, Path)):
                             raise SkillError(
                                 "visualization outputs must return a Path to the written file"
@@ -411,7 +409,7 @@ def weather_skill(
 
                     # Optional output-shape check for Dataset returns
                     if out_slot.kind == "zarr" and hasattr(value, "dims"):
-                        _envelope.validate_input(value, out_slot, f"output {out_path}")
+                        _dataset.validate_input(value, out_slot, f"output {out_path}")
 
                     if first_ds is not None:
                         value.attrs = {**first_ds.attrs, **value.attrs}

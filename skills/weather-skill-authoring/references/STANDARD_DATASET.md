@@ -1,4 +1,4 @@
-# Weather-Skills Envelope
+# WeatherSkills standard dataset
 
 Zarr inputs and outputs are declared by **required dimensions** (or canonical
 shorthands that expand to dims). Within one `inputs=` / `outputs=` slot:
@@ -64,6 +64,21 @@ JSON array, oldest first. Each entry:
 
 Visualization files embed the same JSON under the key `weather_skills_history`
 (PNG `tEXt`, JPEG EXIF UserComment, HTML `<meta name="weather_skills_history">`).
+
+## Data-variable units
+
+Data variables should carry udunits-parseable `units`. Incoming CF stores are
+accepted as-is. Optional helpers in `weather_skills_core.units` (extra
+`weather-skills-core[units]`) normalize common display units:
+
+| Kind | Standard units | Typical `standard_name` |
+| --- | --- | --- |
+| temperature | `degree_Celsius` | keep existing |
+| precip rate / flux | `mm day-1` | `lwe_precipitation_rate` |
+| precip amount / depth | `mm` | `lwe_thickness_of_precipitation_amount` |
+
+Use `to_standard_units(ds)` / `units_equal(a, b)` from fetchers, plots, or
+`unit-convert --to-standard`.
 
 ## Conventions
 

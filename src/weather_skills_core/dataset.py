@@ -45,7 +45,7 @@ VISUALIZATION = "visualization"
 ANY = "any"
 
 # Legacy names kept as constants for gradual migration / tests
-DATA = "observations"  # formerly gridded data envelope
+DATA = "observations"  # formerly gridded data
 FORECAST = "forecast"
 STATION = "station"
 OBSERVATIONS = "observations"
@@ -66,7 +66,7 @@ CANONICAL: dict[str, frozenset[str]] = {
     "station": _STATION,
 }
 
-# Back-compat: old envelope type name still accepted in specs
+# Back-compat: old type name still accepted in specs
 CANONICAL["data"] = _OBS
 
 TYPES = (OBSERVATIONS, FORECAST, STATION)  # legacy grouping for docs/tests

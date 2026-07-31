@@ -2,6 +2,7 @@
 
 from weather_skills_core.decorator import standard_parameters, weather_skill
 
+
 @weather_skill(
     name="full",
     version="0.1.0",
