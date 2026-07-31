@@ -37,7 +37,7 @@ Declare what a skill needs with fixed dimension names, or a short type name.
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Horizontal grid (`latitude` + `longitude`) |
+| `space` | Horizontal grid (`lat` + `lon`) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
@@ -48,15 +48,14 @@ Declare what a skill needs with fixed dimension names, or a short type name.
 
 ### Types
 
-| Type | Requires |
+| Type (primary first) | Required dimensions |
 | --- | --- |
-| `observations` | `space`, `time` |
-| `forecast` | `space`, `init_time`, `prediction_timedelta` |
-| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
-| `station` | `point_id`, `time` |
-| `any` | any Zarr |
-| `unstructured` | file path |
-| `visualization` | PNG / JPEG / HTML |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
+| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `ensemble_forecast` | forecast dims + `member` |
+| `point_obs`, `station` | `point_id` + `time` |
+
+Also: `any` (any Zarr), `unstructured` (file path), `visualization` (PNG / JPEG / HTML).
 
 One `inputs=` / `outputs=` entry per CLI path. Tuple = all required; list = any
 one; trailing `+` = one or more paths.

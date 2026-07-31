@@ -10,7 +10,7 @@ Use these names:
 
 | Name | Meaning |
 | --- | --- |
-| `space` | Horizontal grid (`latitude` + `longitude`) |
+| `space` | Horizontal grid (`lat` + `lon`) |
 | `time` | Valid time |
 | `init_time` | Forecast initialization time |
 | `prediction_timedelta` | Forecast lead time |
@@ -22,17 +22,17 @@ Use these names:
 
 ## Types
 
-A type is a shortcut for a set of dimensions:
+A type is a shortcut for a set of dimensions. Prefer the primary name; aliases
+mean the same thing.
 
-| Type | Requires |
+| Type (primary first) | Required dimensions |
 | --- | --- |
-| `observations` | `space`, `time` |
-| `forecast` | `space`, `init_time`, `prediction_timedelta` |
-| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
-| `station` | `point_id`, `time` |
-| `any` | any Zarr (no dimension check) |
-| `unstructured` | a file path (not Zarr) |
-| `visualization` | a plot file (PNG / JPEG / HTML) |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
+| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `ensemble_forecast` | forecast dims + `member` |
+| `point_obs`, `station` | `point_id` + `time` |
+
+Also: `any` (any Zarr), `unstructured` (file path), `visualization` (PNG / JPEG / HTML).
 
 ## Declaring I/O on a skill
 

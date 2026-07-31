@@ -82,15 +82,14 @@ skills that need that check do it in-body.
 Standard dimension names: `space`, `time`, `init_time`, `prediction_timedelta`,
 `member`, `day_of_year`, `point_id`, `x`, `y`.
 
-| Type | Requires |
+| Type (primary first) | Required dimensions |
 | --- | --- |
-| `observations` | `space`, `time` |
-| `forecast` | `space`, `init_time`, `prediction_timedelta` |
-| `ensemble_forecast` | `space`, `init_time`, `prediction_timedelta`, `member` |
-| `station` | `point_id`, `time` |
-| `any` | any Zarr |
-| `unstructured` | file path |
-| `visualization` | PNG / JPEG / HTML |
+| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `space` + `time` |
+| `forecast` | `space` + `init_time` + `prediction_timedelta` |
+| `ensemble_forecast` | forecast dims + `member` |
+| `point_obs`, `station` | `point_id` + `time` |
+
+Also: `any`, `unstructured`, `visualization`.
 
 Example: `inputs=["space"]` for clip; `inputs=["forecast"]` for a forecast-only
 skill. See `references/STANDARD_DATASET.md`.

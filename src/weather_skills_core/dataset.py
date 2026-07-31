@@ -32,32 +32,34 @@ UNSTRUCTURED = "unstructured"
 VISUALIZATION = "visualization"
 ANY = "any"
 
-# Legacy names kept as constants for gradual migration / tests
+# Primary type names (and a few back-compat constants)
 DATA = "observations"  # formerly gridded data
 FORECAST = "forecast"
-STATION = "station"
+POINT_OBS = "point_obs"
+STATION = "station"  # alias of point_obs
 OBSERVATIONS = "observations"
 
 _OBS = frozenset({SPACE, TIME})
 _FORECAST = frozenset({SPACE, INIT_TIME, PREDICTION_TIMEDELTA})
 _ENSEMBLE = _FORECAST | {MEMBER}
-_STATION = frozenset({POINT_ID, TIME})
+_POINT_OBS = frozenset({POINT_ID, TIME})
 
-# Canonical shorthand → required ontology dims (AND)
+# Canonical shorthand → required ontology dims (AND).
+# Primary names first; aliases share the same dim set.
 CANONICAL: dict[str, frozenset[str]] = {
     "observations": _OBS,
+    "obs": _OBS,
     "analysis": _OBS,
     "retrieval": _OBS,
     "field": _OBS,
+    "data": _OBS,
     "forecast": _FORECAST,
     "ensemble_forecast": _ENSEMBLE,
-    "station": _STATION,
+    "point_obs": _POINT_OBS,
+    "station": _POINT_OBS,
 }
 
-# Back-compat: old type name still accepted in specs
-CANONICAL["data"] = _OBS
-
-TYPES = (OBSERVATIONS, FORECAST, STATION)  # legacy grouping for docs/tests
+TYPES = (OBSERVATIONS, FORECAST, POINT_OBS)  # grouping for docs/tests
 
 _LAT_NAMES = ("latitude", "lat", "y")
 _LON_NAMES = ("longitude", "lon", "x")
@@ -292,9 +294,9 @@ def validate_dims(
 
 
 def detect_type(ds) -> str:
-    """Best-effort classify for messages/tests: station, forecast, or observations."""
+    """Best-effort classify for messages/tests: point_obs, forecast, or observations."""
     if has_dim(ds, POINT_ID):
-        return STATION
+        return POINT_OBS
     if has_dim(ds, PREDICTION_TIMEDELTA) and has_dim(ds, INIT_TIME):
         if has_dim(ds, MEMBER):
             return "ensemble_forecast"
@@ -319,13 +321,37 @@ def validate_input(
     # String / list / tuple slot body (including legacy "data")
     if isinstance(allowed, (str, list, tuple)):
         if isinstance(allowed, list) and allowed and all(
-            isinstance(x, str) and x in ("data", "forecast", "station", "observations", "any")
+            isinstance(x, str)
+            and x
+            in (
+                "data",
+                "forecast",
+                "station",
+                "point_obs",
+                "observations",
+                "any",
+            )
             for x in allowed
         ):
-            mapped = ["observations" if x == "data" else x for x in allowed]
+            mapped = [
+                (
+                    "observations"
+                    if x == "data"
+                    else "point_obs"
+                    if x == "station"
+                    else x
+                )
+                for x in allowed
+            ]
             slot = normalize_slot(mapped if len(mapped) > 1 else mapped[0], for_input=True)
         else:
-            body = "observations" if allowed == "data" else allowed
+            body = (
+                "observations"
+                if allowed == "data"
+                else "point_obs"
+                if allowed == "station"
+                else allowed
+            )
             slot = normalize_slot(body, for_input=True)
         if slot.kind != "zarr":
             return slot.kind

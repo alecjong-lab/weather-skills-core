@@ -81,8 +81,13 @@ class TestDetectType:
         # Default fixture includes a member dim → ensemble_forecast
         assert dataset.detect_type(make_forecast()) == "ensemble_forecast"
 
-    def test_station(self):
-        assert dataset.detect_type(make_station()) == dataset.STATION
+    def test_point_obs(self):
+        assert dataset.detect_type(make_station()) == dataset.POINT_OBS
+
+    def test_station_alias_same_as_point_obs(self):
+        assert dataset.parse_alternatives("station") == dataset.parse_alternatives(
+            "point_obs"
+        )
 
     def test_step_with_time_dim_is_not_forecast(self):
         # Forecast needs scalar init (time) + step; a step dim alongside a
@@ -99,10 +104,10 @@ class TestParseIoSpec:
             frozenset({"space", "time"}),
         )
 
-    def test_alias_analysis_same_as_observations(self):
-        assert dataset.parse_alternatives("analysis") == dataset.parse_alternatives(
-            "observations"
-        )
+    def test_obs_aliases_same_as_observations(self):
+        expected = dataset.parse_alternatives("observations")
+        for alias in ("obs", "analysis", "retrieval", "field", "data"):
+            assert dataset.parse_alternatives(alias) == expected
 
     def test_or_list(self):
         alts = dataset.parse_alternatives(["forecast", "ensemble_forecast"])
