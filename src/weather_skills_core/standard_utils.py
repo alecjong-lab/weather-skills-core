@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date
+from calendar import day_name, monthrange
+from datetime import date, datetime, timedelta
 
 from weather_skills_core.errors import DataError, UsageError
 from weather_skills_core.standard_dataset import detect_spatial_dims
@@ -269,6 +270,50 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
     return ds
 
 
+def clip_by_geometry(
+    ds, geometry, *, lat_dim: str | None = None, lon_dim: str | None = None, drop: bool = True
+):
+    """Clip gridded or station dataset to a shapely geometry (NaN outside; optional drop)."""
+    import numpy as np
+    import shapely
+    import xarray as xr
+
+    if geometry is None:
+        return ds
+    if "station_id" in ds.dims:
+        for name in ("latitude", "longitude"):
+            if name not in ds.coords:
+                raise UsageError(
+                    f"station clip requires {name!r} coord (coords: {list(ds.coords)})"
+                )
+        mask = shapely.contains_xy(
+            geometry,
+            np.asarray(ds["longitude"].values),
+            np.asarray(ds["latitude"].values),
+        )
+        if not mask.any():
+            raise DataError("geometry selects no stations")
+        keep = xr.DataArray(mask, dims="station_id")
+        return ds.isel(station_id=np.nonzero(mask)[0]) if drop else ds.where(keep, drop=False)
+
+    if lat_dim is None or lon_dim is None:
+        lat_dim, lon_dim = detect_spatial_dims(ds)
+    lon_vals = np.asarray(ds[lon_dim].values)
+    if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
+        ds = ds.assign_coords({lon_dim: ((ds[lon_dim] + 180) % 360 - 180)}).sortby(lon_dim)
+    lon2d, lat2d = np.meshgrid(ds[lon_dim].values, ds[lat_dim].values)
+    mask = shapely.contains_xy(geometry, lon2d, lat2d)
+    mask_da = xr.DataArray(
+        mask, dims=(lat_dim, lon_dim), coords={lat_dim: ds[lat_dim], lon_dim: ds[lon_dim]}
+    )
+    if not bool(mask_da.any()):
+        raise DataError("geometry selects no grid cells")
+    out = ds.where(mask_da)
+    if drop:
+        out = out.dropna(lat_dim, how="all").dropna(lon_dim, how="all")
+    return out
+
+
 def grid_spacing(coord_vals) -> float:
     """Median absolute spacing of a 1-D coordinate (degrees or similar)."""
     import numpy as np
@@ -343,3 +388,144 @@ def latitude_weights(lats):
         lats = xr.DataArray(lats)
     weights = np.cos(np.deg2rad(lats))
     return weights / weights.mean()
+
+
+_WEEKDAYS = {name.lower(): i for i, name in enumerate(day_name)}
+
+
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime(value.year, value.month, value.day)  # noqa: DTZ001
+    import numpy as np
+
+    if isinstance(value, np.datetime64):
+        return datetime.fromisoformat(np.datetime_as_string(value, unit="D"))
+    text = str(value)
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    return datetime.fromisoformat(text[:10])
+
+
+def stride_dates(start, end, stride: str = "day"):
+    """Inclusive date list from start to end.
+
+    ``stride`` is ``day``/``week``/``month``/``year``, or weekday names
+    (``Monday``, ``Monday/Thursday``).
+    """
+    import numpy as np
+
+    start_dt, end_dt = _as_datetime(start), _as_datetime(end)
+    if end_dt < start_dt:
+        raise UsageError(f"stride start {start_dt.date()} is after end {end_dt.date()}")
+
+    parts = [p.strip().lower() for p in stride.split("/") if p.strip()]
+    if parts and all(p in _WEEKDAYS for p in parts):
+        want = {_WEEKDAYS[p] for p in parts}
+        out = []
+        cur = start_dt
+        while cur <= end_dt:
+            if cur.weekday() in want:
+                out.append(cur)
+            cur += timedelta(days=1)
+        return np.array(out, dtype="datetime64[ns]")
+
+    key = stride.strip().lower()
+    if key == "day":
+        delta, months, years = timedelta(days=1), 0, 0
+    elif key == "week":
+        delta, months, years = timedelta(days=7), 0, 0
+    elif key == "month":
+        delta, months, years = None, 1, 0
+    elif key == "year":
+        delta, months, years = None, 0, 1
+    else:
+        raise UsageError(
+            f"invalid stride {stride!r}; use day/week/month/year or weekday "
+            "names (e.g. Monday, Monday/Thursday)"
+        )
+
+    out = []
+    cur = start_dt
+    while cur <= end_dt:
+        out.append(cur)
+        if delta is not None:
+            cur = cur + delta
+        else:
+            y = cur.year + years + (cur.month - 1 + months) // 12
+            m = (cur.month - 1 + months) % 12 + 1
+            d = min(cur.day, monthrange(y, m)[1])
+            cur = datetime(y, m, d)  # noqa: DTZ001
+    return np.array(out, dtype="datetime64[ns]")
+
+
+def roll_and_agg(
+    ds,
+    window: int,
+    dim: str,
+    method: str = "mean",
+    *,
+    align: str = "left",
+    stride=None,
+    min_periods: int | None = None,
+):
+    """N-step rolling aggregation, then optional stride subsample.
+
+    ``window`` is in axis steps (days for daily ``time``, or steps for ``step``).
+    ``align`` is left/right/center label placement. ``stride`` is an int step,
+    or a ``stride_dates`` string when ``dim`` is datetime64.
+    Methods: ``mean``, ``min``, ``max`` only (rates-first).
+    """
+    import numpy as np
+
+    if window < 1:
+        raise UsageError(f"rolling window must be >= 1; got {window}")
+    if window == 1 and stride is None:
+        return ds
+    if min_periods is None:
+        min_periods = window
+    dtype = ds[dim].dtype
+    if not (np.issubdtype(dtype, np.datetime64) or np.issubdtype(dtype, np.timedelta64)):
+        raise UsageError(
+            f"rolling aggregation requires datetime64 or timedelta64 on {dim!r}; "
+            f"got dtype {dtype}"
+        )
+    rolled = ds.rolling({dim: window}, min_periods=min_periods, center=False)
+    fn = {"mean": rolled.mean, "max": rolled.max, "min": rolled.min}.get(method)
+    if fn is None:
+        raise UsageError(f"unsupported rolling method {method!r}; use mean|min|max")
+    out = fn(skipna=True)
+    out = out.isel({dim: slice(window - 1, None)})
+    if align == "center":
+        shift = np.timedelta64((window - 1) // 2, "D")
+    elif align == "right":
+        shift = np.timedelta64(0, "D")
+    elif align == "left":
+        shift = np.timedelta64(window - 1, "D")
+    else:
+        raise UsageError(f"align must be left/right/center; got {align!r}")
+    # Timedelta axes: shift by steps, not calendar days.
+    if np.issubdtype(out[dim].dtype, np.timedelta64):
+        if align == "center":
+            step_shift = (window - 1) // 2
+        elif align == "right":
+            step_shift = 0
+        else:
+            step_shift = window - 1
+        # Infer median step spacing for the shift magnitude.
+        steps = np.asarray(ds[dim].values)
+        diffs = np.diff(steps.astype("timedelta64[ns]").astype(np.int64))
+        median_ns = int(np.median(diffs)) if diffs.size else 0
+        shift = np.timedelta64(step_shift * median_ns, "ns")
+    out = out.assign_coords({dim: out[dim] - shift})
+    if stride is None:
+        return out
+    if isinstance(stride, int):
+        if stride < 1:
+            raise UsageError(f"stride must be >= 1; got {stride}")
+        return out.isel({dim: slice(None, None, stride)})
+    if not np.issubdtype(out[dim].dtype, np.datetime64):
+        raise UsageError("string --stride requires a datetime64 time axis")
+    times = stride_dates(out[dim].values[0], out[dim].values[-1], stride=str(stride))
+    return out.sel({dim: times})

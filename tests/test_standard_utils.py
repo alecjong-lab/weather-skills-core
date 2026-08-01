@@ -450,3 +450,42 @@ class TestVerifyCfDecode:
     def test_raises_when_unstamped(self):
         with pytest.raises(DataError, match="did not resolve"):
             utils.verify_cf_decode(make_gridded())
+
+
+class TestClipByGeometry:
+    def test_grid_drop(self):
+        from shapely.geometry import box
+
+        ds = make_gridded()
+        out = utils.clip_by_geometry(ds, box(10.5, 0.5, 12.5, 2.5), drop=True)
+        assert list(out.latitude.values) == [1.0, 2.0]
+        assert list(out.longitude.values) == [11.0, 12.0]
+
+    def test_empty_raises(self):
+        from shapely.geometry import box
+
+        with pytest.raises(DataError, match="no grid cells"):
+            utils.clip_by_geometry(make_gridded(), box(50, 50, 51, 51), drop=True)
+
+
+class TestStrideDates:
+    def test_daily(self):
+        times = utils.stride_dates("2026-01-01", "2026-01-03", stride="day")
+        assert len(times) == 3
+
+    def test_weekdays(self):
+        times = utils.stride_dates("2026-01-05", "2026-01-11", stride="Monday")
+        assert len(times) == 1
+        assert str(times[0])[:10] == "2026-01-05"
+
+
+class TestRollAndAgg:
+    def test_mean_window(self):
+        ds = make_gridded(n_time=5, fill=2.0)
+        out = utils.roll_and_agg(ds, 3, "time", method="mean", align="right")
+        assert out.sizes["time"] == 3
+        np.testing.assert_allclose(out["precip"].values, 2.0)
+
+    def test_rejects_sum(self):
+        with pytest.raises(UsageError, match="unsupported rolling method"):
+            utils.roll_and_agg(make_gridded(n_time=5), 3, "time", method="sum")
