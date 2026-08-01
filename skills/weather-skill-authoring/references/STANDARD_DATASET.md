@@ -75,14 +75,18 @@ content `hash`). Plots store the same JSON in file metadata.
 
 ## Units
 
-Give data variables a udunits-parseable `units` attr. Optional helpers can
-normalize common display units (`weather-skills-core[units]`):
+Give data variables a udunits-parseable `units` attr. The pipeline is **rates-first**
+for precip (canonical `mm day-1`). Period amounts (`mm`) come from the
+`convert-to-totals` skill after aggregation stamps `aggregation_period`.
 
 | Kind | Standard units |
 | --- | --- |
 | temp | `degree_Celsius` |
 | precip rate | `mm day-1` |
-| precip amount | `mm` |
+| precip amount (totals only) | `mm` |
+
+Aggregation stamps CF `cell_methods` (e.g. `time: mean (interval: 1 day)`) and
+`aggregation_period` (e.g. `7 day`). Totals use `cell_methods` with `sum`.
 
 ## Writing Zarr
 

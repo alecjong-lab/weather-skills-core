@@ -124,8 +124,10 @@ Datasets before return if needed.
 ## Units helpers
 
 `to_standard_units(ds)` / `units_equal(a, b)` — normalize temp → `degree_Celsius`
-and precip → `mm day-1` / `mm`. Inputs are quantified by `@weather_skill` via
-`pint-xarray` (temp/precip vars require `units`).
+and precip **rates** → `mm day-1`. Amounts are produced only by
+`convert-to-totals`. Inputs are quantified by `@weather_skill` via
+`pint-xarray` (temp/precip_rate vars require `units`; precip totals are refused
+unless `allow_precip_totals=True` for plotters / `deaccumulate`).
 
 ## Errors
 

@@ -172,12 +172,17 @@ def weather_skill(
     version,
     inputs=None,
     outputs=None,
+    allow_precip_totals=False,
 ):
     """Turn a function into a weather skill CLI with validated I/O and provenance.
 
     ``inputs``/``outputs`` are IO spec lists (str; list=OR; tuple=AND; trailing ``+``
     = variadic). Stack ``@weather_skill.argument`` for extra flags. The skill
     must accept ``**kwargs`` (decorator passes ``output`` there).
+
+    Rate-path skills refuse precip totals on open (amount units or
+    ``cell_methods`` with ``sum``). Set ``allow_precip_totals=True`` for
+    plotters and for ``deaccumulate`` (cumulative → rate).
     """
     raw_inputs = list(inputs or [])
     raw_outputs = list(outputs or [])
@@ -296,7 +301,9 @@ def weather_skill(
                     else:
                         ds = xr.open_zarr(path, consolidated=True)
                         std.validate_input(ds, spec, str(path))
-                        opened.append(quantify_dataset(ds))
+                        opened.append(
+                            quantify_dataset(ds, allow_precip_totals=allow_precip_totals)
+                        )
                         upstream.append(provenance_mod.load_history(path))
 
                 # 4. Call skill

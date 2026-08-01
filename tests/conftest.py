@@ -10,7 +10,7 @@ def make_data(
     name="precip",
     fill=1.0,
     start="2026-01-01",
-    units="mm",
+    units="mm day-1",
 ):
     times = np.arange(np.datetime64(start), np.datetime64(start) + np.timedelta64(n_time, "D"))
     data = np.full((n_time, len(lats), len(lons)), fill)
@@ -51,7 +51,7 @@ def make_forecast(n_number=3, n_step=4):
             {"tp": (("step", "latitude", "longitude"), data)},
             coords=coords,
         )
-    ds["tp"].attrs["units"] = "mm"
+    ds["tp"].attrs["units"] = "mm day-1"
     return ds
 
 

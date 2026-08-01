@@ -1,24 +1,25 @@
 """Units helpers: equivalence, conversion, quantify, and standard display units.
 
 On skill input, ``quantify_dataset`` attaches pint units to data variables.
-Temp / precip / precip_rate variables must have a ``units`` attr; other
-variables without units pass through. The decorator dequantifies before writing
-Zarr.
+Temp / precip_rate variables must have a ``units`` attr; other variables without
+units pass through. Precip **totals** (amount units or ``cell_methods`` with
+``sum``) are refused so rate-path skills stay rates-only, unless
+``allow_precip_totals=True`` (plotters / ``deaccumulate``). The decorator
+dequantifies before writing Zarr.
 
-Standard display targets (fetchers / plots / ``unit-convert --to-standard``):
+Standard display targets (rate path / ``unit-convert --to-standard``):
 
 - temp → ``degree_Celsius`` (keeps existing ``standard_name``)
 - precip rate / flux → ``mm day-1`` (``lwe_precipitation_rate``)
-- precip amount / depth → ``mm`` (``lwe_thickness_of_precipitation_amount``)
 
-``classify_variable`` precedence: CF ``standard_name``, then units fingerprint,
-then variable-name hints. Mass precip (``kg m-2``, ``kg m-2 s-1``) converts to
-depth/rate (``mm``, ``mm day-1``) by dividing or multiplying by liquid-water
-density (1000 kg m-3). Uses ``pint-xarray`` with CF/UDUNITS strings via
-``cf_xarray.units``.
+Amount units (``mm``) are produced only by the ``convert-to-totals`` skill.
+Mass precip flux (``kg m-2 s-1``) converts to depth rate via liquid-water
+density (1000 kg m-3). Uses ``pint-xarray`` with CF/UDUNITS via ``cf_xarray.units``.
 """
 
 from __future__ import annotations
+
+import re
 
 import cf_xarray.units  # noqa: F401 — CF/UDUNITS strings on the pint registry
 import numpy as np
@@ -27,9 +28,23 @@ import pint_xarray
 from weather_skills_core.errors import UsageError
 
 ureg = pint_xarray.unit_registry
+if "pentad" not in ureg:
+    ureg.define("pentad = 5 * day")
+if "dekad" not in ureg:
+    ureg.define("dekad = 10 * day")
+
+AGGREGATION_PERIOD_ATTR = "aggregation_period"
+
+# Period label → pint duration string stamped as aggregation_period.
+PERIOD_TO_AGGREGATION = {
+    "daily": "1 day",
+    "weekly": "7 day",
+    "dekadal": "1 dekad",
+    "monthly": "1 month",
+}
 
 # Kinds that must carry parseable units when a dataset is quantified on input.
-REQUIRED_UNIT_KINDS = frozenset({"temp", "precip_rate", "precip_amount"})
+REQUIRED_UNIT_KINDS = frozenset({"temp", "precip_rate"})
 
 # Kind → stamped units / standard_name (None = leave existing standard_name).
 STANDARD = {
@@ -38,6 +53,7 @@ STANDARD = {
         "units": "mm day-1",
         "standard_name": "lwe_precipitation_rate",
     },
+    # Amount metadata for convert-to-totals output (not a rate-path standard target).
     "precip_amount": {
         "units": "mm",
         "standard_name": "lwe_thickness_of_precipitation_amount",
@@ -92,6 +108,8 @@ PRECIP_AMOUNT_UNIT_CANDIDATES = ("mm", "m", "kg m-2", "kg m**-2")
 # Depth/rate targets: mass units match these after ÷ liquid-water density.
 PRECIP_RATE_DENSITY_CANDIDATES = ("m s-1", "mm day-1")
 PRECIP_AMOUNT_DENSITY_CANDIDATES = ("m", "mm")
+
+_CELL_METHOD_SUM_RE = re.compile(r":\s*sum\b", re.IGNORECASE)
 
 
 def water_density():
@@ -171,21 +189,132 @@ def variable_units(da) -> str | None:
     return None
 
 
-def quantify_dataset(ds):
+def cell_methods_has_sum(cell_methods) -> bool:
+    """True if CF ``cell_methods`` includes a ``sum`` method."""
+    if not isinstance(cell_methods, str) or not cell_methods.strip():
+        return False
+    return bool(_CELL_METHOD_SUM_RE.search(cell_methods))
+
+
+def format_cell_methods(dim: str, method: str, *, interval: str | None = None) -> str:
+    """Build a CF ``cell_methods`` string, optionally with ``(interval: ...)``."""
+    base = f"{dim}: {method}"
+    if interval is None or not str(interval).strip():
+        return base
+    return f"{base} (interval: {str(interval).strip()})"
+
+
+def parse_aggregation_period(period: str):
+    """Parse an ``aggregation_period`` string to a pint duration Quantity."""
+    if not isinstance(period, str) or not period.strip():
+        raise UsageError(f"invalid aggregation_period {period!r}")
+    try:
+        q = ureg.Quantity(period.strip())
+    except Exception as exc:  # noqa: BLE001
+        raise UsageError(f"invalid aggregation_period {period!r}: {exc}") from None
+    if q.dimensionality != ureg.Quantity(1, "day").dimensionality:
+        raise UsageError(f"aggregation_period {period!r} is not a time duration")
+    return q
+
+
+def format_duration(q) -> str:
+    """Format a pint duration for ``interval:`` / human-readable stamps."""
+    try:
+        as_day = q.to("day")
+        mag = float(as_day.magnitude)
+        if mag.is_integer():
+            return f"{int(mag)} day"
+    except (AttributeError, TypeError, ValueError):
+        return f"{q:~P}"
+    return f"{q:~P}"
+
+
+def infer_timestep(ds, dim: str):
+    """Median positive spacing along ``dim`` as a pint duration Quantity."""
+    if dim not in ds.dims and dim not in ds.coords:
+        raise UsageError(f"dimension/coord {dim!r} not in dataset")
+    values = np.asarray(ds[dim].values)
+    if values.size < 2:
+        raise UsageError(f"need at least 2 points on {dim!r} to infer timestep")
+    # Timedelta / datetime diffs.
+    try:
+        diffs = np.diff(values.astype("datetime64[ns]").astype(np.int64))
+        positive = diffs[diffs > 0]
+        if positive.size == 0:
+            raise UsageError(f"no positive spacings on {dim!r}")
+        median_ns = float(np.median(positive))
+        return ureg.Quantity(median_ns, "nanosecond").to("day")
+    except (TypeError, ValueError):
+        pass
+    # Timedelta64 step axis.
+    try:
+        diffs = np.diff(values.astype("timedelta64[ns]").astype(np.int64))
+        positive = diffs[diffs > 0]
+        if positive.size == 0:
+            raise UsageError(f"no positive spacings on {dim!r}")
+        median_ns = float(np.median(positive))
+        return ureg.Quantity(median_ns, "nanosecond").to("day")
+    except (TypeError, ValueError) as exc:
+        raise UsageError(f"could not infer timestep on {dim!r}: {exc}") from None
+
+
+def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
+    """Refuse convert-to-totals when sample spacing is finer than aggregation_period."""
+    dt = infer_timestep(ds, dim)
+    base = parse_aggregation_period(period)
+    if dt < base:
+        raise UsageError(
+            f"timestep on {dim!r} ({format_duration(dt)}) is smaller than "
+            f"aggregation_period {period!r}; refusing convert-to-totals "
+            "(overlapping/rolling windows would overcount)"
+        )
+
+
+def rate_to_total(da, period: str):
+    """Multiply a rate DataArray by ``aggregation_period`` → amount (quantified)."""
+    base = parse_aggregation_period(period)
+    quantified_in = da.pint.units is not None
+    qda = da if quantified_in else da.pint.quantify()
+    if qda.pint.units is None:
+        raise UsageError(f"variable {da.name!r} has no units to convert to totals")
+    total = qda * base
+    # Prefer mm for precip depth rates.
+    try:
+        total = total.pint.to(PRECIP_AMOUNT_UNITS)
+    except (pint_xarray.pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
+        pass
+    return total
+
+
+def quantify_dataset(ds, *, allow_precip_totals: bool = False):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
-    Temp / precip / precip_rate variables (see ``REQUIRED_UNIT_KINDS``) must have
-    a non-empty ``units`` attr or this raises ``UsageError``. Other variables
-    without units pass through unchanged. Coordinate ``units`` attrs are kept as
-    attrs (coords are not quantified).
+    Temp / precip_rate variables (see ``REQUIRED_UNIT_KINDS``) must have a
+    non-empty ``units`` attr. Unless ``allow_precip_totals`` is True, precip
+    totals (amount units or ``cell_methods`` with ``sum``) are refused so
+    rate-path skills stay rates-only. Coordinate ``units`` attrs are kept as
+    attrs.
     """
     for name, da in ds.data_vars.items():
+        units = da.attrs.get("units")
         kind = classify_variable(
-            name, units=da.attrs.get("units"), standard_name=da.attrs.get("standard_name")
+            name, units=units, standard_name=da.attrs.get("standard_name")
         )
+        cm = da.attrs.get("cell_methods")
+        precip_kind = kind
+        if precip_kind is None and isinstance(units, str) and units.strip():
+            precip_kind = kind_from_units(units)
+        if (
+            not allow_precip_totals
+            and precip_kind in ("precip_rate", "precip_amount")
+            and (precip_kind == "precip_amount" or cell_methods_has_sum(cm))
+        ):
+            raise UsageError(
+                f"variable {name!r} looks like a precip total "
+                "(amount units or cell_methods sum); rate-path skills refuse totals"
+            )
         if kind not in REQUIRED_UNIT_KINDS:
             continue
-        units = da.attrs.get("units")
         if not (isinstance(units, str) and units.strip()):
             raise UsageError(
                 f"variable {name!r} ({kind}) requires a units attribute to quantify"
@@ -310,12 +439,11 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
 
 
 def to_standard_units(ds, variables=None):
-    """Convert recognized temp/precip data vars to standard display units.
+    """Convert recognized temp/precip_rate data vars to standard display units.
 
-    Works on quantified or attrs-based datasets. Unrecognized or unitless
-    variables are left unchanged. ``variables`` limits which names to consider
-    (default: all data vars). Raises ``UsageError`` if a classified variable
-    cannot be converted.
+    Rate-path only: ``precip_amount`` is left unchanged (use convert-to-totals).
+    Unrecognized or unitless variables are left unchanged. Raises ``UsageError``
+    if a classified rate/temp variable cannot be converted.
     """
     names = list(variables) if variables is not None else list(ds.data_vars)
     out = ds
@@ -328,7 +456,9 @@ def to_standard_units(ds, variables=None):
         kind = classify_variable(
             name, units=units, standard_name=da.attrs.get("standard_name")
         )
-        if kind is None or units is None:
+        if kind is None or units is None or kind == "precip_amount":
+            continue
+        if kind not in STANDARD:
             continue
         target = STANDARD[kind]
         dst_units = target["units"]

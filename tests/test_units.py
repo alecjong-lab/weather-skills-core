@@ -1,20 +1,27 @@
-"""Tests for units equivalence and standard display conversion."""
+"""Tests for units equivalence, quantify, aggregation_period, and standard conversion."""
 
 import numpy as np
 import pytest
+import xarray as xr
 from conftest import make_gridded
 
 from weather_skills_core.errors import UsageError
 from weather_skills_core.units import (
+    AGGREGATION_PERIOD_ATTR,
     PRECIP_AMOUNT_UNITS,
     PRECIP_RATE_UNITS,
     TEMP_UNITS,
+    assert_timestep_ge_aggregation_period,
     classify_variable,
     convert_values,
     dequantify_dataset,
+    format_cell_methods,
+    parse_aggregation_period,
     quantify_dataset,
+    rate_to_total,
     to_standard_units,
     units_equal,
+    ureg,
 )
 
 
@@ -22,6 +29,12 @@ def test_units_equal_spelling():
     assert units_equal("mm/day", "mm day-1")
     assert units_equal("degC", "degree_Celsius")
     assert not units_equal("mm", "mm day-1")
+
+
+def test_pentad_dekad_registry():
+    assert ureg.Quantity(1, "mm/pentad").to("mm/day").magnitude == pytest.approx(0.2)
+    assert parse_aggregation_period("1 dekad").to("day").magnitude == pytest.approx(10.0)
+    assert parse_aggregation_period("7 day").to("day").magnitude == pytest.approx(7.0)
 
 
 def test_convert_values_temp_and_precip_density():
@@ -34,7 +47,6 @@ def test_convert_values_temp_and_precip_density():
         np.array([1e-3]), "kg m-2 s-1", PRECIP_RATE_UNITS
     )
     assert density_converted
-    # 1e-3 kg m-2 s-1 / (1000 kg m-3) → 1e-3 mm/s ≡ 86.4 mm/day
     np.testing.assert_allclose(rate, [86.4], rtol=1e-5)
 
 
@@ -48,24 +60,22 @@ def test_classify_variable():
     assert classify_variable("humidity", units="1") is None
 
 
-def test_to_standard_units_temp_and_amount():
-    ds = make_gridded(name="tp", fill=2.0)
+def test_to_standard_units_skips_amount_normalizes_rate_and_temp():
+    # Amounts are not normalized on the rate path.
+    ds = make_gridded(name="tp", fill=2.0, units=None)
     ds["tp"].attrs.update(units="kg m-2", standard_name="precipitation_amount")
     out = to_standard_units(ds)
-    assert out["tp"].attrs["units"] == PRECIP_AMOUNT_UNITS
-    assert out["tp"].attrs["standard_name"] == "lwe_thickness_of_precipitation_amount"
-    np.testing.assert_allclose(out["tp"].values, 2.0)
+    assert out["tp"].attrs["units"] == "kg m-2"
 
-    tds = make_gridded(name="t2m", fill=300.0)
-    tds["t2m"].attrs.update(units="K", standard_name="air_temperature")
+    tds = make_gridded(name="t2m", fill=300.0, units="K")
+    tds["t2m"].attrs["standard_name"] = "air_temperature"
     tout = to_standard_units(tds)
     assert tout["t2m"].attrs["units"] == TEMP_UNITS
     np.testing.assert_allclose(tout["t2m"].values, 300.0 - 273.15, rtol=1e-5)
 
 
 def test_to_standard_units_noop_unknown():
-    ds = make_gridded(name="humidity", fill=0.5)
-    ds["humidity"].attrs["units"] = "1"
+    ds = make_gridded(name="humidity", fill=0.5, units="1")
     out = to_standard_units(ds)
     assert out["humidity"].attrs["units"] == "1"
 
@@ -77,8 +87,8 @@ def test_to_standard_units_missing_variable():
 
 
 def test_to_standard_units_normalizes_already_standard_spelling():
-    ds = make_gridded(name="precip", fill=1.0)
-    ds["precip"].attrs.update(units="mm/day", standard_name="precipitation_flux")
+    ds = make_gridded(name="precip", fill=1.0, units="mm/day")
+    ds["precip"].attrs["standard_name"] = "precipitation_flux"
     values_before = ds["precip"].values.copy()
     out = to_standard_units(ds)
     assert out["precip"].attrs["units"] == PRECIP_RATE_UNITS
@@ -87,9 +97,8 @@ def test_to_standard_units_normalizes_already_standard_spelling():
 
 
 def test_to_standard_units_raises_when_classified_but_not_convertible():
-    ds = make_gridded(name="t2m", fill=1.0)
-    # Classified as temperature via standard_name, but units are not convertible to °C.
-    ds["t2m"].attrs.update(units="m s-1", standard_name="air_temperature")
+    ds = make_gridded(name="t2m", fill=1.0, units="m s-1")
+    ds["t2m"].attrs["standard_name"] = "air_temperature"
     with pytest.raises(UsageError, match="not convertible"):
         to_standard_units(ds)
 
@@ -98,6 +107,23 @@ def test_quantify_dataset_requires_units_for_temp_precip():
     ds = make_gridded(name="precip", units=None)
     with pytest.raises(UsageError, match="requires a units attribute"):
         quantify_dataset(ds)
+
+
+def test_quantify_dataset_refuses_amount_totals():
+    ds = make_gridded(name="precip", units="mm")
+    with pytest.raises(UsageError, match="precip total"):
+        quantify_dataset(ds)
+    q = quantify_dataset(ds, allow_precip_totals=True)
+    assert q["precip"].pint.units is not None
+
+
+def test_quantify_dataset_refuses_cell_methods_sum():
+    ds = make_gridded(name="precip", units="mm day-1")
+    ds["precip"].attrs["cell_methods"] = "time: sum"
+    with pytest.raises(UsageError, match="precip total"):
+        quantify_dataset(ds)
+    q = quantify_dataset(ds, allow_precip_totals=True)
+    assert q["precip"].pint.units is not None
 
 
 def test_quantify_dataset_passes_unitless_other_vars():
@@ -109,12 +135,43 @@ def test_quantify_dataset_passes_unitless_other_vars():
 
 
 def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
-    ds = make_gridded(name="precip", units="mm")
+    ds = make_gridded(name="precip", units="mm day-1")
     ds["latitude"].attrs["units"] = "degrees_north"
     q = quantify_dataset(ds)
     assert q["precip"].pint.units is not None
-    assert str(q["precip"].pint.units) in ("millimeter", "mm")
     assert q["latitude"].pint.units is None
     assert q["latitude"].attrs["units"] == "degrees_north"
     plain = dequantify_dataset(q)
     assert "units" in plain["precip"].attrs
+
+
+def test_format_cell_methods():
+    assert format_cell_methods("time", "mean") == "time: mean"
+    assert format_cell_methods("time", "mean", interval="1 day") == (
+        "time: mean (interval: 1 day)"
+    )
+
+
+def test_timestep_gate_and_rate_to_total():
+    times = np.array(["2026-01-07", "2026-01-14"], dtype="datetime64[D]")
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time",),
+                [1.0, 2.0],
+                {AGGREGATION_PERIOD_ATTR: "7 day", "units": "mm day-1"},
+            )
+        },
+        coords={"time": times},
+    )
+    assert_timestep_ge_aggregation_period(ds, "time", "7 day")
+    q = quantify_dataset(ds)
+    total = rate_to_total(q["precip"], "7 day")
+    np.testing.assert_allclose(total.pint.dequantify().values, [7.0, 14.0])
+
+    daily = xr.Dataset(
+        {"precip": (("time",), np.ones(7), {"units": "mm day-1"})},
+        coords={"time": np.arange("2026-01-01", "2026-01-08", dtype="datetime64[D]")},
+    )
+    with pytest.raises(UsageError, match="smaller than aggregation_period"):
+        assert_timestep_ge_aggregation_period(daily, "time", "7 day")
