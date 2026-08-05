@@ -14,6 +14,7 @@ from pathlib import Path
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
 DEFAULT_SOFTWARE = "forecasting-skills"
+OFFICIAL_MARK_TEXT = "weather-skills"
 
 _EXIF_USER_COMMENT = 0x9286  # EXIF UserComment tag
 _HTML_META_RE = re.compile(
@@ -136,6 +137,77 @@ def validate_chain(chain, loc: str) -> tuple[list, list]:
     return violations, notes
 
 
+def chain_is_intact(history) -> bool:
+    """True if ``history`` is a non-empty schema-valid provenance chain."""
+    if not isinstance(history, list) or not history:
+        return False
+    violations, _notes = validate_chain(history, HISTORY_ATTR)
+    return not violations
+
+
+def _load_mark_font(size: int):
+    """Prefer a readable TrueType font; fall back to PIL's default bitmap font."""
+    from PIL import ImageFont
+
+    candidates = (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "DejaVuSans.ttf",
+    )
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _draw_official_mark(img):
+    """Composite a translucent bottom-right ``weather-skills`` pill onto ``img``.
+
+    No-ops (returns a copy) when the image is too small to hold the mark.
+    """
+    from PIL import Image, ImageDraw
+
+    w, h = img.size
+    if min(w, h) < 64:
+        return img.copy()
+
+    # Work in RGBA so the pill can be translucent over any mode.
+    base = img.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    margin = max(4, int(min(w, h) * 0.02))
+    font_size = max(10, min(18, int(w * 0.022)))
+    font = _load_mark_font(font_size)
+    pad_x, pad_y = max(4, font_size // 2), max(2, font_size // 3)
+
+    text = OFFICIAL_MARK_TEXT
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    box_w, box_h = tw + 2 * pad_x, th + 2 * pad_y
+    if box_w + 2 * margin > w or box_h + 2 * margin > h:
+        return img.copy()
+
+    x1 = w - margin
+    y1 = h - margin
+    x0, y0 = x1 - box_w, y1 - box_h
+    radius = max(2, box_h // 2)
+    # Dark translucent pill (~75% opaque) with white label.
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(20, 24, 28, 192))
+    draw.text((x0 + pad_x, y0 + pad_y - bbox[1]), text, fill=(255, 255, 255, 255), font=font)
+
+    marked = Image.alpha_composite(base, overlay)
+    if img.mode == "RGBA":
+        return marked
+    if img.mode == "RGB":
+        return marked.convert("RGB")
+    return marked.convert(img.mode)
+
+
 def load_history(zarr_path: Path) -> list:
     """Read a zarr store's history chain; empty on miss or malformation."""
     zarr_path = Path(zarr_path)
@@ -199,35 +271,45 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
 
 
 def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
-    """Embed ``weather_skills_history`` JSON into a PNG, JPEG, or HTML file."""
+    """Embed ``weather_skills_history`` into a PNG, JPEG, or HTML file.
+
+    When the chain is intact (non-empty and schema-valid), also draw a small
+    official ``weather-skills`` corner mark on PNG/JPEG pixels. HTML gets
+    metadata only.
+    """
     from weather_skills_core.errors import SkillError
 
     path = Path(path)
     payload = json.dumps(history, sort_keys=True)
     suffix = path.suffix.lower()
+    mark = chain_is_intact(history)
 
     if suffix == ".png":
         from PIL import Image
         from PIL.PngImagePlugin import PngInfo
 
         with Image.open(path) as img:
+            out = _draw_official_mark(img) if mark else img.copy()
             info = PngInfo()
             for key, value in img.info.items():
                 if isinstance(value, str) and key not in (HISTORY_ATTR, "Software"):
                     info.add_text(key, value)
             info.add_text(HISTORY_ATTR, payload)
             info.add_text("Software", software)
-            img.save(path, pnginfo=info)
+            out.save(path, pnginfo=info)
         return
 
     if suffix in (".jpg", ".jpeg"):
         from PIL import Image
 
         with Image.open(path) as img:
+            out = _draw_official_mark(img) if mark else img.copy()
+            if out.mode not in ("RGB", "L"):
+                out = out.convert("RGB")
             exif = img.getexif()
             # ASCII UserComment: 8-byte charset header + payload
             exif[_EXIF_USER_COMMENT] = b"ASCII\x00\x00\x00" + payload.encode("ascii")
-            img.save(path, exif=exif)
+            out.save(path, exif=exif, quality=95)
         return
 
     if suffix in (".html", ".htm"):
@@ -243,8 +325,7 @@ def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE)
         return
 
     raise SkillError(
-        f"unsupported figure type {suffix!r} for {path}; "
-        "expected .png, .jpg/.jpeg, or .html/.htm"
+        f"unsupported figure type {suffix!r} for {path}; expected .png, .jpg/.jpeg, or .html/.htm"
     )
 
 

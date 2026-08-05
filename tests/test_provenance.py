@@ -57,6 +57,14 @@ class TestChainValidation:
         violations, _ = provenance.validate_chain([bad], "h")
         assert any("skill" in v for v in violations)
 
+    def test_chain_is_intact(self):
+        assert provenance.chain_is_intact([entry()])
+        assert not provenance.chain_is_intact([])
+        assert not provenance.chain_is_intact(None)
+        bad = entry()
+        del bad["skill"]
+        assert not provenance.chain_is_intact([bad])
+
 
 class TestVisualization:
     def test_png(self, tmp_path):
@@ -80,3 +88,36 @@ class TestVisualization:
         chain = [entry()]
         provenance.stamp_figure(path, chain)
         assert provenance.load_figure_history(path) == chain
+
+    def test_png_official_mark_when_intact(self, tmp_path):
+        path = tmp_path / "marked.png"
+        Image.new("RGB", (400, 300), color=(220, 220, 220)).save(path)
+        before = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+        chain = [entry()]
+        provenance.stamp_figure(path, chain)
+        assert provenance.load_figure_history(path) == chain
+        after = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+        # Bottom-right corner should differ from the unmarked baseline.
+        assert before != after
+
+    def test_png_no_mark_when_empty_or_invalid(self, tmp_path):
+        for name, history in (
+            ("empty.png", []),
+            ("invalid.png", [{"skill": "", "version": "0", "args": {}, "input": None}]),
+        ):
+            path = tmp_path / name
+            Image.new("RGB", (400, 300), color=(220, 220, 220)).save(path)
+            before = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+            provenance.stamp_figure(path, history)
+            after = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+            assert before == after
+
+    def test_jpeg_official_mark_when_intact(self, tmp_path):
+        path = tmp_path / "marked.jpg"
+        Image.new("RGB", (400, 300), color=(220, 220, 220)).save(path, quality=95)
+        before = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+        chain = [entry()]
+        provenance.stamp_figure(path, chain)
+        assert provenance.load_figure_history(path) == chain
+        after = list(Image.open(path).crop((320, 250, 400, 300)).get_flattened_data())
+        assert before != after

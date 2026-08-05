@@ -71,7 +71,9 @@ ensemble: `inputs=[["forecast", "ensemble_forecast"]]`.
 | `weather_skills_history` | every writing skill | JSON list of steps that produced the file |
 
 Each history entry has `skill`, `version`, `args`, and `input` (with basename and
-content `hash`). Plots store the same JSON in file metadata.
+content `hash`). Plots store the same JSON in file metadata. When that chain is
+intact (non-empty and schema-valid), PNG/JPEG figure outputs also get a small
+official `weather-skills` corner mark; HTML figures get metadata only.
 
 ## Units
 
