@@ -75,18 +75,22 @@ content `hash`). Plots store the same JSON in file metadata.
 
 ## Units
 
-Give data variables a udunits-parseable `units` attr. The pipeline is **rates-first**
-for precip (canonical `mm day-1`). Period amounts (`mm`) come from the
-`convert-to-totals` skill after aggregation stamps `aggregation_period`.
+Give data variables a udunits-parseable `units` attr when they are a **known
+standard kind** (skills treat those explicitly). Other variables may include
+units optionally. Most skills are built for **rates** on accumulated variables
+(canonical precip `mm day-1`). Period amounts (`mm`) are available via the
+totals utilities after aggregation stamps `aggregation_period`.
 
 | Kind | Standard units |
 | --- | --- |
 | temp | `degree_Celsius` |
-| precip rate | `mm day-1` |
-| precip amount (totals only) | `mm` |
+| precip | `mm day-1` |
+| precip amount | `mm` (via totals utilities) |
 
 Aggregation stamps CF `cell_methods` (e.g. `time: mean (interval: 1 day)`) and
 `aggregation_period` (e.g. `7 day`). Totals use `cell_methods` with `sum`.
+
+Full details: [`UNITS.md`](UNITS.md).
 
 ## Writing Zarr
 

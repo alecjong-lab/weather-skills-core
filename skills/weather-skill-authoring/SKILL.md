@@ -12,6 +12,7 @@ provenance, and output writing. The script body is domain logic only.
 ## References
 
 - `references/STANDARD_DATASET.md` — dim ontology, Zarr shapes, and `weather_skills_history`
+- `references/UNITS.md` — rate defaults for accumulated vars, quantify/dequantify, totals utilities
 - `references/CONVENTIONS.md` — canonical CLI flag names
 
 ## Declaration
@@ -124,10 +125,12 @@ Datasets before return if needed.
 ## Units helpers
 
 `to_standard_units(ds)` / `units_equal(a, b)` — normalize temp → `degree_Celsius`
-and precip **rates** → `mm day-1`. Amounts are produced only by
-`convert-to-totals`. Inputs are quantified by `@weather_skill` via
-`pint-xarray` (temp/precip_rate vars require `units`; precip totals are refused
-unless `allow_precip_totals=True` for plotters / `deaccumulate`).
+and precip **rates** → `mm day-1`. Most skills expect rates for accumulated
+variables; use `convert-to-totals` / `rate_to_total` when you need amounts.
+`@weather_skill` quantifies inputs via `pint-xarray`. Known standard kinds
+(see `REQUIRED_UNIT_KINDS`) require `units` for explicit skill treatment;
+other variables may omit them. Skills that intentionally accept totals set
+`allow_precip_totals=True` (plotters / `deaccumulate`).
 
 ## Errors
 

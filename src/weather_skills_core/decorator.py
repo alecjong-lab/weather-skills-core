@@ -180,9 +180,10 @@ def weather_skill(
     = variadic). Stack ``@weather_skill.argument`` for extra flags. The skill
     must accept ``**kwargs`` (decorator passes ``output`` there).
 
-    Rate-path skills refuse precip totals on open (amount units or
-    ``cell_methods`` with ``sum``). Set ``allow_precip_totals=True`` for
-    plotters and for ``deaccumulate`` (cumulative → rate).
+    Most skills expect rates for accumulated variables. Opening a precip total
+    (amount units or ``cell_methods`` with ``sum``) raises unless
+    ``allow_precip_totals=True`` (plotters / ``deaccumulate``). Use the totals
+    utilities when you want amounts.
     """
     raw_inputs = list(inputs or [])
     raw_outputs = list(outputs or [])

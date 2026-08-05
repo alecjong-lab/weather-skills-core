@@ -1,0 +1,91 @@
+# Units
+
+Weather-skills track physical units on every data variable so skills can
+combine, convert, and compare datasets safely instead of guessing from a
+variable's name. Units live in the CF `units` attr and are carried through the
+pipeline as real quantities, not bare numbers. Implementation:
+[`weather_skills_core.units`](../../../src/weather_skills_core/units.py).
+
+Built on **pint** / **pint-xarray** with CF/UDUNITS strings (via
+`cf_xarray.units`). Custom registry extras: `pentad` (5 day) and `dekad`
+(10 day); week and month come from pint itself.
+
+## Standard kinds and units
+
+A few known variable kinds have a standard unit skills expect:
+
+| Kind | Standard units | Notes |
+| --- | --- | --- |
+| temp | `degree_Celsius` | Existing CF `standard_name` kept |
+| precip | `mm day-1` | `lwe_precipitation_rate` (rate / flux) |
+| precip amount | `mm` | From rate × period via totals utilities |
+
+Mass precip flux (`kg m-2 s-1`) converts to depth rate using liquid-water
+density (1000 kg m⁻³).
+
+For accumulated variables like precip, skills work in **rates** by default;
+period **totals** are available when you want them via the conversion helpers
+(`convert-to-totals` / `rate_to_total`) rather than carrying amounts through
+rate-oriented skills.
+
+## What the decorator does
+
+1. After opening a Zarr, **`quantify_dataset`** attaches pint units from each
+   data variable’s `units` attr (when present).
+2. **Known standard kinds** (today: temp, precip — see
+   `REQUIRED_UNIT_KINDS`) must have parseable units so skills can treat them
+   explicitly. Other variables may include units optionally.
+3. By default, skills expect rates: opening a precip **total** (amount units,
+   or `cell_methods` with `sum`) raises unless the skill opts in with
+   `allow_precip_totals=True` (e.g. plotters / `deaccumulate`).
+4. Before writing Zarr, **`dequantify_dataset`** strips pint so stored attrs
+   stay plain unit strings.
+
+## Classification and `--to-standard`
+
+`classify_variable` picks a kind in this order:
+
+1. CF `standard_name`
+2. Units fingerprint
+3. Variable-name hints (`t2m`, `precip`, …)
+
+`to_standard_units` converts recognized temp / precip vars to the table
+above (used by fetchers, plots, and `unit-convert --to-standard`). Amount
+display is a separate step via the totals utilities.
+
+## Aggregation and totals
+
+Temporal aggregation stamps:
+
+- `aggregation_period` — pint duration string (`1 day`, `7 day`, `1 dekad`,
+  `1 month`, …)
+- CF `cell_methods` (e.g. `time: mean (interval: 1 day)`)
+
+CLI period labels map to those stamps (`daily` → `1 day`, `weekly` → `7 day`,
+`dekadal` → `1 dekad`, `monthly` → `1 month`).
+
+**`convert-to-totals`** multiplies rates by `aggregation_period` → amounts
+(`mm`). It requires sample spacing ≥ `aggregation_period` (so overlapping
+rolling windows are not silently turned into period totals). Use that when you
+want amounts for plotting or reporting; keep rates in the middle of the
+pipeline.
+
+## Helpers skills use
+
+| Function | Role |
+| --- | --- |
+| `units_equal` | Spelling-independent equality (`mm/day` ≈ `mm day-1`) |
+| `convert_dataarray` / `convert_values` | Explicit unit ↔ unit |
+| `to_standard_units` | Temp / precip → standard display units |
+| `rate_to_total` | Rate × period → amount |
+| `parse_aggregation_period` | Parse an `aggregation_period` string |
+
+## Author checklist
+
+- Known standard kinds (temp, precip, …) need a udunits-parseable `units`
+  attr; other variables may include units optionally.
+- Keep accumulated variables as rates (`mm day-1`) through most skills; convert
+  to totals when you need amounts.
+- After `aggregate-temporal`, expect `aggregation_period` + `cell_methods`.
+- For full dim/type contract, see
+  [`STANDARD_DATASET.md`](STANDARD_DATASET.md).

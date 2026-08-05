@@ -126,6 +126,18 @@ Types are aliases for specific required dimensions:
 Full details:
 [`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
 
+## Units
+
+Most skills expect **rates** for accumulated variables (sensible default):
+temp → `degree_Celsius`, precip → `mm day-1`. Known standard kinds must carry
+`units` for explicit skill treatment; other variables may include units
+optionally. When you need period amounts (`mm`), convert with the totals
+utilities after aggregation stamps `aggregation_period`. The decorator
+quantifies on input and dequantifies before writing Zarr.
+
+Full details:
+[`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md).
+
 ## Arguments
 
 Declare CLI flags with stacked `@weather_skill.argument(...)` decorators (same
