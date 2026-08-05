@@ -30,9 +30,12 @@ if "pentad" not in ureg:
 if "dekad" not in ureg:
     ureg.define("dekad = 10 * day")
 
+# Data-variable attr: the time window each value spans, as a pint duration
+# string (``"1 day"``, ``"1 dekad"``). Complements CF ``cell_methods`` (which
+# says *how* values combined) and drives ``convert-to-totals`` (rate × period).
 AGGREGATION_PERIOD_ATTR = "aggregation_period"
 
-# Period label → pint duration string stamped as aggregation_period.
+# CLI period label → the aggregation_period string stamped for that window.
 PERIOD_TO_AGGREGATION = {
     "daily": "1 day",
     "weekly": "7 day",
@@ -40,11 +43,8 @@ PERIOD_TO_AGGREGATION = {
     "monthly": "1 month",
 }
 
-# Standard kinds that must carry parseable units so skills can treat them
-# explicitly. Other variables may include units optionally.
-REQUIRED_UNIT_KINDS = frozenset({"temp", "precip"})
-
 # The vocabulary for every standard kind, in classification precedence order.
+#   units_required         must carry a units attr for explicit skill treatment
 #   units / standard_name  what to_standard_units stamps (None keeps existing)
 #   standard_names, standard_name_endswith, standard_name_contains
 #                          CF standard_name matches, tried first
@@ -55,6 +55,7 @@ REQUIRED_UNIT_KINDS = frozenset({"temp", "precip"})
 #   name_contains          variable-name substring match, tried last
 STANDARD = {
     "temp": {
+        "units_required": True,
         "units": "degree_Celsius",
         "standard_name": None,
         "standard_names": frozenset(
@@ -75,6 +76,7 @@ STANDARD = {
     },
     # Listed before precip_amount so flux-like units resolve to a rate.
     "precip": {
+        "units_required": True,
         "units": "mm day-1",
         "standard_name": "lwe_precipitation_rate",
         "standard_names": frozenset(
@@ -89,6 +91,7 @@ STANDARD = {
     },
     # Amount metadata for the totals utilities (rate × period → mm).
     "precip_amount": {
+        "units_required": False,
         "units": "mm",
         "standard_name": "lwe_thickness_of_precipitation_amount",
         "standard_names": frozenset(
@@ -107,15 +110,6 @@ STANDARD = {
         "name_contains": (),
     },
 }
-
-# Public aliases used by skills / tests.
-TEMP_UNITS = STANDARD["temp"]["units"]
-PRECIP_UNITS = STANDARD["precip"]["units"]
-PRECIP_AMOUNT_UNITS = STANDARD["precip_amount"]["units"]
-PRECIP_STANDARD_NAME = STANDARD["precip"]["standard_name"]
-PRECIP_AMOUNT_STANDARD_NAME = STANDARD["precip_amount"]["standard_name"]
-
-_CELL_METHOD_SUM_RE = re.compile(r":\s*sum\b", re.IGNORECASE)
 
 
 def water_density():
@@ -217,7 +211,7 @@ def cell_methods_has_sum(cell_methods) -> bool:
     """True if CF ``cell_methods`` includes a ``sum`` method."""
     if not isinstance(cell_methods, str) or not cell_methods.strip():
         return False
-    return bool(_CELL_METHOD_SUM_RE.search(cell_methods))
+    return bool(re.search(r":\s*sum\b", cell_methods, re.IGNORECASE))
 
 
 def format_cell_methods(dim: str, method: str, *, interval: str | None = None) -> str:
@@ -229,7 +223,12 @@ def format_cell_methods(dim: str, method: str, *, interval: str | None = None) -
 
 
 def parse_aggregation_period(period: str):
-    """Parse an ``aggregation_period`` string to a pint duration Quantity."""
+    """Parse an ``aggregation_period`` string to a pint duration Quantity.
+
+    ``period`` is the value of the ``aggregation_period`` attr, e.g. ``"1 day"``
+    or ``"1 dekad"``. Raises ``UsageError`` if it is empty, unparseable, or not
+    a time duration (e.g. ``"5 kg"``).
+    """
     if not isinstance(period, str) or not period.strip():
         raise UsageError(f"invalid aggregation_period {period!r}")
     try:
@@ -294,7 +293,7 @@ def rate_to_total(da, period: str):
     total = qda * base
     # Prefer mm for precip depth rates.
     try:
-        total = total.pint.to(PRECIP_AMOUNT_UNITS)
+        total = total.pint.to(STANDARD["precip_amount"]["units"])
     except (pint_xarray.pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
         pass
     return total
@@ -303,7 +302,7 @@ def rate_to_total(da, period: str):
 def quantify_dataset(ds, *, allow_precip_totals: bool = False):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
-    Variables classified into ``REQUIRED_UNIT_KINDS`` (known standard kinds
+    Variables whose kind has ``units_required`` in ``STANDARD`` (known kinds
     skills treat explicitly) must have a non-empty ``units`` attr. Other
     variables may omit units. By default, precip totals (amount units or
     ``cell_methods`` with ``sum``) raise — most skills expect rates; set
@@ -330,7 +329,7 @@ def quantify_dataset(ds, *, allow_precip_totals: bool = False):
                 "convert with convert-to-totals / rate_to_total, or set "
                 "allow_precip_totals=True if this skill handles amounts"
             )
-        if kind in REQUIRED_UNIT_KINDS and not has_units:
+        if kind is not None and STANDARD[kind]["units_required"] and not has_units:
             raise UsageError(
                 f"variable {name!r} is a standard kind ({kind}) and requires "
                 "a units attribute for explicit skill treatment"

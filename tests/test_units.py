@@ -8,9 +8,7 @@ from conftest import make_gridded
 from weather_skills_core.errors import UsageError
 from weather_skills_core.units import (
     AGGREGATION_PERIOD_ATTR,
-    PRECIP_AMOUNT_UNITS,
-    PRECIP_UNITS,
-    TEMP_UNITS,
+    STANDARD,
     assert_timestep_ge_aggregation_period,
     classify_variable,
     convert_values,
@@ -38,13 +36,15 @@ def test_pentad_dekad_registry():
 
 
 def test_convert_values_temp_and_precip_density():
-    k, _ = convert_values(np.array([273.15]), "K", TEMP_UNITS)
+    k, _ = convert_values(np.array([273.15]), "K", STANDARD["temp"]["units"])
     np.testing.assert_allclose(k, [0.0], atol=1e-6)
-    mm, density_converted = convert_values(np.array([1.0]), "kg m-2", PRECIP_AMOUNT_UNITS)
+    mm, density_converted = convert_values(
+        np.array([1.0]), "kg m-2", STANDARD["precip_amount"]["units"]
+    )
     assert density_converted
     np.testing.assert_allclose(mm, [1.0], atol=1e-6)
     rate, density_converted = convert_values(
-        np.array([1e-3]), "kg m-2 s-1", PRECIP_UNITS
+        np.array([1e-3]), "kg m-2 s-1", STANDARD["precip"]["units"]
     )
     assert density_converted
     np.testing.assert_allclose(rate, [86.4], rtol=1e-5)
@@ -70,7 +70,7 @@ def test_to_standard_units_skips_amount_normalizes_rate_and_temp():
     tds = make_gridded(name="t2m", fill=300.0, units="K")
     tds["t2m"].attrs["standard_name"] = "air_temperature"
     tout = to_standard_units(tds)
-    assert tout["t2m"].attrs["units"] == TEMP_UNITS
+    assert tout["t2m"].attrs["units"] == STANDARD["temp"]["units"]
     np.testing.assert_allclose(tout["t2m"].values, 300.0 - 273.15, rtol=1e-5)
 
 
@@ -91,7 +91,7 @@ def test_to_standard_units_normalizes_already_standard_spelling():
     ds["precip"].attrs["standard_name"] = "precipitation_flux"
     values_before = ds["precip"].values.copy()
     out = to_standard_units(ds)
-    assert out["precip"].attrs["units"] == PRECIP_UNITS
+    assert out["precip"].attrs["units"] == STANDARD["precip"]["units"]
     assert out["precip"].attrs["standard_name"] == "lwe_precipitation_rate"
     np.testing.assert_array_equal(out["precip"].values, values_before)
 

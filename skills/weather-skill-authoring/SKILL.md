@@ -128,7 +128,7 @@ Datasets before return if needed.
 and precip **rates** → `mm day-1`. Most skills expect rates for accumulated
 variables; use `convert-to-totals` / `rate_to_total` when you need amounts.
 `@weather_skill` quantifies inputs via `pint-xarray`. Known standard kinds
-(see `REQUIRED_UNIT_KINDS`) require `units` for explicit skill treatment;
+with `units_required` in `STANDARD` require `units` for explicit skill treatment;
 other variables may omit them. Skills that intentionally accept totals set
 `allow_precip_totals=True` (plotters / `deaccumulate`).
 

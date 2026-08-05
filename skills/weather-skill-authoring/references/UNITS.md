@@ -32,8 +32,8 @@ rate-oriented skills.
 
 1. After opening a Zarr, **`quantify_dataset`** attaches pint units from each
    data variable’s `units` attr (when present).
-2. **Known standard kinds** (today: temp, precip — see
-   `REQUIRED_UNIT_KINDS`) must have parseable units so skills can treat them
+2. **Known standard kinds** with ``units_required`` in ``STANDARD`` (today:
+   temp, precip) must have parseable units so skills can treat them
    explicitly. Other variables may include units optionally.
 3. By default, skills expect rates: opening a precip **total** (amount units,
    or `cell_methods` with `sum`) raises unless the skill opts in with
@@ -55,14 +55,20 @@ display is a separate step via the totals utilities.
 
 ## Aggregation and totals
 
-Temporal aggregation stamps:
+Temporal aggregation stamps two complementary data-variable attrs:
 
-- `aggregation_period` — pint duration string (`1 day`, `7 day`, `1 dekad`,
-  `1 month`, …)
-- CF `cell_methods` (e.g. `time: mean (interval: 1 day)`)
+- `aggregation_period` — **how much time each value represents** (the resampling
+  step), as a pint duration string: `1 day`, `7 day`, `1 dekad`, `1 month`, ….
+  Parse it with `parse_aggregation_period`.
+- CF `cell_methods` — **how values were combined** over that window
+  (e.g. `time: mean (interval: 1 day)`, `time: sum`).
 
-CLI period labels map to those stamps (`daily` → `1 day`, `weekly` → `7 day`,
-`dekadal` → `1 dekad`, `monthly` → `1 month`).
+The two are orthogonal: `cell_methods` names the operation, `aggregation_period`
+names the window length. A daily-mean variable carries both `time: mean` and
+`aggregation_period = "1 day"`.
+
+CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
+`weekly` → `7 day`, `dekadal` → `1 dekad`, `monthly` → `1 month`).
 
 **`convert-to-totals`** multiplies rates by `aggregation_period` → amounts
 (`mm`). It requires sample spacing ≥ `aggregation_period` (so overlapping
