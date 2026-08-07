@@ -6,15 +6,16 @@
 # ///
 """Lint fixture: no _SKILL_VERSION constant. Never executed."""
 
-from weather_skills_core import weather_skill
+from pathlib import Path
+
+from weather_skills_core import Dataset, weather_skill
 
 
 @weather_skill(
     name="no-constant",
     version="0.1.0",
-    inputs=["data"],
-    outputs=["data"],
 )
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
 def no_constant(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds

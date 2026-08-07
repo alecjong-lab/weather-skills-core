@@ -6,16 +6,17 @@
 # ///
 """Lint fixture. Never executed."""
 
-from weather_skills_core import weather_skill
+from pathlib import Path
+
+from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
 @weather_skill(
     name="remote-skill",
     version=_SKILL_VERSION,
-    inputs=["data"],
-    outputs=["data"]
 )
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
 @weather_skill.argument("--method", type=str, help="Aggregation method.", choices=["percentile"])
 def remote_skill(ds, **kwargs):
     """Lint fixture; never executed."""

@@ -52,12 +52,27 @@ def test_convert_values_temp_and_precip_density():
 
 def test_classify_variable():
     assert classify_variable("t2m", units="K", standard_name="air_temperature") == "temp"
+    assert classify_variable("2m_temperature", units="K") == "temp"
     assert classify_variable("tp", units="kg m-2", standard_name="precipitation_amount") == (
         "precip_amount"
     )
     assert classify_variable("precip", units="mm/day") == "precip"
-    assert classify_variable("flux", units="kg m-2 s-1") == "precip"
+    assert classify_variable("tp", units="kg m-2 s-1") == "precip"  # named hint
+    assert classify_variable("flux", units="kg m-2 s-1") is None  # units alone are not enough
     assert classify_variable("humidity", units="1") is None
+    # Not air / 2 m temperature
+    assert classify_variable("sst", units="K", standard_name="sea_surface_temperature") is None
+    assert classify_variable("d2m", units="K", standard_name="dew_point_temperature") is None
+    assert classify_variable("skt", units="K", standard_name="surface_temperature") is None
+
+
+def test_to_standard_units_name_hint_sets_standard_name_keeps_name():
+    ds = make_gridded(name="tp", fill=1.0, units="mm/day")
+    out = to_standard_units(ds)
+    assert "tp" in out.data_vars
+    assert list(out.data_vars) == ["tp"]
+    assert out["tp"].attrs["units"] == STANDARD["precip"]["units"]
+    assert out["tp"].attrs["standard_name"] == "lwe_precipitation_rate"
 
 
 def test_to_standard_units_skips_amount_normalizes_rate_and_temp():

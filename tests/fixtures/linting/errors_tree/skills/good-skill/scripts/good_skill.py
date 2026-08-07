@@ -6,7 +6,9 @@
 # ///
 """Lint fixture. Never executed."""
 
-from weather_skills_core import weather_skill
+from pathlib import Path
+
+from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,9 +16,8 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     name="good-skill",
     version=_SKILL_VERSION,
-    inputs=["data"],
-    outputs=["data"],
 )
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
 def good_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds

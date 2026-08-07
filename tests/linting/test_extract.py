@@ -61,23 +61,22 @@ class TestDeclarationExtraction:
         assert decl.arguments["code"].positional
         assert decl.arguments["verbose"].arity == "store_true"
 
-    def test_inputs_outputs_arity(self, tmp_path):
+    def test_dataset_input_arity(self, tmp_path):
         script, skill_dir = write_script(
             tmp_path,
             """
-            from weather_skills_core import weather_skill
+            from weather_skills_core import Dataset, weather_skill
             _SKILL_VERSION = "0.1.0"
 
             @weather_skill(
                 name="some-skill",
                 version=_SKILL_VERSION,
-                inputs=["observations", "forecast"],
-                outputs=["figure"],
             )
+            @weather_skill.argument("-i", "--input", type=Dataset("any"), nargs=2, required=True)
             @weather_skill.argument("--start-time", required=True)
             @weather_skill.argument("--end-time", required=True)
             @weather_skill.argument("--variable", "-v", action="append")
-            def some_skill(a, b, start_time, end_time, variable, **kwargs):
+            def some_skill(input, output, start_time, end_time, variable, **kwargs):
                 pass
             """,
         )
@@ -86,6 +85,7 @@ class TestDeclarationExtraction:
         assert decl.has_output
         assert "start_time" in decl.arguments
         assert "variable" in decl.arguments
+        assert decl.arguments["input"].type_name == "Dataset"
 
     def test_legacy_dynamic_arguments_list_is_dynamic(self, tmp_path):
         script, skill_dir = write_script(

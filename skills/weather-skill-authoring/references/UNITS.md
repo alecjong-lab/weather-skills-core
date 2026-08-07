@@ -46,12 +46,13 @@ rate-oriented skills.
 `classify_variable` picks a kind in this order:
 
 1. CF `standard_name`
-2. Units fingerprint
-3. Variable-name hints (`t2m`, `precip`, …)
+2. Named variable hints (`t2m`, `tp`, `precip`, …)
 
-`to_standard_units` converts recognized temp / precip vars to the table
-above (used by fetchers, plots, and `unit-convert --to-standard`). Amount
-display is a separate step via the totals utilities.
+Units alone do **not** classify a variable (a bare `kg m-2 s-1` field is not
+treated as precip). `to_standard_units` converts recognized temp / precip vars
+to the table above, stamps the kind's CF `standard_name` when set, and leaves
+the variable **name** unchanged. Amount display is a separate step via the
+totals utilities.
 
 ## Aggregation and totals
 

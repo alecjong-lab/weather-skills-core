@@ -48,33 +48,24 @@ PERIOD_TO_AGGREGATION = {
 #   units / standard_name  what to_standard_units stamps (None keeps existing)
 #   standard_names, standard_name_endswith, standard_name_contains
 #                          CF standard_name matches, tried first
-#   unit_candidates        units that fingerprint this kind (pint equality)
-#   depth_candidates       matched after ÷ liquid-water density, so mass precip
-#                          (kg m-2 s-1) counts as a depth rate
-#   name_hints             variable-name whole/prefix/suffix match, tried last
-#   name_contains          variable-name substring match, tried last
+#   name_hints             variable-name whole/prefix/suffix match (exact names
+#                          only — not units fingerprinting)
+#   unit_candidates        units for convert/fingerprint helpers (not classify)
+#   depth_candidates       matched after ÷ liquid-water density in converts
 STANDARD = {
     "temp": {
         "units_required": True,
         "units": "degree_Celsius",
         "standard_name": None,
-        "standard_names": frozenset(
-            {
-                "air_temperature",
-                "surface_temperature",
-                "sea_surface_temperature",
-                "dew_point_temperature",
-                "dew_point_temperature_difference",
-            }
-        ),
-        "standard_name_endswith": ("_temperature",),
+        # Air temperature only — not SST, dew point, skin, etc.
+        "standard_names": frozenset({"air_temperature"}),
+        "standard_name_endswith": (),
         "standard_name_contains": (),
         "unit_candidates": ("degree_Celsius", "kelvin", "degree_Fahrenheit"),
         "depth_candidates": (),
-        "name_hints": ("temp", "t2m", "tmax", "tmin", "tavg", "sst", "skt"),
-        "name_contains": (),
+        "name_hints": ("t2m", "2m_temperature", "temp", "tmax", "tmin", "tavg"),
     },
-    # Listed before precip_amount so flux-like units resolve to a rate.
+    # Listed before precip_amount so CF rate names win over amount names.
     "precip": {
         "units_required": True,
         "units": "mm day-1",
@@ -87,7 +78,6 @@ STANDARD = {
         "unit_candidates": ("mm day-1", "mm/day", "m s-1", "kg m-2 s-1", "kg m**-2 s**-1"),
         "depth_candidates": ("m s-1", "mm day-1"),
         "name_hints": ("precip", "prcp", "rainfall", "rain", "tp", "pr"),
-        "name_contains": ("precip", "rainfall"),
     },
     # Amount metadata for the totals utilities (rate × period → mm).
     "precip_amount": {
@@ -107,7 +97,6 @@ STANDARD = {
         "unit_candidates": ("mm", "m", "kg m-2", "kg m**-2"),
         "depth_candidates": ("m", "mm"),
         "name_hints": (),
-        "name_contains": (),
     },
 }
 
@@ -179,10 +168,13 @@ def variable_units(da) -> str | None:
 def classify_variable(name: str, *, units=None, standard_name=None) -> str | None:
     """Return the ``STANDARD`` kind for a variable, or None.
 
-    Precedence: CF ``standard_name``, then the units fingerprint, then
-    variable-name hints. Name hints never resolve to ``precip_amount`` — rate
-    vs amount is decided by ``standard_name`` or units.
+    Precedence: CF ``standard_name``, then named variable hints. Units are not
+    used to classify (too flexible — e.g. any ``kg m-2 s-1`` is not precip).
+    Name hints never resolve to ``precip_amount`` — rate vs amount is decided by
+    ``standard_name`` only. ``units`` is accepted for call-site compatibility
+    and ignored.
     """
+    del units  # classification is name / CF standard_name only
     sn = standard_name.strip().lower() if isinstance(standard_name, str) else ""
     for kind, spec in STANDARD.items():
         if (
@@ -192,17 +184,9 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
         ):
             return kind
 
-    if isinstance(units, str) and units.strip():
-        kind = kind_from_units(units)
-        if kind is not None:
-            return kind
-
     key = name.lower()
     for kind, spec in STANDARD.items():
-        hints = spec["name_hints"]
-        if any(h == key or key.startswith(h) or key.endswith(h) for h in hints) or any(
-            part in key for part in spec["name_contains"]
-        ):
+        if any(h == key or key.startswith(h) or key.endswith(h) for h in spec["name_hints"]):
             return kind
     return None
 
@@ -313,14 +297,13 @@ def quantify_dataset(ds, *, allow_precip_totals: bool = False):
         units = da.attrs.get("units")
         has_units = isinstance(units, str) and bool(units.strip())
         kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
-        precip_kind = kind
-        if precip_kind is None and has_units:
-            precip_kind = kind_from_units(units)
         if (
             not allow_precip_totals
-            and precip_kind in ("precip", "precip_amount")
+            and kind in ("precip", "precip_amount")
             and (
-                precip_kind == "precip_amount" or cell_methods_has_sum(da.attrs.get("cell_methods"))
+                kind == "precip_amount"
+                or (has_units and kind_from_units(units) == "precip_amount")
+                or cell_methods_has_sum(da.attrs.get("cell_methods"))
             )
         ):
             raise UsageError(
@@ -422,9 +405,12 @@ def convert_dataarray(da, dst_units: str):
 def to_standard_units(ds, variables=None):
     """Convert recognized temp/precip data vars to standard display units.
 
-    Rate-path only: ``precip_amount`` is left unchanged (use convert-to-totals).
-    Unrecognized or unitless variables are left unchanged. Raises ``UsageError``
-    if a classified rate/temp variable cannot be converted.
+    Classification is by CF ``standard_name`` or named variable hints only.
+    On a match, stamps the kind's CF ``standard_name`` (when set) and converts
+    units; the variable **name** is left untouched. Rate-path only:
+    ``precip_amount`` is left unchanged (use convert-to-totals). Unrecognized or
+    unitless variables are left unchanged. Raises ``UsageError`` if a classified
+    rate/temp variable cannot be converted.
     """
     names = list(variables) if variables is not None else list(ds.data_vars)
     out = ds
@@ -450,6 +436,6 @@ def to_standard_units(ds, variables=None):
         if not dirty:
             out = ds.copy()
             dirty = True
-        out[name] = converted
+        out[name] = converted  # keep the original variable name
         out[name].attrs = attrs
     return out

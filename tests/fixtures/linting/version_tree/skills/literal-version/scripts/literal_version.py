@@ -6,7 +6,9 @@
 # ///
 """Lint fixture: version passed as a string literal. Never executed."""
 
-from weather_skills_core import weather_skill
+from pathlib import Path
+
+from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -14,9 +16,8 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     name="literal-version",
     version="0.1.0",
-    inputs=["data"],
-    outputs=["data"],
 )
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
 def literal_version(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds

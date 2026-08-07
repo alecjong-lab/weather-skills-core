@@ -18,9 +18,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from weather_skills_core.standard_args import StandardParameter, standard_parameters
 from weather_skills_core.linting.corpus import CorpusSkill
-from weather_skills_core.linting.extract import ArgShape, SkillDeclaration, normalize_requirement_name
+from weather_skills_core.linting.extract import (
+    ArgShape,
+    SkillDeclaration,
+    normalize_requirement_name,
+)
+from weather_skills_core.standard_args import StandardParameter, standard_parameters
 
 CORE_PACKAGE = "weather-skills-core"
 
@@ -40,7 +44,7 @@ class Rule:
 
 RULES = {
     "WSK001": Rule("WSK001", "error", "skill script could not be analyzed"),
-    "WSK101": Rule("WSK101", "warning", "extra argument shadows a standard parameter"),
+    "WSK101": Rule("WSK101", "warning", "argument uses a non-canonical spelling of a standard parameter"),
     "WSK201": Rule(
         "WSK201", "warning", "one-off flag declared by multiple skills", default_enabled=False
     ),
@@ -105,16 +109,13 @@ def _standard_lookup() -> dict[str, StandardParameter]:
 
 
 def _shadow_remedy(param: StandardParameter) -> str:
-    if param.kind == "io":
-        return f"declare inputs=/outputs= so the decorator owns {'/'.join(param.flags)}"
     return f"use the canonical @weather_skill.argument({'/'.join(repr(f) for f in param.flags)}) form"
 
 
 def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
-    """Flag arguments that collide with decorator-owned --input/--output only.
+    """Flag non-canonical declarations of shared specials (bbox/date/…).
 
-    Canonical specials (bbox/date/start_time/…) are declared via Argument and
-    are not shadows.
+    Path I/O flags (``-i``/``-o``) are free-form and are not shadows.
     """
     findings = []
     lookup = _standard_lookup()
@@ -126,19 +127,18 @@ def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
                 break
         if param is None and shape.dest in lookup:
             param = lookup[shape.dest]
-        if param is None or param.kind != "io":
+        if param is None or param.kind != "canonical":
             continue
-        if not decl.has_output and param.dest == "output":
-            continue
-        if not decl.has_input and param.dest == "input":
+        # Declaring the canonical flag set is required, not a shadow.
+        if set(shape.flags) == set(param.flags) or set(param.flags) <= set(shape.flags):
             continue
         findings.append(
             _finding(
                 "WSK101",
                 decl,
                 shape.identity,
-                f"arguments {shape.dest!r} shadows the standard {param.name} parameter "
-                f"({'/'.join(param.flags)}); {_shadow_remedy(param)}.",
+                f"arguments {shape.dest!r} uses a non-canonical spelling of the standard "
+                f"{param.name} parameter ({'/'.join(param.flags)}); {_shadow_remedy(param)}.",
             )
         )
     return findings
@@ -203,11 +203,8 @@ def _declared_flags(decl: SkillDeclaration) -> tuple[dict[str, str], set[str]]:
         primary.setdefault(shape.primary_flag, f"arguments {shape.dest!r}")
         all_spellings.update(shape.flags)
 
-    if decl.has_input:
-        primary.setdefault("--input", "inputs")
-        all_spellings.update(("--input", "-i"))
     if decl.has_output:
-        primary.setdefault("--output", "outputs")
+        primary.setdefault("--output", "decorator output=")
         all_spellings.update(("--output", "-o"))
     return primary, all_spellings
 

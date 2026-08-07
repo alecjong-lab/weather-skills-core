@@ -24,15 +24,17 @@ class StandardParameter:
     name: str
     dest: str
     flags: tuple
-    kind: str  # "io" | "canonical"
+    kind: str  # "canonical"
     accepts_help: bool = False
 
 
 def standard_parameters():
-    """Shared flags (``--input``, ``--bbox``, …) used by the decorator (and the linting package)."""
+    """Shared flags (``--bbox``, dates, …) used by the decorator (and the linting package).
+
+    Input/output paths are ordinary ``@weather_skill.argument`` declarations
+    (``type=Dataset(...)`` / ``type=Path``); they are not catalogued here.
+    """
     return (
-        StandardParameter("inputs", "input", ("--input", "-i"), "io"),
-        StandardParameter("outputs", "output", ("--output", "-o"), "io"),
         StandardParameter("start_time", "start_time", ("--start-time",), "canonical", True),
         StandardParameter("end_time", "end_time", ("--end-time",), "canonical", True),
         StandardParameter("date", "date", ("--date",), "canonical", True),

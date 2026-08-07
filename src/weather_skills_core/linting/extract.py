@@ -180,6 +180,15 @@ def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> A
         if key == "type":
             if isinstance(value_node, ast.Name):
                 spec["type"] = value_node.id
+            elif isinstance(value_node, ast.Call):
+                # type=Dataset(...), type=Path, type=int(), …
+                func = value_node.func
+                if isinstance(func, ast.Name):
+                    spec["type"] = func.id
+                elif isinstance(func, ast.Attribute):
+                    spec["type"] = func.attr
+                else:
+                    dynamic_keys.append(key)
             else:
                 dynamic_keys.append(key)
             continue
@@ -407,30 +416,10 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("pass version= as a keyword; positional version is deprecated")
     decl.version_passed = isinstance(version_node, ast.Name) and version_node.id == "_SKILL_VERSION"
 
-    inputs_val = _literal(keywords["inputs"]) if "inputs" in keywords else None
-    if inputs_val is DYNAMIC:
-        decl.has_input = True
-        decl.notes.append("inputs is not a literal; input arity unknown")
-    elif isinstance(inputs_val, list | tuple):
-        decl.has_input = len(inputs_val) > 0
-        # A single "type+" entry is variadic (append); multiple fixed entries also append.
-        if len(inputs_val) == 1 and isinstance(inputs_val[0], str) and inputs_val[0].endswith("+") or len(inputs_val) > 1:
-            decl.input_arity = "append"
-        else:
-            decl.input_arity = "single"
-    elif inputs_val is not None:
-        decl.notes.append(
-            f"inputs is a {type(inputs_val).__name__} literal, not a sequence; input arity unknown"
-        )
-
-    outputs_val = _literal(keywords["outputs"]) if "outputs" in keywords else None
-    if outputs_val is DYNAMIC:
-        decl.has_output = True
-        decl.notes.append("outputs is not a literal; treated as artifact-writing")
-    elif isinstance(outputs_val, list | tuple):
-        decl.has_output = len(outputs_val) > 0
-    else:
-        decl.has_output = outputs_val is not None
+    if "inputs" in keywords:
+        decl.notes.append("inputs= is removed; declare Dataset-typed @weather_skill.argument flags")
+    if "outputs" in keywords:
+        decl.notes.append("outputs= is removed; the decorator owns -o/--output (or pass output=False)")
 
     stacked, stacked_dynamic = _extract_stacked_arguments(func_node, decl.notes)
     if "arguments" in keywords:
@@ -441,6 +430,20 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
     else:
         decl.arguments = stacked
         decl.arguments_dynamic = stacked_dynamic
+
+    dataset_shapes = [s for s in decl.arguments.values() if s.type_name == "Dataset"]
+    decl.has_input = bool(dataset_shapes)
+    # Decorator owns -o unless output=False.
+    output_kw = _literal(keywords["output"]) if "output" in keywords else True
+    if output_kw is DYNAMIC:
+        decl.has_output = True
+        decl.notes.append("output= is not a literal; treated as artifact-writing")
+    else:
+        decl.has_output = bool(output_kw)
+    multi = any(
+        s.arity == "append" or s.nargs in ("+", "*", 2) for s in dataset_shapes
+    )
+    decl.input_arity = "append" if multi else "single"
     return decl
 
 

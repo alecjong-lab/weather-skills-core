@@ -6,8 +6,8 @@ description: Playbook for writing a weather skill on the @weather_skill decorato
 # weather-skill-authoring
 
 A skill is `skills/<name>/` with a **SKILL.md** and `scripts/<name>.py`. The
-`@weather_skill` decorator owns the CLI, input opening, standard-dataset validation,
-provenance, and output writing. The script body is domain logic only.
+`@weather_skill` decorator owns the CLI, Dataset input opening, standard-dataset
+validation, provenance, and output writing. The script body is domain logic only.
 
 ## References
 
@@ -24,7 +24,7 @@ provenance, and output writing. The script body is domain logic only.
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
-from weather_skills_core import weather_skill
+from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
@@ -32,15 +32,14 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill(
     name="my-skill",
     version=_SKILL_VERSION,
-    inputs=["spatial"],
-    outputs=["observations"],
 )
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
 @weather_skill.argument("--bbox", required=True)
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument("--smoothing", type=int, help="Window width.")
-def my_skill(ds, bbox, start_time, end_time, variable, smoothing, **kwargs):
+def my_skill(ds, output, bbox, start_time, end_time, variable, smoothing, **kwargs):
     """Shown as the CLI description."""
     return ds  # or Path(...)
 
@@ -52,8 +51,39 @@ if __name__ == "__main__":
 `@weather_skill.argument(...)` mirrors
 `argparse.ArgumentParser.add_argument`. Stack one decorator per flag. The skill
 function **must** accept `**kwargs`. **Every** declared flag is injected as a
-keyword argument (named parameter or via kwargs) — custom flags the same as
-standard ones.
+keyword argument (named parameter or via kwargs) — Dataset inputs, Path outputs,
+and custom flags alike.
+
+## Dataset inputs
+
+Use `type=Dataset(...)` for Zarr inputs. The decorator opens the path, checks
+required dims, quantifies units, and injects the opened dataset (not the path
+string). Grammar:
+
+| Form | Meaning |
+| --- | --- |
+| `Dataset("forecast")` | named type → required dims |
+| `Dataset("lat, lon")` | AND of ontology dims |
+| `Dataset(("lat", "lon"))` | same AND as a tuple |
+| `Dataset(["spatial", "point_obs"])` | OR of alternatives |
+| `Dataset("any")` | any Zarr; skip dim checks |
+
+Opaque files (GeoJSON, `.eml`, …) use `type=Path`, not `Dataset`. Flag names are
+free-form (`-i/--input`, `--forecast`, …). Multi-input: `nargs=2` / `nargs="+"`
+or separate Dataset args.
+
+## Outputs
+
+The decorator owns ``-o/--output`` (repeatable). Do not declare it yourself.
+It injects ``output`` as a ``Path`` (one path) or ``list[Path]`` (several).
+
+- Return an ``xr.Dataset`` → decorator stamps provenance and ``to_zarr(output)``.
+- Return a ``Path`` (plots) → decorator stamps that file (must match an ``--output``).
+- Return a sequence → one write per ``--output``; counts must match.
+- Return ``None`` → skill already wrote; decorator skips write (e.g. email-report).
+- Inspect-only skills: ``@weather_skill(..., output=False)``.
+
+There is no output dim check; output shape is whatever the skill returns.
 
 ## Standard arguments
 
@@ -79,60 +109,32 @@ When both `start_time` and `end_time` are set, start must be ≤ end. Pass
 `--region` or `--bbox`, not both. `--region` needs `weather-skills-core[geo]`;
 the skill body receives a GeoDataFrame, not the CLI string.
 
+Absolute dates are `datetime.date`. Relative tokens (`latest`, `now-3d`) are not
+parsed by the decorator — resolve them in the skill or agent before calling.
+
 ## Skill shapes
 
-| Kind | Declaration | Return |
+| Kind | Typical args | Return |
 | --- | --- | --- |
-| Transform | `inputs=[...]`, `outputs=[…]` | Dataset or Path |
-| Fetcher | `inputs=[]` (or omit), zarr `outputs` | Dataset or Path |
-| Figure | `outputs=["figure"]` | Path (write to `kwargs["output"]`) |
-| Unstructured input | `inputs=["unstructured"]` | skill receives a `Path` |
-| Variadic inputs | `inputs=["any+"]` (or `time+`, …) | skill receives a `list` of opened inputs |
-| No-artifact | omit / empty `outputs` | anything (ignored) |
+| Fetcher | decorator `-o` | Dataset |
+| Transform | Dataset input(s) + decorator `-o` | Dataset |
+| Figure | Dataset input(s) + decorator `-o` | Path (write PNG yourself) |
+| Inspect | Dataset or Path input; `output=False` | anything (stdout) |
 
-## Inputs / outputs
+## Units
 
-CF-based standard dimensions: `lat`, `lon`, `time`, `init_time`,
-`prediction_timedelta`, `member`, `vertical`, `day_of_year`, `point_id`, `x`, `y`.
-
-Types are aliases for specific required dimensions:
-
-| Type aliases | Required dimensions |
-| --- | --- |
-| `spatial`, `space` | `lat` + `lon` |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
-| `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
-| `vertical_forecast` | forecast dims + `vertical` |
-| `ensemble_forecast` | forecast dims + `member` |
-| `point_obs`, `station` | `point_id` + `time` |
-| `any` | any Zarr (no dimension check) |
-| `figure` | PNG / JPEG / HTML (output only) |
-| `unstructured` | opaque file path |
-
-Example: `inputs=["spatial"]` for clip; `inputs=["forecast"]` for a forecast-only
-skill. See `references/STANDARD_DATASET.md`.
+Most skills expect **rates** for accumulated variables (precipitation as
+`mm day-1`). Opening a precip total raises unless `allow_precip_totals=True`
+(plotters / `deaccumulate`). See `references/UNITS.md`.
 
 ## Provenance
 
-The decorator appends a `weather_skills_history` entry. When `outputs` is
-declared, `--output` path(s) are passed as `output` in `**kwargs`. Returned
-Datasets are checked against the declared output dims before write (Path returns
-skip that check).
+The decorator appends a `weather_skills_history` entry (skill name, version,
+args, input basename+hash). Path write targets and Dataset path strings are
+omitted from the args blob. PNG/JPEG figures with an intact chain get a corner
+mark.
 
-Do not clear or rewrite history yourself; set `weather_skills_source` on fetcher
-Datasets before return if needed.
+## Layout
 
-## Units helpers
-
-`to_standard_units(ds)` / `units_equal(a, b)` — normalize temp → `degree_Celsius`
-and precip **rates** → `mm day-1`. Most skills expect rates for accumulated
-variables; use `convert-to-totals` / `rate_to_total` when you need amounts.
-`@weather_skill` quantifies inputs via `pint-xarray`. Known standard kinds
-with `units_required` in `STANDARD` require `units` for explicit skill treatment;
-other variables may omit them. Skills that intentionally accept totals set
-`allow_precip_totals=True` (plotters / `deaccumulate`).
-
-## Errors
-
-Raise `UsageError` (exit 2, pre-network) or `DataError` (exit 1) from
-`weather_skills_core.errors`.
+Keep the script as domain logic. Put version in `_SKILL_VERSION`. Declare
+`weather-skills-core` in the PEP 723 block. Document every flag in SKILL.md.

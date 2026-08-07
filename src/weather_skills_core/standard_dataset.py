@@ -1,7 +1,7 @@
 """Ontology for the weather-skills standard dataset.
 
-Dims and types skills declare on ``inputs=``/``outputs=``, plus checks that a
-Zarr matches those requirements.
+Dims and types skills declare via ``Dataset(...)`` on arguments, plus checks
+that a Zarr matches those requirements.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ POINT_ID = "point_id"
 X = "x"
 Y = "y"
 
-# Ontology dims skills declare in inputs=/outputs=
+# Ontology dims skills declare on Dataset(...)
 DIMS = frozenset(
     {
         LAT,
@@ -103,31 +103,31 @@ def names_for(preferred: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class IoSpec:
-    """What one ``--input`` / ``--output`` path is allowed to be.
+    """What one Zarr path is allowed to be.
 
-    Built from one entry in ``@weather_skill(inputs=..., outputs=...)`` by
-    :func:`normalize_io_spec`. The decorator uses it for CLI help and to check
-    opened Zarrs via :func:`validate_input`.
+    Built by :class:`~weather_skills_core.Dataset` (or :func:`normalize_io_spec`).
+    The decorator uses it for CLI help and to check opened Zarrs via
+    :func:`validate_input`.
 
-    Examples (author shorthand → meaning)::
+    Examples (author shorthand via ``Dataset(...)`` → meaning)::
 
-        "forecast"                     # Zarr with forecast dims (see TYPE_DIMS)
-        "time"                         # Zarr that has a time dimension
-        ("lat", "lon", "member")       # Zarr that has *all* (tuple = AND)
-        ["observations", "forecast"]   # Zarr that matches *either* (list = OR)
-        "any"                          # any Zarr; skip dimension checks
-        "unstructured"                 # not Zarr; skill gets a Path
-        "figure"                       # output image path only
-        "any+"                         # one or more matching inputs (``+``)
+        Dataset("forecast")                     # forecast dims (see TYPE_DIMS)
+        Dataset("time")                         # has a time dimension
+        Dataset("lat, lon")                     # has *all* (comma string = AND)
+        Dataset(("lat", "lon", "member"))       # same AND as a tuple
+        Dataset(["observations", "forecast"])   # matches *either* (list = OR)
+        Dataset("any")                          # any Zarr; skip dimension checks
+
+    Opaque files use ``pathlib.Path``, not ``Dataset``.
 
     Fields:
-        kind: ``"zarr"``, ``"unstructured"``, or ``"figure"``.
+        kind: ``"zarr"``, ``"unstructured"``, or ``"figure"`` (legacy; new skills
+            use ``Path`` for non-Zarr).
         alternatives: For Zarr, each item is a set of ontology dims that must
             all be present. The dataset may match any one item. ``None`` means
             no dim check (``"any"``) or a non-Zarr kind.
-        variadic: ``True`` if the author wrote a trailing ``+`` (inputs only;
-            that entry must be the only ``inputs=`` entry).
-        label: Text for help and errors (e.g. ``"forecast"``, ``"any+"``).
+        variadic: Legacy ``+`` suffix on old ``inputs=`` entries.
+        label: Text for help and errors (e.g. ``"forecast"``).
     """
 
     kind: str  # "zarr" | "unstructured" | "figure"

@@ -36,32 +36,32 @@ Types are aliases for specific required dimensions:
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
-| `figure` | PNG / JPEG / HTML (output only) |
-| `unstructured` | opaque file path |
+
+Opaque files and figures use `pathlib.Path`, not `Dataset`.
 
 ## Declaring I/O on a skill
 
-Each entry in `inputs=` / `outputs=` is one `--input` / `--output` path. What
-you put *in* an entry is a dimension, a type, or a combination:
+Declare Zarr inputs with `type=Dataset(...)` on `@weather_skill.argument`.
+Declare the write path with `type=Path` on `-o/--output`.
 
-| Entry form | Meaning | Example entry |
+| `Dataset(...)` form | Meaning | Example |
 | --- | --- | --- |
-| String | That dim or type | `"spatial"` |
-| Tuple | All required (AND) | `("lat", "lon", "member")` |
-| List | Any one alternative (OR) | `["forecast", "ensemble_forecast"]` |
-| Trailing `+` on a string | One or more matching paths | `"any+"` (sole `inputs=` entry) |
+| String type/dim | That type or dim | `Dataset("spatial")` |
+| Comma string | All required (AND) | `Dataset("lat, lon")` |
+| Tuple | All required (AND) | `Dataset(("lat", "lon", "member"))` |
+| List | Any one alternative (OR) | `Dataset(["forecast", "ensemble_forecast"])` |
 
 ```python
-@weather_skill(
-    name="clip-region",
-    version=_SKILL_VERSION,
-    inputs=["spatial"],          # one path; needs lat + lon
-    outputs=["spatial"],
-)
+from weather_skills_core import Dataset, weather_skill
+
+@weather_skill(name="clip-region", version=_SKILL_VERSION)
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
+def clip_region(ds, output, **kwargs):
+    return ds
 ```
 
-Two paths: `inputs=["spatial", "spatial"]`. One path that may be forecast or
-ensemble: `inputs=[["forecast", "ensemble_forecast"]]`.
+Multi-input: `nargs=2` / `nargs="+"` on one Dataset arg, or separate Dataset flags.
+The decorator owns `-o/--output`; return count must match the number of paths.
 
 ## Provenance attrs
 

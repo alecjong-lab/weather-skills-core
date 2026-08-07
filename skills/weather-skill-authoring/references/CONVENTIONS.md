@@ -4,23 +4,23 @@ Skills declare their CLI through `@weather_skill` and stacked
 `@weather_skill.argument(...)` decorators. A flag that means the same thing on
 different skills must have the same name.
 
-`--input` / `--output` come from `inputs=` / `outputs=`; everything else is
-`@weather_skill.argument(...)`. The conformance linter checks naming
-(WSK101 / WSK201 / WSK202).
+Zarr inputs use `type=Dataset(...)`; write targets use `type=Path` on
+`-o/--output`. Path I/O flag names are free-form. Canonical specials (`--bbox`,
+dates, `--variable`, …) keep fixed spellings — the conformance linter checks
+those (WSK101 / WSK201 / WSK202).
 
 ## Standard names
 
 Shared flag names so skills behave the same way. Declare them with
 `@weather_skill.argument(...)` and the decorator parses them for you (see the
-core README). Types and dimensions live in STANDARD_DATASET.md (`figure` for
-plots, `point_obs` for station/point time series).
+core README). Types and dimensions live in STANDARD_DATASET.md.
 
 ### Inputs and outputs
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Inputs | `--input` / `-i`, repeated | Exactly `len(inputs)` paths, in order. A single `…+` entry means ≥1 paths (variadic). |
-| Outputs | `--output` / `-o`, repeated | Exactly `len(outputs)` paths, in order. Passed to the skill as `output` in `**kwargs`. |
+| Zarr input | often `--input` / `-i` | `type=Dataset(...)`. Free-form names allowed. Use `nargs`/`append` for multi-input. |
+| Output path | `--output` / `-o`, repeated | Owned by the decorator (`output=True` default). Count must match returned artifacts. |
 
 ### Region
 

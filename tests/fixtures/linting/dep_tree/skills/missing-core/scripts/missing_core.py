@@ -6,12 +6,18 @@
 # ///
 """Lint fixture: PEP 723 missing weather-skills-core. Never executed."""
 
-from weather_skills_core import weather_skill
+from pathlib import Path
+
+from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
 
-@weather_skill(name="missing-core", version=_SKILL_VERSION, inputs=["data"], outputs=["data"])
+@weather_skill(
+    name="missing-core",
+    version=_SKILL_VERSION,
+)
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='input')
 def missing_core(ds):
     return ds
 

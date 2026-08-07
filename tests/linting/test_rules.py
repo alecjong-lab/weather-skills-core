@@ -39,17 +39,17 @@ class TestCleanSkill:
 
 
 class TestShadowRule:
-    def test_each_shadowing_argument_fires_wsk101(self):
+    def test_non_canonical_bbox_fires_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         shadow_findings = [f for f in report.findings if f.rule == "WSK101"]
-        assert {f.flag for f in shadow_findings} == {"--input", "--output"}
+        assert {f.flag for f in shadow_findings} == {"-b"}
         assert all(f.severity == "warning" for f in shadow_findings)
 
-    def test_remediation_names_inputs_outputs_declaration(self):
+    def test_remediation_names_canonical_form(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
         by_flag = {f.flag: f.message for f in report.findings if f.rule == "WSK101"}
-        assert "declare inputs=/outputs=" in by_flag["--input"]
-        assert "declare inputs=/outputs=" in by_flag["--output"]
+        assert "canonical" in by_flag["-b"]
+        assert "--bbox" in by_flag["-b"]
 
     def test_non_shadowing_argument_does_not_fire(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
@@ -57,7 +57,7 @@ class TestShadowRule:
 
     def test_canonical_specials_do_not_fire_wsk101(self):
         report = run_lint(FIXTURES / "shadow_tree", [])
-        assert not [f for f in report.findings if f.flag in ("--date", "--bbox")]
+        assert not [f for f in report.findings if f.flag in ("--date", "--input", "--output")]
 
     def _single_skill(self, tmp_path, *, name, decorator_head, argument_decorators):
         skill = tmp_path / name
@@ -70,7 +70,7 @@ class TestShadowRule:
         ws += ")\n"
         (scripts_dir / "run.py").write_text(
             _PEP723
-            + "from weather_skills_core import weather_skill\n"
+            + "from weather_skills_core import Dataset, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
             + ws
             + argument_decorators
@@ -79,37 +79,36 @@ class TestShadowRule:
         (skill / "SKILL.md").write_text(_manifest([]))
         return skill
 
-    def test_no_artifact_skill_may_declare_input_output_without_wsk101(self, tmp_path):
+    def test_freeform_input_do_not_fire_wsk101(self, tmp_path):
         skill = self._single_skill(
             tmp_path,
-            name="no-artifact",
+            name="io-ok",
             decorator_head="",
             argument_decorators=(
-                "@weather_skill.argument('--input', help='x')\n"
-                "@weather_skill.argument('--output', help='y')\n"
+                "@weather_skill.argument('-i', '--input', type=Dataset('observations'), required=True)\n"
             ),
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
         assert shadow == []
 
-    def test_artifact_skill_declaring_input_still_fires_wsk101(self, tmp_path):
+    def test_non_canonical_bbox_in_isolation_fires_wsk101(self, tmp_path):
         skill = self._single_skill(
             tmp_path,
-            name="artifact",
-            decorator_head="inputs=['data'], outputs=['data']",
-            argument_decorators="@weather_skill.argument('--input', help='x')\n",
+            name="bad-bbox",
+            decorator_head="",
+            argument_decorators="@weather_skill.argument('-b', dest='bbox', help='x')\n",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
-        assert {f.flag for f in shadow} == {"--input"}
+        assert {f.flag for f in shadow} == {"-b"}
 
-    def test_no_artifact_skill_variable_does_not_fire_wsk101(self, tmp_path):
+    def test_canonical_variable_does_not_fire_wsk101(self, tmp_path):
         skill = self._single_skill(
             tmp_path,
-            name="no-artifact-variable",
+            name="ok-variable",
             decorator_head="",
-            argument_decorators="@weather_skill.argument('--variable', help='x')\n",
+            argument_decorators="@weather_skill.argument('--variable', '-v', help='x')\n",
         )
         report = run_lint(skill, [])
         shadow = [f for f in report.findings if f.rule == "WSK101"]
@@ -221,12 +220,12 @@ _PEP723 = '# /// script\n# dependencies = ["weather-skills-core"]\n# ///\n'
 def _script(skill_name, func_name, argument_decorators):
     return (
         _PEP723
-        + "from weather_skills_core import weather_skill\n"
+        + "from weather_skills_core import Dataset, weather_skill\n"
         + '_SKILL_VERSION = "0.1.0"\n'
-        + f"@weather_skill(name={skill_name!r}, version=_SKILL_VERSION, inputs=['data'], "
-        + "outputs=['data'])\n"
+        + f"@weather_skill(name={skill_name!r}, version=_SKILL_VERSION)\n"
+        + "@weather_skill.argument('-i', '--input', type=Dataset('observations'), required=True, dest='ds')\n"
         + argument_decorators
-        + f"def {func_name}(ds, **kwargs):\n    return ds\n"
+        + f"def {func_name}(ds, output, **kwargs):\n    return ds\n"
     )
 
 
@@ -313,12 +312,14 @@ class TestMultiScriptSkill:
         skill = make_multi_script_skill(
             tmp_path,
             scripts={
-                "one.py": _script("dup", "one", "@weather_skill.argument('--input', help='x')\n"),
+                "one.py": _script(
+                    "dup", "one", "@weather_skill.argument('-b', dest='bbox', help='x')\n"
+                ),
                 "two.py": _script(
                     "dup", "two", "@weather_skill.argument('--clean', type=int, help='x')\n"
                 ),
             },
-            manifest_flags=["--input", "--clean"],
+            manifest_flags=["-b", "--clean"],
         )
         report = run_lint(skill, [])
         assert {s["key"] for s in report.skills} == {
@@ -338,12 +339,12 @@ class TestMultiScriptSkill:
         scripts_dir.mkdir(parents=True)
         (scripts_dir / "one.py").write_text(
             _PEP723
-            + "from weather_skills_core import Argument, weather_skill\n"
+            + "from weather_skills_core import Argument, Dataset, weather_skill\n"
             + '_SKILL_VERSION = "0.1.0"\n'
             + "SHARED = [Argument('--foo', type=int)]\n"
-            + "@weather_skill(name='one', version=_SKILL_VERSION, inputs=['data'], "
-            + "outputs=['data'], arguments=SHARED)\n"
-            + "def one(ds, **kwargs):\n    return ds\n"
+            + "@weather_skill(name='one', version=_SKILL_VERSION, arguments=SHARED)\n"
+            + "@weather_skill.argument('-i', '--input', type=Dataset('observations'), required=True, dest='ds')\n"
+            + "def one(ds, output, **kwargs):\n    return ds\n"
         )
         (skill / "SKILL.md").write_text(_manifest(["--foo", "--bar", "--baz"]))
         report = run_lint(skill, [])

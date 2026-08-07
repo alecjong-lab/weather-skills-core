@@ -1,4 +1,4 @@
-"""``@weather_skill`` decorator: CLI, open inputs, run skill, stamp/write outputs."""
+"""``@weather_skill`` decorator: CLI, open Dataset inputs, stamp/write outputs."""
 
 import argparse
 import functools
@@ -13,6 +13,7 @@ import xarray as xr
 from weather_skills_core import provenance as provenance_mod
 from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
+from weather_skills_core.dataset_type import Dataset, help_label
 from weather_skills_core.errors import SkillError, UsageError
 from weather_skills_core.units import dequantify_dataset, quantify_dataset
 
@@ -28,12 +29,15 @@ class Argument:
             raise ValueError("Argument requires at least one option string or positional name")
         self.option_strings = option_strings
         self.kwargs = dict(kwargs)
+        self.dataset_type: Dataset | None = None
+        type_kw = self.kwargs.get("type")
+        if isinstance(type_kw, Dataset):
+            self.dataset_type = type_kw
 
     @property
     def dest(self) -> str:
         if "dest" in self.kwargs:
             return self.kwargs["dest"]
-        # argparse default: first long option, else first option, dashes→underscores
         flag = next(
             (f for f in self.option_strings if f.startswith("--")),
             self.option_strings[0],
@@ -41,104 +45,51 @@ class Argument:
         return flag.lstrip("-").replace("-", "_")
 
 
-def io_spec_help_label(spec: std.IoSpec) -> str:
-    if spec.kind == "unstructured":
-        return "unstructured"
-    if spec.kind == "figure":
-        return "figure"
-    if spec.alternatives is None:
-        return "any"
-    if len(spec.alternatives) == 1:
-        dims = sorted(spec.alternatives[0])
-        return "+".join(dims) if dims else "any"
-    parts = []
-    for alt in spec.alternatives:
-        parts.append("{" + ",".join(sorted(alt)) + "}")
-    return " OR ".join(parts)
-
-
-def accepts_var_keyword(fn) -> bool:
-    return any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in inspect.signature(fn).parameters.values()
-    )
-
-
-def serialize_args(entry_args: dict) -> dict:
-    """Copy args into JSON-safe values for a provenance history entry."""
-    return json.loads(json.dumps(entry_args, default=str))
-
-
-def build_history(name, version, args, params, input_paths, path_specs, upstream):
+def build_history(name, version, args, params, input_paths, path_specs, upstream, strip_dests):
     """Append this skill's provenance entry to the first input's history."""
-    entry_args = {k: v for k, v in vars(args).items() if k not in ("input", "output")}
+    entry_args = {k: v for k, v in vars(args).items() if k not in strip_dests}
     for dest in ("date", "start_time", "end_time"):
         if dest in params and params[dest] is not None:
             entry_args[dest] = params[dest].isoformat()
-    entry_args = serialize_args(entry_args)
+    entry_args = json.loads(json.dumps(entry_args, default=str))
 
     if not input_paths:
-        input_field = None
-        base_history = []
+        input_field, base_history = None, []
     elif len(input_paths) == 1:
-        if path_specs[0].kind == std.UNSTRUCTURED:
-            input_field = {
-                "basename": input_paths[0].name,
-                "hash": provenance_mod.hash_file(input_paths[0]),
-            }
-        else:
-            input_field = provenance_mod.input_ref(input_paths[0])
+        input_field = provenance_mod.input_ref(input_paths[0])
         base_history = upstream[0]
     else:
-        input_field = []
-        for path, spec, hist in zip(input_paths, path_specs, upstream, strict=True):
-            if spec.kind == std.UNSTRUCTURED:
-                input_field.append(
-                    {
-                        "basename": path.name,
-                        "hash": provenance_mod.hash_file(path),
-                        "history": hist,
-                    }
-                )
-            else:
-                input_field.append(
-                    {
-                        "basename": path.name,
-                        "hash": provenance_mod.hash_zarr(path),
-                        "history": hist,
-                    }
-                )
+        input_field = [
+            {
+                "basename": path.name,
+                "hash": provenance_mod.hash_zarr(path),
+                "history": hist,
+            }
+            for path, _spec, hist in zip(input_paths, path_specs, upstream, strict=True)
+        ]
         base_history = upstream[0]
 
-    entry = provenance_mod.build_entry(name, version, entry_args, input_field)
-    return base_history + [entry]
+    return base_history + [provenance_mod.build_entry(name, version, entry_args, input_field)]
 
 
-def write_output(value, out_path, out_spec, history, first_ds):
-    """Write one skill result: stamp a figure/Path, or ``to_zarr`` a Dataset."""
-    if out_spec.kind == std.FIGURE:
-        if not isinstance(value, (str, Path)):
-            raise SkillError("figure outputs must return a Path to the written file")
-        written = Path(value)
-        if written.resolve() != out_path.resolve():
-            raise SkillError(f"figure path {written} does not match --output {out_path}")
-        provenance_mod.stamp_figure(written, history)
-        print(f"Wrote: {out_path}", file=sys.stderr)
-        return
-
+def write_output(value, out_path, history, first_ds):
+    """Write one skill result: stamp a returned Path, or ``to_zarr`` a Dataset."""
     if isinstance(value, (str, Path)):
         written = Path(value)
         if written.resolve() != out_path.resolve():
             raise SkillError(f"returned path {written} does not match --output {out_path}")
-        provenance_mod.restamp_zarr(written, history)
+        if written.is_dir():
+            provenance_mod.restamp_zarr(written, history)
+        else:
+            provenance_mod.stamp_figure(written, history)
         print(f"Wrote: {out_path}", file=sys.stderr)
         return
 
-    if out_spec.kind == "zarr" and hasattr(value, "dims"):
-        std.validate_input(value, out_spec, f"output {out_path}")
+    if not hasattr(value, "dims"):
+        raise SkillError(f"skill returned {type(value).__name__}; expected xr.Dataset or Path")
 
     if hasattr(value, "pint"):
         value = dequantify_dataset(value)
-
     if first_ds is not None:
         value.attrs = {**first_ds.attrs, **value.attrs}
     provenance_mod.stamp_zarr(value, history)
@@ -153,8 +104,42 @@ def write_output(value, out_path, out_spec, history, first_ds):
     print(f"Wrote: {out_path}", file=sys.stderr)
 
 
+def open_dataset_params(params, arguments, *, allow_precip_totals: bool):
+    """Replace Dataset-typed Path values with opened/validated/quantified datasets."""
+    input_paths: list[Path] = []
+    path_specs: list[std.IoSpec] = []
+    upstream: list = []
+    first_ds = None
+
+    for arg in arguments:
+        if arg.dataset_type is None:
+            continue
+        dest, raw = arg.dest, params.get(arg.dest)
+        if raw is None:
+            continue
+        paths = [Path(p) for p in raw] if isinstance(raw, (list, tuple)) else [Path(raw)]
+        if not paths:
+            continue
+        opened = []
+        for path in paths:
+            if not path.exists():
+                raise UsageError(f"input not found: {path}")
+            ds = xr.open_zarr(path, consolidated=True)
+            std.validate_input(ds, arg.dataset_type.io_spec, str(path))
+            ds = quantify_dataset(ds, allow_precip_totals=allow_precip_totals)
+            opened.append(ds)
+            input_paths.append(path)
+            path_specs.append(arg.dataset_type.io_spec)
+            upstream.append(provenance_mod.load_history(path))
+            if first_ds is None:
+                first_ds = ds
+        params[dest] = opened if isinstance(raw, (list, tuple)) else opened[0]
+
+    return params, input_paths, path_specs, upstream, first_ds
+
+
 def argument(*option_strings, **kwargs):
-    """Declare an extra CLI flag under ``@weather_skill`` (argparse-style)."""
+    """Declare a CLI flag under ``@weather_skill`` (argparse-style)."""
     arg = Argument(*option_strings, **kwargs)
 
     def decorate(fn):
@@ -170,89 +155,83 @@ def weather_skill(
     *,
     name,
     version,
-    inputs=None,
-    outputs=None,
+    output: bool = True,
     allow_precip_totals=False,
 ):
     """Turn a function into a weather skill CLI with validated I/O and provenance.
 
-    ``inputs``/``outputs`` are IO spec lists (str; list=OR; tuple=AND; trailing ``+``
-    = variadic). Stack ``@weather_skill.argument`` for extra flags. The skill
-    must accept ``**kwargs`` (decorator passes ``output`` there).
+    Stack ``@weather_skill.argument`` for flags. Use ``type=Dataset(...)`` for
+    Zarr inputs (opened and dim-checked before the skill runs).
+
+    When ``output=True`` (default), the decorator owns ``-o/--output``
+    (repeatable). It injects ``output`` as a ``Path`` (one path) or
+    ``list[Path]`` (several). Returning an ``xr.Dataset`` writes Zarr there;
+    returning a ``Path`` stamps that file; returning a sequence writes one
+    artifact per ``--output``. The number of returned values must match the
+    number of ``--output`` paths. Returning ``None`` skips decorator write
+    (skill already wrote). Set ``output=False`` for inspect-only skills.
 
     Most skills expect rates for accumulated variables. Opening a precip total
     (amount units or ``cell_methods`` with ``sum``) raises unless
     ``allow_precip_totals=True`` (plotters / ``deaccumulate``). Use the totals
     utilities when you want amounts.
     """
-    raw_inputs = list(inputs or [])
-    raw_outputs = list(outputs or [])
-    try:
-        input_specs, variadic_input = std.normalize_io_specs(
-            raw_inputs, allow_variadic=True, for_input=True
-        )
-        output_specs, _ = std.normalize_io_specs(
-            raw_outputs, allow_variadic=False, for_input=False
-        )
-    except ValueError as exc:
-        raise ValueError(f"skill {name!r}: {exc}") from exc
 
     def decorator(fn):
         arguments = list(getattr(fn, ARGS_ATTR, []))
         for arg in arguments:
             if not isinstance(arg, Argument):
-                raise ValueError(
+                raise TypeError(
                     f"skill {name!r}: stacked arguments must be Argument instances; "
                     f"got {type(arg).__name__}"
                 )
+            flags = set(arg.option_strings)
+            if output and (flags & {"-o", "--output"} or arg.dest == "output"):
+                raise ValueError(
+                    f"skill {name!r}: do not declare -o/--output; the decorator owns it "
+                    "(pass output=False to opt out)"
+                )
 
-        declared_dests = {arg.dest for arg in arguments}
-        has_bbox = "bbox" in declared_dests
-
-        if not accepts_var_keyword(fn):
+        if not any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in inspect.signature(fn).parameters.values()
+        ):
             raise TypeError(
                 f"skill {name!r} must accept **kwargs so the decorator can pass "
                 "extra runtime information"
             )
 
+        has_bbox = any(arg.dest == "bbox" for arg in arguments)
         parser = argparse.ArgumentParser(
             description=fn.__doc__,
             epilog=f"skill version: {version}",
         )
-        if input_specs:
-            if variadic_input:
-                label = io_spec_help_label(input_specs[0])
-                help_text = f"Input path (repeat once per input; each must be {label})."
-            else:
-                n = len(input_specs)
-                help_text = f"Input path (repeat exactly {n} time{'s' if n != 1 else ''})."
+        if output:
             parser.add_argument(
-                "--input",
-                "-i",
-                dest="input",
-                action="append",
-                required=True,
-                metavar="PATH",
-                help=help_text,
-            )
-        if output_specs:
-            n = len(output_specs)
-            parser.add_argument(
-                "--output",
                 "-o",
+                "--output",
                 dest="output",
                 action="append",
                 required=True,
                 metavar="PATH",
-                help=f"Output path (repeat exactly {n} time{'s' if n != 1 else ''}).",
+                help="Output path (repeat once per returned artifact).",
             )
         for arg in arguments:
             kwargs = dict(arg.kwargs)
+            if arg.dataset_type is not None:
+                label = help_label(arg.dataset_type)
+                kwargs.setdefault("metavar", "PATH")
+                if "help" not in arg.kwargs:
+                    kwargs["help"] = f"Input Zarr ({label})."
+                elif label not in str(kwargs.get("help", "")):
+                    kwargs["help"] = f"{kwargs['help']} [{label}]"
             if arg.dest in standard_args.STANDARD_HELP:
                 kwargs = standard_args.add_standard_help(
                     kwargs, standard_args.STANDARD_HELP[arg.dest]
                 )
             parser.add_argument(*arg.option_strings, **kwargs)
+
+        strip_dests = {arg.dest for arg in arguments if arg.dataset_type is not None} | {"output"}
 
         @functools.wraps(fn)
         def wrapper(argv=None):
@@ -262,84 +241,34 @@ def weather_skill(
 
             try:
                 args = parser.parse_args(argv)
-
-                # 1. Paths
-                input_paths = [Path(p) for p in (getattr(args, "input", None) or [])]
-                output_paths = [Path(p) for p in (getattr(args, "output", None) or [])]
-                if input_specs:
-                    if variadic_input:
-                        if len(input_paths) < 1:
-                            raise UsageError("expected at least one --input path")
-                    elif len(input_paths) != len(input_specs):
-                        raise UsageError(
-                            f"expected {len(input_specs)} --input path(s), "
-                            f"got {len(input_paths)}"
-                        )
-                if output_specs and len(output_paths) != len(output_specs):
-                    raise UsageError(
-                        f"expected {len(output_specs)} --output path(s), "
-                        f"got {len(output_paths)}"
-                    )
-                for path in input_paths:
-                    if not path.exists():
-                        raise UsageError(f"input not found: {path}")
-
-                if variadic_input:
-                    path_specs = [input_specs[0]] * len(input_paths)
-                else:
-                    path_specs = list(input_specs)
-
-                # 2. Standard kwargs (bbox / region / dates)
                 params = standard_args.convert_standard_args(args, arguments)
+                params, input_paths, path_specs, upstream, first_ds = open_dataset_params(
+                    params, arguments, allow_precip_totals=allow_precip_totals
+                )
 
-                # 3. Open inputs
-                opened = []
-                upstream = []
-                for path, spec in zip(input_paths, path_specs, strict=True):
-                    if spec.kind == std.UNSTRUCTURED:
-                        opened.append(path)
-                        upstream.append([])
-                    else:
-                        ds = xr.open_zarr(path, consolidated=True)
-                        std.validate_input(ds, spec, str(path))
-                        opened.append(
-                            quantify_dataset(ds, allow_precip_totals=allow_precip_totals)
-                        )
-                        upstream.append(provenance_mod.load_history(path))
-
-                # 4. Call skill
-                extra = {}
-                if output_specs:
-                    extra["output"] = (
+                output_paths: list[Path] = []
+                if output:
+                    output_paths = [Path(p) for p in (args.output or [])]
+                    params["output"] = (
                         output_paths[0] if len(output_paths) == 1 else output_paths
                     )
-                if variadic_input:
-                    result = fn(opened, **params, **extra)
-                else:
-                    result = fn(*opened, **params, **extra)
-                if not output_specs:
+
+                result = fn(**params)
+                if not output or result is None:
                     return result
 
-                # 5. Stamp / write each output
-                results = result if isinstance(result, (list, tuple)) else [result]
-                if len(results) != len(output_specs):
+                results = list(result) if isinstance(result, (list, tuple)) else [result]
+                if len(results) != len(output_paths):
                     raise SkillError(
                         f"skill returned {len(results)} value(s), "
-                        f"expected {len(output_specs)}"
+                        f"but {len(output_paths)} --output path(s) were given"
                     )
 
                 history = build_history(
-                    name, version, args, params, input_paths, path_specs, upstream
+                    name, version, args, params, input_paths, path_specs, upstream, strip_dests
                 )
-                first_ds = next(
-                    (item for item in opened if hasattr(item, "attrs")),
-                    None,
-                )
-                for value, out_path, out_spec in zip(
-                    results, output_paths, output_specs, strict=True
-                ):
-                    write_output(value, out_path, out_spec, history, first_ds)
-
+                for value, out_path in zip(results, output_paths, strict=True):
+                    write_output(value, out_path, history, first_ds)
                 return result
             except SkillError as exc:
                 msg = str(exc)

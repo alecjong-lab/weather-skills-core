@@ -19,47 +19,40 @@ uv run plot-compare.py -i kenya.zarr -i forecast.zarr -o compare.png
 A minimal skill:
 
 ```python
-from weather_skills_core import weather_skill
+from weather_skills_core import Dataset, weather_skill
 
-@weather_skill(
-    name="clip-region",
-    version="0.1.0",
-    inputs=["spatial"],
-    outputs=["spatial"],
-)
+@weather_skill(name="clip-region", version="0.1.0")
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
 @weather_skill.argument("--bbox", required=True)
-def clip_region(ds, bbox, **kwargs):
+def clip_region(ds, output, bbox, **kwargs):
     return ds  # or a Path you already wrote
 ```
 
 A skill with standard args plus a custom flag:
 
 ```python
-@weather_skill(
-    name="my-fancy-skill",
-    version="0.1.0",
-    inputs=["any"],
-    outputs=["any"],
-)
+@weather_skill(name="my-fancy-skill", version="0.1.0")
+@weather_skill.argument("-i", "--input", type=Dataset("any"), required=True, dest="ds")
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--corr-coefficient", type=int)
-def my_fancy_skill(ds, bbox, start_time, end_time, corr_coefficient, **kwargs):
+def my_fancy_skill(ds, output, bbox, start_time, end_time, corr_coefficient, **kwargs):
     ...
     return result_ds  # or a Path to an already-written file
 ```
 
 Always take `**kwargs`. Every flag you declare with
 `@weather_skill.argument(...)` is passed into your function that way (match the
-dest as a named parameter, or read it from kwargs) — not only the shared
-“standard” ones. The decorator also injects runtime extras such as `output`.
-You get the values argparse (and the standard-arg converters) already produced,
-not raw CLI strings to re-parse.
+dest as a named parameter, or read it from kwargs). Use `type=Dataset(...)` for
+Zarr inputs (opened and dim-checked). The decorator owns `-o/--output` and
+injects `output`; returning an `xr.Dataset` writes Zarr, returning a `Path`
+stamps that file, and the number of returned values must match the number of
+`--output` paths.
 
 Stack more flags with `@weather_skill.argument(...)` (same signature as
-`argparse.add_argument`). The decorator opens inputs, runs your function, and
-writes Zarr outputs with provenance.
+`argparse.add_argument`). The decorator opens Dataset inputs, runs your function,
+and writes/stamps outputs with provenance.
 
 ## Why dimensions are standardized
 
@@ -69,28 +62,25 @@ comparison can plug together without custom glue.
 
 We follow [CF conventions](https://cfconventions.org/) for coordinates and
 metadata, and expose a small set of **standard dimensions**. Skills declare
-what they need either as those dimension names, or as a **type** — a short
-alias for a fixed set of required dimensions (for example `forecast` means
-`lat` + `lon` + `init_time` + `prediction_timedelta`). That is how the decorator
-checks inputs and outputs before and after your function runs.
+what they need on `Dataset(...)` either as those dimension names, or as a
+**type** — a short alias for a fixed set of required dimensions (for example
+`forecast` means `lat` + `lon` + `init_time` + `prediction_timedelta`). That is
+how the decorator checks inputs before your function runs.
 
 ## Inputs and outputs
 
-`inputs=` / `outputs=` tell the decorator what each `--input` / `--output` path
-must be. Each entry in those lists is one CLI path. What you put *in* an entry
-is a dimension name, a type from the tables below, or a combination:
+`type=Dataset(...)` on an argument marks a Zarr input. Forms:
 
-| Entry form | Meaning | Example entry |
+| Form | Meaning | Example |
 | --- | --- | --- |
-| String | That dim or type | `"spatial"`, `"time"`, `"forecast"` |
-| Tuple | All of these (AND) | `("lat", "lon", "member")` |
-| List | Any one of these (OR) | `["forecast", "ensemble_forecast"]` |
-| Trailing `+` on a string | One or more paths of this kind | `"any+"` (must be the only `inputs=` entry) |
+| String type/dim | That type or dim | `Dataset("spatial")` |
+| Comma string | All of these (AND) | `Dataset("lat, lon")` |
+| Tuple | All of these (AND) | `Dataset(("lat", "lon", "member"))` |
+| List | Any one of these (OR) | `Dataset(["forecast", "ensemble_forecast"])` |
 
-So `inputs=["spatial"]` means one input that needs `lat` + `lon`.
-`inputs=["spatial", "spatial"]` means two such inputs. For a single path that
-may be either of two kinds, the entry itself is an OR list:
-`inputs=[["forecast", "ensemble_forecast"]]`.
+`-o/--output` is owned by the decorator (repeatable). Multi-input uses `nargs` /
+`append` or separate Dataset flags. Opaque files use `Path`, not `Dataset`.
+The number of returned artifacts must match the number of `--output` paths.
 
 ### Dimensions
 
@@ -120,8 +110,8 @@ Types are aliases for specific required dimensions:
 | `ensemble_forecast` | forecast dims + `member` |
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
-| `figure` | PNG / JPEG / HTML (output only) |
-| `unstructured` | opaque file path |
+
+Opaque files and figures use `pathlib.Path`, not `Dataset`.
 
 Full details:
 [`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
@@ -171,9 +161,8 @@ is not after the end.
 | `end_time` | `--end-time` | Range end as `datetime.date` |
 | `variable` | `--variable` / `-v` | Variable name(s); use `action="append"` for several |
 
-`--input` / `--output` come only from `inputs=` / `outputs=` — do not redeclare
-them. When outputs are declared, your function also receives `output` in
-`**kwargs` (a `Path`, or a list for multi-output).
+Path I/O: Dataset-typed args for Zarr inputs (any flag names); the decorator
+owns `-o/--output`.
 
 ## Install
 
