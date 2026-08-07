@@ -14,7 +14,12 @@ from pathlib import Path
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
 DEFAULT_SOFTWARE = "forecasting-skills"
-OFFICIAL_MARK_TEXT = "weather-skills"
+OFFICIAL_MARK_TEXT = "weather-skills provenance verified"
+# Circular rubber-stamp arcs (drawn uppercase for an inked look).
+_MARK_ARC_TOP = "WEATHER-SKILLS"
+_MARK_ARC_BOTTOM = "PROVENANCE VERIFIED"
+# Classic crimson rubber-stamp ink (RGBA) — opaque enough to read on maps.
+_MARK_INK = (168, 24, 40, 235)
 
 _EXIF_USER_COMMENT = 0x9286  # EXIF UserComment tag
 _HTML_META_RE = re.compile(
@@ -146,14 +151,18 @@ def chain_is_intact(history) -> bool:
 
 
 def _load_mark_font(size: int):
-    """Prefer a readable TrueType font; fall back to PIL's default bitmap font."""
+    """Prefer a bold/readable TrueType font; fall back to PIL's default bitmap font."""
     from PIL import ImageFont
 
     candidates = (
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "DejaVuSans-Bold.ttf",
         "DejaVuSans.ttf",
     )
     for path in candidates:
@@ -164,41 +173,113 @@ def _load_mark_font(size: int):
     return ImageFont.load_default()
 
 
-def _draw_official_mark(img):
-    """Composite a translucent bottom-right ``weather-skills`` pill onto ``img``.
-
-    No-ops (returns a copy) when the image is too small to hold the mark.
-    """
+def _paste_rotated_char(stamp, char, font, fill, cx, cy, angle_deg):
+    """Render one character, rotate it, and paste centered at ``(cx, cy)`` on ``stamp``."""
     from PIL import Image, ImageDraw
 
+    # Oversized tile so rotated glyphs are not clipped.
+    tile = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(tile)
+    bbox = draw.textbbox((0, 0), char, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text((32 - bbox[0] - tw / 2, 32 - bbox[1] - th / 2), char, font=font, fill=fill)
+    rotated = tile.rotate(-angle_deg, resample=Image.Resampling.BICUBIC, expand=True)
+    stamp.paste(rotated, (int(cx - rotated.width / 2), int(cy - rotated.height / 2)), rotated)
+
+
+def _draw_arc_text(stamp, text, cx, cy, radius, font, fill, *, top: bool):
+    """Draw ``text`` along a circular arc (top = upright over the top; bottom = upright under)."""
+    import math
+
+    if not text:
+        return
+    # Angular span ~1.9 rad (~110°) so labels stay readable and don't collide.
+    span = min(2.0, 0.22 * len(text) + 0.7)
+    # Top arc: left→right through the top; bottom arc: left→right through the bottom.
+    if top:
+        start = -math.pi / 2 - span / 2
+        step = span / max(len(text) - 1, 1)
+    else:
+        start = math.pi / 2 + span / 2
+        step = -span / max(len(text) - 1, 1)
+
+    for i, char in enumerate(text):
+        if char == " ":
+            continue
+        angle = start + i * step
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        # Glyph upright relative to the circle (tangent-aligned).
+        tangent_deg = math.degrees(angle) + (90.0 if top else -90.0)
+        _paste_rotated_char(stamp, char, font, fill, x, y, tangent_deg)
+
+
+def _render_circular_stamp(diameter: int):
+    """Build a circular old-school rubber stamp as an RGBA image of size ``diameter``."""
+    import math
+
+    from PIL import Image, ImageDraw
+
+    size = max(diameter, 32)
+    stamp = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(stamp)
+    cx = cy = size / 2
+    ink = _MARK_INK
+
+    # Double ring — the classic rubber-stamp silhouette.
+    outer_r = size / 2 - 1
+    draw.ellipse(
+        (cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r),
+        outline=ink,
+        width=max(3, size // 22),
+    )
+    inner_r = outer_r * 0.76
+    draw.ellipse(
+        (cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r),
+        outline=ink,
+        width=max(2, size // 32),
+    )
+
+    font = _load_mark_font(max(9, int(size * 0.11)))
+    _draw_arc_text(stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.86, font, ink, top=True)
+    _draw_arc_text(stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.86, font, ink, top=False)
+
+    # Center medallion: a filled star so the stamp reads at a glance.
+    star_r = outer_r * 0.20
+    pts = []
+    for i in range(10):
+        r = star_r if i % 2 == 0 else star_r * 0.45
+        a = -math.pi / 2 + i * math.pi / 5
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    draw.polygon(pts, fill=ink)
+
+    # Slight rotation so it looks hand-inked rather than UI chrome.
+    return stamp.rotate(-14, resample=Image.Resampling.BICUBIC, expand=True)
+
+
+def _draw_official_mark(img):
+    """Composite a circular ``weather-skills provenance verified`` rubber stamp onto ``img``.
+
+    Placed bottom-right. No-ops (returns a copy) when the image is too small.
+    """
+    from PIL import Image
+
     w, h = img.size
-    if min(w, h) < 64:
+    if min(w, h) < 96:
         return img.copy()
 
-    # Work in RGBA so the pill can be translucent over any mode.
+    # Large enough to read as a rubber stamp, not a UI badge.
+    diameter = max(96, min(int(min(w, h) * 0.38), 280))
+    stamp = _render_circular_stamp(diameter)
+    margin = max(8, int(min(w, h) * 0.025))
+    if stamp.width + 2 * margin > w or stamp.height + 2 * margin > h:
+        return img.copy()
+
     base = img.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-
-    margin = max(4, int(min(w, h) * 0.02))
-    font_size = max(10, min(18, int(w * 0.022)))
-    font = _load_mark_font(font_size)
-    pad_x, pad_y = max(4, font_size // 2), max(2, font_size // 3)
-
-    text = OFFICIAL_MARK_TEXT
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    box_w, box_h = tw + 2 * pad_x, th + 2 * pad_y
-    if box_w + 2 * margin > w or box_h + 2 * margin > h:
-        return img.copy()
-
-    x1 = w - margin
-    y1 = h - margin
-    x0, y0 = x1 - box_w, y1 - box_h
-    radius = max(2, box_h // 2)
-    # Dark translucent pill (~75% opaque) with white label.
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(20, 24, 28, 192))
-    draw.text((x0 + pad_x, y0 + pad_y - bbox[1]), text, fill=(255, 255, 255, 255), font=font)
+    x = w - margin - stamp.width
+    y = h - margin - stamp.height
+    overlay.paste(stamp, (x, y), stamp)
 
     marked = Image.alpha_composite(base, overlay)
     if img.mode == "RGBA":
@@ -273,9 +354,9 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
 def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
     """Embed ``weather_skills_history`` into a PNG, JPEG, or HTML file.
 
-    When the chain is intact (non-empty and schema-valid), also draw a small
-    official ``weather-skills`` corner mark on PNG/JPEG pixels. HTML gets
-    metadata only.
+    When the chain is intact (non-empty and schema-valid), also draw a circular
+    old-school ``weather-skills provenance verified`` rubber stamp on PNG/JPEG
+    pixels (bottom-right). HTML gets metadata only.
     """
     from weather_skills_core.errors import SkillError
 
