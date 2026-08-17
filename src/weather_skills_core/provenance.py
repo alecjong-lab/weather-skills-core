@@ -173,24 +173,58 @@ def _load_mark_font(size: int):
     return ImageFont.load_default()
 
 
-def _centered_text(draw, text, cx, y, font, fill, *, stroke_fill=(255, 255, 255, 230)):
-    """Draw a single centered line; returns the text height used."""
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+def _paste_rotated_char(stamp, char, font, fill, cx, cy, angle_deg, *, scale: int):
+    """Render one character, rotate it, and paste centered at ``(cx, cy)`` on ``stamp``."""
+    from PIL import Image, ImageDraw
+
+    # Oversized tile so rotated glyphs are not clipped.
+    tile_size = 48 * scale
+    tile = Image.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(tile)
     stroke = max(1, getattr(font, "size", 12) // 16)
+    bbox = draw.textbbox((0, 0), char, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text(
-        (cx - bbox[0] - tw / 2, y - bbox[1]),
-        text,
+        (tile_size / 2 - bbox[0] - tw / 2, tile_size / 2 - bbox[1] - th / 2),
+        char,
         font=font,
         fill=fill,
         stroke_width=stroke,
-        stroke_fill=stroke_fill,
+        stroke_fill=(255, 255, 255, 230),
     )
-    return th
+    rotated = tile.rotate(-angle_deg, resample=Image.Resampling.BICUBIC, expand=True)
+    stamp.paste(rotated, (int(cx - rotated.width / 2), int(cy - rotated.height / 2)), rotated)
+
+
+def _draw_arc_text(stamp, text, cx, cy, radius, font, fill, *, top: bool, scale: int):
+    """Draw ``text`` along a circular arc (top over the top; bottom under)."""
+    import math
+
+    if not text:
+        return
+    # Angular span ~110° so labels stay readable and don't collide.
+    span = min(2.0, 0.22 * len(text) + 0.7)
+    if top:
+        start = -math.pi / 2 - span / 2
+        step = span / max(len(text) - 1, 1)
+    else:
+        start = math.pi / 2 + span / 2
+        step = -span / max(len(text) - 1, 1)
+
+    for i, char in enumerate(text):
+        if char == " ":
+            continue
+        angle = start + i * step
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        tangent_deg = math.degrees(angle) + (90.0 if top else -90.0)
+        _paste_rotated_char(stamp, char, font, fill, x, y, tangent_deg, scale=scale)
 
 
 def _render_circular_stamp(diameter: int):
     """Build a circular old-school rubber stamp as an RGBA image of size ``diameter``."""
+    import math
+
     from PIL import Image, ImageDraw
 
     # Draw at 3× then downscale so type stays sharp at the smaller display size.
@@ -208,51 +242,29 @@ def _render_circular_stamp(diameter: int):
         outline=ink,
         width=max(2 * scale, size // 16),
     )
-    inner_r = outer_r * 0.90
+    inner_r = outer_r * 0.76
     draw.ellipse(
         (cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r),
         outline=ink,
         width=max(scale, size // 28),
     )
 
-    # Straight stacked type inside the seal — clearer than curved letters at
-    # the smaller on-map size. Shrink fonts until the widest line fits.
-    title_size = max(10 * scale, int(size * 0.13))
-    body_size = max(9 * scale, int(size * 0.11))
-    max_text_w = inner_r * 1.55
-    while title_size > 8 * scale:
-        title_font = _load_mark_font(title_size)
-        body_font = _load_mark_font(body_size)
-        def _tw(t, f):
-            b = draw.textbbox((0, 0), t, font=f)
-            return b[2] - b[0]
-
-        widest = max(
-            _tw(_MARK_ARC_TOP, title_font),
-            _tw("PROVENANCE", body_font),
-            _tw("VERIFIED", body_font),
-        )
-        if widest <= max_text_w:
-            break
-        title_size -= scale
-        body_size = max(8 * scale, body_size - scale)
-    title_font = _load_mark_font(title_size)
-    body_font = _load_mark_font(body_size)
-    lines = (
-        (_MARK_ARC_TOP, title_font),
-        ("PROVENANCE", body_font),
-        ("VERIFIED", body_font),
+    font = _load_mark_font(max(9 * scale, int(size * 0.11)))
+    _draw_arc_text(
+        stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.86, font, ink, top=True, scale=scale
     )
-    heights = []
-    for text, font in lines:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        heights.append(bbox[3] - bbox[1])
-    gap = max(2 * scale, int(size * 0.025))
-    block_h = sum(heights) + gap * (len(lines) - 1)
-    y = cy - block_h / 2
-    for (text, font), th in zip(lines, heights, strict=True):
-        _centered_text(draw, text, cx, y, font, ink)
-        y += th + gap
+    _draw_arc_text(
+        stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.86, font, ink, top=False, scale=scale
+    )
+
+    # Center medallion: a filled star so the stamp reads at a glance.
+    star_r = outer_r * 0.20
+    pts = []
+    for i in range(10):
+        r = star_r if i % 2 == 0 else star_r * 0.45
+        a = -math.pi / 2 + i * math.pi / 5
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    draw.polygon(pts, fill=ink)
 
     # Slight rotation so it looks hand-inked rather than UI chrome.
     stamp = stamp.rotate(-12, resample=Image.Resampling.BICUBIC, expand=True)
