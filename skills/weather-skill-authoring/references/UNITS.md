@@ -77,10 +77,11 @@ CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
 `weekly` → `7 day`, `dekadal` → `1 dekad`, `monthly` → `1 month`).
 
 **`convert-to-totals`** multiplies rates by `aggregation_period` → amounts
-(`mm`). It requires sample spacing ≥ `aggregation_period` (so overlapping
-rolling windows are not silently turned into period totals). Use that when you
-want amounts for plotting or reporting; keep rates in the middle of the
-pipeline.
+(`mm`). When the time/step axis has ≥ 2 points, it requires sample spacing ≥
+`aggregation_period` (so overlapping rolling windows are not silently turned
+into period totals). A singleton axis (one aggregated bin) skips that check.
+Use that when you want amounts for plotting or reporting; keep rates in the
+middle of the pipeline.
 
 ## Helpers skills use
 

@@ -202,6 +202,30 @@ def test_timestep_gate_and_rate_to_total():
         assert_timestep_ge_aggregation_period(daily, "time", "7 day")
 
 
+def test_timestep_gate_allows_singleton():
+    """One aggregated bin has no adjacent labels; conversion is still well-defined."""
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time",),
+                [1.0],
+                {AGGREGATION_PERIOD_ATTR: "7 day", "units": "mm day-1"},
+            )
+        },
+        coords={"time": np.array(["2026-01-07"], dtype="datetime64[D]")},
+    )
+    assert_timestep_ge_aggregation_period(ds, "time", "7 day")
+    q = quantify_dataset(ds)
+    total = rate_to_total(q["precip"], "7 day")
+    np.testing.assert_allclose(total.pint.dequantify().values, [7.0])
+
+    step_ds = xr.Dataset(
+        {"precip": (("step",), [2.0], {"units": "mm day-1"})},
+        coords={"step": np.array([np.timedelta64(7, "D")])},
+    )
+    assert_timestep_ge_aggregation_period(step_ds, "step", "7 day")
+
+
 def test_infer_timestep_timedelta64_us_weekly():
     """dynamical-fetch writes step as timedelta64[us]; must not read 7 day as 0.007 d."""
     steps = (np.arange(1, 5) * np.timedelta64(7, "D")).astype("timedelta64[us]")

@@ -271,7 +271,16 @@ def infer_timestep(ds, dim: str):
 
 
 def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
-    """Refuse convert-to-totals when sample spacing is finer than aggregation_period."""
+    """Refuse convert-to-totals when sample spacing is finer than aggregation_period.
+
+    A singleton axis is allowed: spacing cannot be inferred, and one sample
+    cannot be an overlapping series. Typical after aggregating a short fetch
+    to a single weekly/dekadal/monthly bin.
+    """
+    if dim not in ds.dims and dim not in ds.coords:
+        raise UsageError(f"dimension/coord {dim!r} not in dataset")
+    if ds.sizes.get(dim, 0) < 2:
+        return
     dt = infer_timestep(ds, dim)
     base = parse_aggregation_period(period)
     if dt < base:
