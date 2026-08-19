@@ -3,9 +3,10 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_data
+from conftest import make_data, make_forecast
 from PIL import Image
 
 from weather_skills_core import Dataset
@@ -406,6 +407,45 @@ class TestRunLoop:
         written = xr.open_zarr(out, consolidated=True)
         assert written.attrs.get("weather_skills_source") == "test-src"
         assert HISTORY_ATTR in written.attrs
+
+    def test_write_normalizes_step_and_fills_stripped_units(self, tmp_path):
+        src = tmp_path / "in.zarr"
+        out = tmp_path / "out.zarr"
+        ds = make_forecast(n_number=0, n_step=3)
+        ds = ds.assign_coords(step=ds["step"].values.astype("timedelta64[us]"))
+        ds.to_zarr(src, mode="w", consolidated=True)
+
+        @weather_skill(name="strip", version="0.1.0", allow_precip_totals=True)
+        @weather_skill.argument("-i", "--input", type=Dataset("forecast"), required=True)
+        def strip(input, output, **kwargs):
+            out_ds = input.copy(deep=True)
+            for name in out_ds.data_vars:
+                out_ds[name].attrs.pop("units", None)
+            return out_ds
+
+        strip(["-i", str(src), "-o", str(out)])
+        written = xr.open_zarr(out, consolidated=True)
+        assert written["step"].dtype == np.dtype("timedelta64[ns]")
+        assert "units" in written["tp"].attrs
+        assert written["tp"].attrs["units"] in ("mm day-1", "millimeter / day")
+
+    def test_write_stamps_amount_standard_name(self, tmp_path):
+        src = tmp_path / "in.zarr"
+        out = tmp_path / "out.zarr"
+        ds = make_data(name="tp", units="kg m-2")
+        ds["tp"].attrs["standard_name"] = "lwe_precipitation_rate"
+        ds.to_zarr(src, mode="w", consolidated=True)
+
+        @weather_skill(name="copy", version="0.1.0", allow_precip_totals=True)
+        @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
+        def copy(input, output, **kwargs):
+            return input
+
+        copy(["-i", str(src), "-o", str(out)])
+        written = xr.open_zarr(out, consolidated=True)
+        assert written["tp"].attrs["standard_name"] == (
+            "lwe_thickness_of_precipitation_amount"
+        )
 
     def test_none_return_skips_write(self, tmp_path):
         out = tmp_path / "out.eml"

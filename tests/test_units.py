@@ -14,6 +14,7 @@ from weather_skills_core.units import (
     convert_values,
     dequantify_dataset,
     format_cell_methods,
+    infer_timestep,
     parse_aggregation_period,
     quantify_dataset,
     rate_to_total,
@@ -58,12 +59,21 @@ def test_classify_variable():
     )
     assert classify_variable("precip", units="mm/day") == "precip"
     assert classify_variable("tp", units="kg m-2 s-1") == "precip"  # named hint
+    assert classify_variable("tp", units="kg m-2") == "precip_amount"  # amount units win
     assert classify_variable("flux", units="kg m-2 s-1") is None  # units alone are not enough
     assert classify_variable("humidity", units="1") is None
     # Not air / 2 m temperature
     assert classify_variable("sst", units="K", standard_name="sea_surface_temperature") is None
     assert classify_variable("d2m", units="K", standard_name="dew_point_temperature") is None
     assert classify_variable("skt", units="K", standard_name="surface_temperature") is None
+
+
+def test_to_standard_units_converts_amount_named_tp_to_mm():
+    ds = make_gridded(name="tp", fill=2.0, units="kg m-2")
+    out = to_standard_units(ds)
+    assert out["tp"].attrs["units"] == STANDARD["precip_amount"]["units"]
+    assert out["tp"].attrs["standard_name"] == STANDARD["precip_amount"]["standard_name"]
+    np.testing.assert_allclose(out["tp"].values, 2.0, atol=1e-6)
 
 
 def test_to_standard_units_name_hint_sets_standard_name_keeps_name():
@@ -75,12 +85,12 @@ def test_to_standard_units_name_hint_sets_standard_name_keeps_name():
     assert out["tp"].attrs["standard_name"] == "lwe_precipitation_rate"
 
 
-def test_to_standard_units_skips_amount_normalizes_rate_and_temp():
-    # Amounts are not normalized on the rate path.
+def test_to_standard_units_normalizes_amount_and_temp():
     ds = make_gridded(name="tp", fill=2.0, units=None)
     ds["tp"].attrs.update(units="kg m-2", standard_name="precipitation_amount")
     out = to_standard_units(ds)
-    assert out["tp"].attrs["units"] == "kg m-2"
+    assert out["tp"].attrs["units"] == STANDARD["precip_amount"]["units"]
+    assert out["tp"].attrs["standard_name"] == STANDARD["precip_amount"]["standard_name"]
 
     tds = make_gridded(name="t2m", fill=300.0, units="K")
     tds["t2m"].attrs["standard_name"] = "air_temperature"
@@ -190,3 +200,15 @@ def test_timestep_gate_and_rate_to_total():
     )
     with pytest.raises(UsageError, match="smaller than aggregation_period"):
         assert_timestep_ge_aggregation_period(daily, "time", "7 day")
+
+
+def test_infer_timestep_timedelta64_us_weekly():
+    """dynamical-fetch writes step as timedelta64[us]; must not read 7 day as 0.007 d."""
+    steps = (np.arange(1, 5) * np.timedelta64(7, "D")).astype("timedelta64[us]")
+    ds = xr.Dataset(
+        {"precip": (("step",), np.ones(4), {"units": "mm day-1"})},
+        coords={"step": steps},
+    )
+    dt = infer_timestep(ds, "step")
+    assert abs(float(dt.to("day").magnitude) - 7.0) < 1e-9
+    assert_timestep_ge_aggregation_period(ds, "step", "7 day")

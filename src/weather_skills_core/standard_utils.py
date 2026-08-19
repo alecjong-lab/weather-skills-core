@@ -39,6 +39,65 @@ def is_transient(exc: Exception) -> bool:
     return any(marker in text for marker in _CONNECTION_MARKERS)
 
 
+def normalize_step_coord(ds, dim: str = "step"):
+    """Cast forecast ``step`` to ``timedelta64[ns]`` when it is a timedelta axis.
+
+    Mixed microsecond/day encodings (common from remote Zarr) break
+    ``infer_timestep`` when values are misread through a fixed cast.
+    """
+    import numpy as np
+
+    if dim not in ds.dims and dim not in ds.coords:
+        return ds
+    values = np.asarray(ds[dim].values)
+    if not np.issubdtype(values.dtype, np.timedelta64):
+        return ds
+    if values.dtype == np.dtype("timedelta64[ns]"):
+        return ds
+    return ds.assign_coords({dim: values.astype("timedelta64[ns]")})
+
+
+def restore_data_var_attrs(src, dst):
+    """Copy data-variable attrs from ``src`` onto matching vars in ``dst``.
+
+    Used after operations (e.g. ``xarray-regrid``) that drop ``units`` and other
+    CF attrs from data variables.
+    """
+    out = dst
+    dirty = False
+    for name in src.data_vars:
+        if name not in dst.data_vars:
+            continue
+        attrs = dict(src[name].attrs)
+        if dict(dst[name].attrs) == attrs:
+            continue
+        if not dirty:
+            out = dst.copy()
+            dirty = True
+        out[name].attrs = attrs
+    return out
+
+
+def fill_missing_data_var_attrs(src, dst):
+    """Fill attrs present on ``src`` but missing on matching ``dst`` data vars.
+
+    Heals stripped metadata (regrid, etc.) without overwriting attrs a skill set.
+    """
+    out = dst
+    dirty = False
+    for name in dst.data_vars:
+        if name not in src.data_vars:
+            continue
+        for key, value in src[name].attrs.items():
+            if key in dst[name].attrs:
+                continue
+            if not dirty:
+                out = dst.copy()
+                dirty = True
+            out[name].attrs[key] = value
+    return out
+
+
 def require_env(*names: str, message: str | None = None) -> tuple:
     """Return the values of the named environment variables, in order.
 

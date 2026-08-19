@@ -452,6 +452,33 @@ class TestVerifyCfDecode:
             utils.verify_cf_decode(make_gridded())
 
 
+class TestNormalizeStepCoord:
+    def test_casts_timedelta_us_to_ns(self):
+        import numpy as np
+        import xarray as xr
+
+        steps = (np.arange(1, 4) * np.timedelta64(7, "D")).astype("timedelta64[us]")
+        ds = xr.Dataset(
+            {"tp": (("step",), np.ones(3), {"units": "mm"})},
+            coords={"step": steps},
+        )
+        out = utils.normalize_step_coord(ds)
+        assert out["step"].dtype == np.dtype("timedelta64[ns]")
+        assert out["step"].values[0] == np.timedelta64(7, "D")
+
+    def test_noop_when_already_ns(self):
+        import numpy as np
+        import xarray as xr
+
+        steps = np.arange(1, 4) * np.timedelta64(1, "D")
+        ds = xr.Dataset(
+            {"tp": (("step",), np.ones(3))},
+            coords={"step": steps.astype("timedelta64[ns]")},
+        )
+        out = utils.normalize_step_coord(ds)
+        assert out["step"].dtype == np.dtype("timedelta64[ns]")
+
+
 class TestClipByGeometry:
     def test_grid_drop(self):
         from shapely.geometry import box

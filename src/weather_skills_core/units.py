@@ -168,13 +168,12 @@ def variable_units(da) -> str | None:
 def classify_variable(name: str, *, units=None, standard_name=None) -> str | None:
     """Return the ``STANDARD`` kind for a variable, or None.
 
-    Precedence: CF ``standard_name``, then named variable hints. Units are not
-    used to classify (too flexible — e.g. any ``kg m-2 s-1`` is not precip).
-    Name hints never resolve to ``precip_amount`` — rate vs amount is decided by
-    ``standard_name`` only. ``units`` is accepted for call-site compatibility
-    and ignored.
+    Precedence: CF ``standard_name``, then named variable hints. Units alone do
+    not classify a variable (e.g. bare ``kg m-2 s-1`` is not precip). When a
+    name hint matches ``precip``, amount vs rate is taken from ``units`` when
+    that fingerprint is unambiguous (``kg m-2`` / ``mm`` → ``precip_amount``,
+    ``kg m-2 s-1`` / ``mm day-1`` → ``precip``).
     """
-    del units  # classification is name / CF standard_name only
     sn = standard_name.strip().lower() if isinstance(standard_name, str) else ""
     for kind, spec in STANDARD.items():
         if (
@@ -187,6 +186,10 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
     key = name.lower()
     for kind, spec in STANDARD.items():
         if any(h == key or key.startswith(h) or key.endswith(h) for h in spec["name_hints"]):
+            if kind == "precip" and isinstance(units, str) and units.strip():
+                from_units = kind_from_units(units)
+                if from_units in ("precip", "precip_amount"):
+                    return from_units
             return kind
     return None
 
@@ -240,18 +243,30 @@ def infer_timestep(ds, dim: str):
     values = np.asarray(ds[dim].values)
     if values.size < 2:
         raise UsageError(f"need at least 2 points on {dim!r} to infer timestep")
+
+    def _from_int_diffs(diffs, unit: str):
+        positive = diffs[diffs > 0]
+        if positive.size == 0:
+            raise UsageError(f"no positive spacings on {dim!r}")
+        return ureg.Quantity(float(np.median(positive)), unit).to("day")
+
+    # Use the array's native datetime/timedelta unit. Casting timedelta64[us] to
+    # datetime64[ns] "succeeds" but treats µs counts as ns (7 day → 0.007 day).
+    if np.issubdtype(values.dtype, np.timedelta64) or np.issubdtype(
+        values.dtype, np.datetime64
+    ):
+        unit, _ = np.datetime_data(values.dtype)
+        diffs = np.diff(values.astype(values.dtype).astype(np.int64))
+        return _from_int_diffs(diffs, unit)
+
     failure = None
-    # Dates, then a timedelta64 step axis.
     for dtype in ("datetime64[ns]", "timedelta64[ns]"):
         try:
             diffs = np.diff(values.astype(dtype).astype(np.int64))
         except (TypeError, ValueError) as exc:
             failure = exc
             continue
-        positive = diffs[diffs > 0]
-        if positive.size == 0:
-            raise UsageError(f"no positive spacings on {dim!r}")
-        return ureg.Quantity(float(np.median(positive)), "nanosecond").to("day")
+        return _from_int_diffs(diffs, "nanosecond")
     raise UsageError(f"could not infer timestep on {dim!r}: {failure}")
 
 
@@ -405,12 +420,12 @@ def convert_dataarray(da, dst_units: str):
 def to_standard_units(ds, variables=None):
     """Convert recognized temp/precip data vars to standard display units.
 
-    Classification is by CF ``standard_name`` or named variable hints only.
-    On a match, stamps the kind's CF ``standard_name`` (when set) and converts
-    units; the variable **name** is left untouched. Rate-path only:
-    ``precip_amount`` is left unchanged (use convert-to-totals). Unrecognized or
-    unitless variables are left unchanged. Raises ``UsageError`` if a classified
-    rate/temp variable cannot be converted.
+    Classification is by CF ``standard_name`` or named variable hints (with
+    precip amount-vs-rate from units when needed). On a match, stamps the
+    kind's CF ``standard_name`` (when set) and converts units; the variable
+    **name** is left untouched. Unrecognized or unitless variables are left
+    unchanged. Raises ``UsageError`` if a classified variable cannot be
+    converted.
     """
     names = list(variables) if variables is not None else list(ds.data_vars)
     out = ds
@@ -421,7 +436,7 @@ def to_standard_units(ds, variables=None):
         da = ds[name]
         units = variable_units(da)
         kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
-        if units is None or kind == "precip_amount" or kind not in STANDARD:
+        if units is None or kind not in STANDARD:
             continue
         dst_units = STANDARD[kind]["units"]
         dst_standard_name = STANDARD[kind]["standard_name"]
@@ -439,3 +454,29 @@ def to_standard_units(ds, variables=None):
         out[name] = converted  # keep the original variable name
         out[name].attrs = attrs
     return out
+
+
+def normalize_unit_strings(ds):
+    """Rewrite GRIB-style ``kg m**-2`` unit strings to pint/CF form (in place).
+
+    Only touches compact ``token**-N`` spellings; leaves pint pretty-print forms
+    like ``kilogram / meter ** 2`` alone.
+    """
+    for name in list(ds.data_vars) + list(ds.coords):
+        units = ds[name].attrs.get("units")
+        if isinstance(units, str) and "**" in units and " ** " not in units:
+            ds[name].attrs["units"] = units.replace("**", "")
+    return ds
+
+
+def stamp_precip_amounts(ds):
+    """Stamp amount CF metadata when units are precip depth/mass (overwrite rate names)."""
+    amount_sn = STANDARD["precip_amount"]["standard_name"]
+    for name in ds.data_vars:
+        units = ds[name].attrs.get("units")
+        if not isinstance(units, str):
+            continue
+        if kind_from_units(units) == "precip_amount":
+            ds[name].attrs["standard_name"] = amount_sn
+            ds[name].attrs.setdefault("long_name", "Total precipitation")
+    return ds

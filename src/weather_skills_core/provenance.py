@@ -235,33 +235,34 @@ def _render_circular_stamp(diameter: int):
     cx = cy = size / 2
     ink = _MARK_INK
 
-    # Double ring — the classic rubber-stamp silhouette.
+    # Double ring — classic rubber-stamp silhouette (thin relative to diameter).
     outer_r = size / 2 - scale
     draw.ellipse(
         (cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r),
         outline=ink,
-        width=max(2 * scale, size // 16),
+        width=max(2 * scale, size // 22),
     )
-    inner_r = outer_r * 0.76
+    inner_r = outer_r * 0.78
     draw.ellipse(
         (cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r),
         outline=ink,
-        width=max(scale, size // 28),
+        width=max(scale, size // 36),
     )
 
-    font = _load_mark_font(max(9 * scale, int(size * 0.11)))
+    # Slightly larger type relative to diameter so arc text stays legible when small.
+    font = _load_mark_font(max(8 * scale, int(size * 0.125)))
     _draw_arc_text(
-        stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.86, font, ink, top=True, scale=scale
+        stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.87, font, ink, top=True, scale=scale
     )
     _draw_arc_text(
-        stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.86, font, ink, top=False, scale=scale
+        stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.87, font, ink, top=False, scale=scale
     )
 
     # Center medallion: a filled star so the stamp reads at a glance.
-    star_r = outer_r * 0.20
+    star_r = outer_r * 0.22
     pts = []
     for i in range(10):
-        r = star_r if i % 2 == 0 else star_r * 0.45
+        r = star_r if i % 2 == 0 else star_r * 0.42
         a = -math.pi / 2 + i * math.pi / 5
         pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     draw.polygon(pts, fill=ink)
@@ -284,10 +285,10 @@ def _draw_official_mark(img):
     if min(w, h) < 96:
         return img.copy()
 
-    # About half the previous footprint; text is supersampled for clarity.
-    diameter = max(48, min(int(min(w, h) * 0.19), 140))
+    # Small corner mark (~10% of the short side) so it reads as ink, not chrome.
+    diameter = max(36, min(int(min(w, h) * 0.10), 72))
     stamp = _render_circular_stamp(diameter)
-    margin = max(6, int(min(w, h) * 0.02))
+    margin = max(4, int(min(w, h) * 0.015))
     if stamp.width + 2 * margin > w or stamp.height + 2 * margin > h:
         return img.copy()
 

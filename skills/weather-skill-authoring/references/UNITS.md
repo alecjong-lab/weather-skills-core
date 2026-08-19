@@ -39,20 +39,25 @@ rate-oriented skills.
    or `cell_methods` with `sum`) raises unless the skill opts in with
    `allow_precip_totals=True` (e.g. plotters / `deaccumulate`).
 4. Before writing Zarr, **`dequantify_dataset`** strips pint so stored attrs
-   stay plain unit strings.
+   stay plain unit strings. The write path also normalizes GRIB unit strings,
+   stamps precip-amount CF names when units are amounts, casts `step` to
+   `timedelta64[ns]`, and fills data-var attrs stripped by the skill from the
+   first input (same variable names). Value conversion (`to_standard_units`)
+   stays skill-owned.
 
 ## Classification and `--to-standard`
 
 `classify_variable` picks a kind in this order:
 
 1. CF `standard_name`
-2. Named variable hints (`t2m`, `tp`, `precip`, …)
+2. Named variable hints (`t2m`, `tp`, `precip`, …); for precip hints, amount
+   vs rate is taken from `units` when that fingerprint is clear
+   (`kg m-2` / `mm` → amount, `kg m-2 s-1` / `mm day-1` → rate)
 
 Units alone do **not** classify a variable (a bare `kg m-2 s-1` field is not
 treated as precip). `to_standard_units` converts recognized temp / precip vars
-to the table above, stamps the kind's CF `standard_name` when set, and leaves
-the variable **name** unchanged. Amount display is a separate step via the
-totals utilities.
+to the table above (rates → `mm day-1`, amounts → `mm`), stamps the kind's CF
+`standard_name` when set, and leaves the variable **name** unchanged.
 
 ## Aggregation and totals
 

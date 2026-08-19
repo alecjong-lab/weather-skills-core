@@ -15,7 +15,16 @@ from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
 from weather_skills_core.dataset_type import Dataset, help_label
 from weather_skills_core.errors import SkillError, UsageError
-from weather_skills_core.units import dequantify_dataset, quantify_dataset
+from weather_skills_core.standard_utils import (
+    fill_missing_data_var_attrs,
+    normalize_step_coord,
+)
+from weather_skills_core.units import (
+    dequantify_dataset,
+    normalize_unit_strings,
+    quantify_dataset,
+    stamp_precip_amounts,
+)
 
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
@@ -72,6 +81,24 @@ def build_history(name, version, args, params, input_paths, path_specs, upstream
     return base_history + [provenance_mod.build_entry(name, version, entry_args, input_field)]
 
 
+def prepare_dataset_output(ds, *, first_ds=None):
+    """Normalize coords/units metadata every skill writes.
+
+    - GRIB-style ``kg m**-2`` → pint/CF strings
+    - precip amount units → amount CF ``standard_name``
+    - ``step`` timedelta → ``timedelta64[ns]``
+    - fill attrs stripped by geometry ops from the first input (same var names)
+    """
+    if first_ds is not None:
+        ref = first_ds
+        if any(getattr(first_ds[v].pint, "units", None) is not None for v in first_ds.data_vars):
+            ref = dequantify_dataset(first_ds)
+        ds = fill_missing_data_var_attrs(ref, ds)
+    ds = normalize_unit_strings(ds)
+    ds = stamp_precip_amounts(ds)
+    return normalize_step_coord(ds)
+
+
 def write_output(value, out_path, history, first_ds):
     """Write one skill result: stamp a returned Path, or ``to_zarr`` a Dataset."""
     if isinstance(value, (str, Path)):
@@ -90,6 +117,7 @@ def write_output(value, out_path, history, first_ds):
 
     if hasattr(value, "pint"):
         value = dequantify_dataset(value)
+    value = prepare_dataset_output(value, first_ds=first_ds)
     if first_ds is not None:
         value.attrs = {**first_ds.attrs, **value.attrs}
     provenance_mod.stamp_zarr(value, history)
@@ -126,6 +154,8 @@ def open_dataset_params(params, arguments, *, allow_precip_totals: bool):
                 raise UsageError(f"input not found: {path}")
             ds = xr.open_zarr(path, consolidated=True)
             std.validate_input(ds, arg.dataset_type.io_spec, str(path))
+            ds = normalize_unit_strings(ds)
+            ds = normalize_step_coord(ds)
             ds = quantify_dataset(ds, allow_precip_totals=allow_precip_totals)
             opened.append(ds)
             input_paths.append(path)
@@ -175,6 +205,12 @@ def weather_skill(
     (amount units or ``cell_methods`` with ``sum``) raises unless
     ``allow_precip_totals=True`` (plotters / ``deaccumulate``). Use the totals
     utilities when you want amounts.
+
+    On every Dataset write the decorator also normalizes GRIB unit strings,
+    stamps precip-amount CF names when units are amounts, casts ``step`` to
+    ``timedelta64[ns]``, and fills data-var attrs stripped by the skill from
+    the first input (same variable names). Value conversion
+    (``to_standard_units``) stays skill-owned.
     """
 
     def decorator(fn):
