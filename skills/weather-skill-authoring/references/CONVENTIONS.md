@@ -65,6 +65,8 @@ metadata:
     variants:             # optional; flatten to name:variant in the catalog
       final:
         lag_days: 110
+  variables:              # exact --variable / -v names (not ARCO names on dynamical, etc.)
+    - precip
 ```
 
 `shape` is the fetcher's time flag (`date` → `--date`, `range` →
@@ -75,11 +77,18 @@ and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
 `catalog-group: fetchers` skill must declare this block. resolve-time consumes
 a generated snapshot of it (`--list-products`).
 
+`variables` is a non-empty list of exact `--variable` / `-v` tokens for that
+fetcher. Names are catalog-specific (`precipitation_surface` on dynamical,
+`total_precipitation` on ARCO, `tp` on ECMWF S2S). Open catalogs (ARCO, CMIP6,
+dynamical) list the usual first choices, not every field the source can serve.
+The conformance check (`tools/build_availability.py --check`) requires this
+list on every fetcher.
+
 ### Variable
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Variable | `--variable` / `-v` | Declare with `@weather_skill.argument("--variable", "-v", ...)` (`action="append"` when multi). |
+| Variable | `--variable` / `-v` | Declare with `@weather_skill.argument("--variable", "-v", ...)` (`action="append"` when multi). Fetcher `-v` names live on SKILL.md `metadata.variables`. |
 
 ### Common extras
 
