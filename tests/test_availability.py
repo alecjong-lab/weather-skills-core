@@ -9,6 +9,7 @@ from weather_skills_core.availability import (
     available_through,
     ecmwf_s2s_available_through,
     ecmwf_s2s_valid_init,
+    load_products,
     pentad_available_through,
 )
 from weather_skills_core.errors import UsageError
@@ -135,3 +136,89 @@ def test_from_dict_requires_lag_or_schedule_when_capped():
 def test_from_dict_rejects_bad_shape():
     with pytest.raises(UsageError, match="shape"):
         Availability.from_dict({"shape": "grid", "policy": "lag", "lag_days": 1})
+
+
+def _write_skill(skills_dir, name, body):
+    folder = skills_dir / name
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(body)
+
+
+def test_load_products_keeps_bare_name_when_variant_shapes_match(tmp_path):
+    _write_skill(
+        tmp_path,
+        "imerg-fetch",
+        """---
+name: imerg-fetch
+description: test
+metadata:
+  catalog-group: fetchers
+  availability:
+    shape: range
+    policy: lag
+    lag_days: 4
+    note: late
+    variants:
+      final:
+        lag_days: 110
+        note: final
+  variables:
+    - precip
+---
+""",
+    )
+    products = load_products(tmp_path)
+    assert set(products) == {"imerg-fetch", "imerg-fetch:final"}
+    assert products["imerg-fetch"].lag_days == 4
+    assert products["imerg-fetch:final"].lag_days == 110
+
+
+def test_load_products_omits_bare_name_when_variant_shapes_differ(tmp_path):
+    _write_skill(
+        tmp_path,
+        "dynamical-fetch",
+        """---
+name: dynamical-fetch
+description: test
+metadata:
+  catalog-group: fetchers
+  availability:
+    shape: date
+    policy: lag
+    lag_days: 1
+    note: forecast
+    variants:
+      noaa-gfs-forecast: {}
+      noaa-gfs-analysis:
+        shape: range
+        note: analysis
+  variables:
+    - precipitation_surface
+---
+""",
+    )
+    products = load_products(tmp_path)
+    assert "dynamical-fetch" not in products
+    assert products["dynamical-fetch:noaa-gfs-forecast"].shape == "date"
+    assert products["dynamical-fetch:noaa-gfs-analysis"].shape == "range"
+
+
+def test_load_products_requires_fetcher_variables(tmp_path):
+    _write_skill(
+        tmp_path,
+        "chirps-fetch",
+        """---
+name: chirps-fetch
+description: test
+metadata:
+  catalog-group: fetchers
+  availability:
+    shape: range
+    policy: lag
+    lag_days: 1
+    note: test
+---
+""",
+    )
+    with pytest.raises(UsageError, match="metadata.variables"):
+        load_products(tmp_path)

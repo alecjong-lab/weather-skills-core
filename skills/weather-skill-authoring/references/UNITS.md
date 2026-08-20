@@ -97,8 +97,10 @@ durations (`21 day`) are also valid `--period` values.
 `GRIB_name` containing `rate` or `flux`) to `Total precipitation`. It requires:
 
 - a stamped `aggregation_period` (run `aggregate-temporal` first)
-- coverage at or above `--min-coverage` (default 1.0; incomplete bins fail
-  unless you pass a lower threshold)
+- coverage at or above `--min-coverage` (default 1.0). `aggregate-temporal`
+  keeps every bin that has samples and stamps `aggregation_coverage`; this
+  flag is what drops incomplete intervals. Pass a lower threshold to keep
+  them.
 - non-overlapping intervals (sample spacing ≥ `aggregation_period`)
 - rate inputs — precip totals (amount units or `cell_methods` with `sum`)
   are refused, because multiplying an amount by the period would double-count

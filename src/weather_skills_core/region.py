@@ -5,8 +5,11 @@ lookups (admin-1 states/provinces/counties, admin-2 counties/districts) use
 geoBoundaries ``gbOpen`` (https://www.geoboundaries.org): the API is queried for
 the country/level, then the simplified GeoJSON it returns is matched on
 ``shapeName``. Queries are cleaned ``country-admin1`` / ``country-admin1-admin2``
-keys (or an ISO3 prefix, e.g. ``KEN-nairobi``). Leftover free-text queries
-(landmarks, cities that are not admin keys) use OSM Nominatim.
+keys (or an ISO3 prefix, e.g. ``KEN-nairobi``). Multi-country names
+(``East Africa``, ``Western Africa``, ``Sub-Saharan Africa``) dissolve the
+bundled countries by Natural Earth continent / UN subregion / World Bank region
+before any geocoder. Leftover free-text queries (landmarks, cities that are not
+admin keys) use OSM Nominatim.
 """
 
 from __future__ import annotations
@@ -59,6 +62,17 @@ _COUNTRY_ALIASES = {
     "gaza_strip": "palestine",
     "west_bank": "palestine",
 }
+
+# Extra lookup keys for Natural Earth labels (Eastern Africa → East Africa).
+# Applied only when the short form is not already a primary region name.
+_DIRECTIONAL_PREFIXES = (
+    ("eastern_", "east_"),
+    ("western_", "west_"),
+    ("northern_", "north_"),
+    ("southern_", "south_"),
+    ("middle_", "central_"),
+)
+_REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
 
 
 class _AdminMissing(Exception):
@@ -141,9 +155,9 @@ def bbox_from_geometry(geometry) -> tuple[float, float, float, float]:
 def bbox_from_feature(feature: dict) -> tuple[float, float, float, float]:
     """Return ``(N, W, S, E)`` from a slim Feature.
 
-    Nominatim hits store the search API ``boundingbox`` on ``properties.bbox``
-    so a Point geometry is never used as a zero-area clip box. Admin features
-    fall through to ``bbox_from_geometry``.
+    Nominatim hits and named multi-country regions store ``[N, W, S, E]`` on
+    ``properties.bbox`` so a Point geometry is never used as a zero-area clip
+    box. Admin features fall through to ``bbox_from_geometry``.
     """
     props = feature.get("properties") or {}
     bbox = props.get("bbox")
@@ -205,6 +219,85 @@ def _country_indexes() -> tuple[dict[str, dict], dict[str, dict]]:
         if canonical in by_clean:
             by_clean[alias] = by_clean[canonical]
     return by_iso3, by_clean
+
+
+def _directional_alias_keys(cleaned: str) -> list[str]:
+    extra = []
+    for long, short in _DIRECTIONAL_PREFIXES:
+        if cleaned.startswith(long):
+            extra.append(short + cleaned[len(long) :])
+        elif cleaned.startswith(short):
+            extra.append(long + cleaned[len(short) :])
+    return extra
+
+
+def _polygon_parts(geometry: dict) -> list:
+    kind = geometry.get("type")
+    coords = geometry.get("coordinates")
+    if kind == "Polygon" and coords:
+        return [coords]
+    if kind == "MultiPolygon" and coords:
+        return list(coords)
+    return []
+
+
+@lru_cache(maxsize=1)
+def _country_region_attrs() -> dict:
+    path = files("weather_skills_core.data").joinpath("country_regions.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload.get("countries") or {}
+
+
+@lru_cache(maxsize=1)
+def _region_indexes() -> dict[str, dict]:
+    """Cleaned query → Natural Earth multi-country grouping."""
+    by_iso3, _ = _country_indexes()
+    attrs = _country_region_attrs()
+    by_key: dict[str, dict] = {}
+    for field in _REGION_FIELDS:
+        buckets: dict[str, list[str]] = {}
+        for iso3, fields in attrs.items():
+            label = fields.get(field)
+            if not label:
+                continue
+            buckets.setdefault(label, []).append(iso3)
+        for label, iso3s in buckets.items():
+            key = clean_region_name(label)
+            if key in by_key or key == "no_region":
+                continue
+            members = [by_iso3[iso3] for iso3 in iso3s if iso3 in by_iso3]
+            if members:
+                by_key[key] = {"name": label, "members": members}
+    for key, spec in list(by_key.items()):
+        for alias in _directional_alias_keys(key):
+            by_key.setdefault(alias, spec)
+    return by_key
+
+
+def _slim_region(spec: dict) -> dict:
+    parts = []
+    for feature in spec["members"]:
+        parts.extend(_polygon_parts(feature["geometry"]))
+    if not parts:
+        raise DataError(f"Natural Earth region {spec['name']!r} has no polygon geometry.")
+    geometry = (
+        {"type": "Polygon", "coordinates": parts[0]}
+        if len(parts) == 1
+        else {"type": "MultiPolygon", "coordinates": parts}
+    )
+    north, west, south, east = bbox_from_geometry(geometry)
+    return {
+        "type": "Feature",
+        "properties": {
+            "iso3": None,
+            "name": spec["name"],
+            "region_name": clean_region_name(spec["name"]),
+            "level": "region",
+            "country": None,
+            "bbox": [north, west, south, east],
+        },
+        "geometry": geometry,
+    }
 
 
 def _slim_country(feature: dict) -> dict:
@@ -367,14 +460,16 @@ def _split_subnational(cleaned: str) -> tuple[dict, str] | None:
 def should_geocode(query: str) -> bool:
     """True when a failed admin lookup may fall through to Nominatim.
 
-    ISO3-shaped tokens and hierarchical admin keys (``kenya-nairbi``) stay on
-    the admin error path so typos are not silently sent to OSM.
+    ISO3-shaped tokens, hierarchical admin keys (``kenya-nairbi``), and
+    Natural Earth multi-country regions (``East Africa``) stay off Nominatim.
     """
     text = query.strip()
     if not text:
         return False
     cleaned = clean_region_name(text)
     if len(cleaned) == 3 and cleaned.isalpha():
+        return False
+    if cleaned in _region_indexes():
         return False
     return _split_subnational(cleaned) is None
 
@@ -434,9 +529,10 @@ def geocode_nominatim(query: str) -> dict:
     hits = _nominatim_collection(text)
     if not hits:
         raise DataError(
-            f"{query!r} is not a known ISO3 code, country name, or sub-national "
-            "region, and Nominatim found no matching place. Pass an ISO3 code, "
-            "country-admin1, or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
+            f"{query!r} is not a known ISO3 code, country name, named region, "
+            "or sub-national region, and Nominatim found no matching place. "
+            "Pass an ISO3 code, country-admin1, a named region (e.g. East Africa), "
+            "or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
         )
     hit = hits[0]
     if not isinstance(hit, dict):
@@ -462,15 +558,16 @@ def geocode_nominatim(query: str) -> dict:
 def lookup_region(query: str) -> dict:
     """Resolve a country or sub-national query to a slim GeoJSON Feature.
 
-    Accepts an ISO3 code (``KEN``), a country name (``Kenya``), an ISO3-prefixed
-    hierarchy (``KEN-nairobi``), or a cleaned hierarchical name
-    (``kenya-nairobi``, ``kenya-nairobi-westlands``).
+    Accepts an ISO3 code (``KEN``), a country name (``Kenya``), a Natural Earth
+    multi-country region (``East Africa``), an ISO3-prefixed hierarchy
+    (``KEN-nairobi``), or a cleaned hierarchical name (``kenya-nairobi``).
     """
     text = query.strip()
     if not text:
         raise UsageError(
             "region query must be a non-empty ISO3 code, country name, "
-            "or sub-national region (e.g. kenya-nairobi)."
+            "named region (e.g. East Africa), or sub-national region "
+            "(e.g. kenya-nairobi)."
         )
 
     by_iso3, by_clean = _country_indexes()
@@ -484,6 +581,10 @@ def lookup_region(query: str) -> dict:
     match = by_clean.get(cleaned)
     if match is not None:
         return _slim_country(match)
+
+    named = _region_indexes().get(cleaned)
+    if named is not None:
+        return _slim_region(named)
 
     split = _split_subnational(cleaned)
     if split is not None:
@@ -501,13 +602,14 @@ def lookup_region(query: str) -> dict:
         )
 
     raise DataError(
-        f"{query!r} is not a known ISO3 code, country name, or "
-        "sub-national region (country-admin1 / country-admin1-admin2)."
+        f"{query!r} is not a known ISO3 code, country name, named region "
+        "(e.g. East Africa), or sub-national region "
+        "(country-admin1 / country-admin1-admin2)."
     )
 
 
 def resolve_region(query: str):
-    """Resolve a country name, ISO3 code, or sub-national region.
+    """Resolve a country name, ISO3 code, named region, or sub-national region.
 
     Returns ``((N, W, S, E), GeoDataFrame)``. Requires ``weather-skills-core[geo]``.
     """

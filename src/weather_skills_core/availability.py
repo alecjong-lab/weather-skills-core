@@ -1,15 +1,18 @@
 """Product-agnostic publication lag / embargo calendars.
 
-Catalog instances (skill names, notes, variants) live on each fetcher's
-SKILL.md ``metadata.availability``. This module is the math: a typed spec and
-``available_through(spec, as_of)``.
+Fetcher SKILL.md files declare ``metadata.availability``. This module is the
+math (``available_through``) and the live catalog reader (``load_products``).
 """
 
 from __future__ import annotations
 
 import calendar
+import json
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
+
+import yaml
 
 from weather_skills_core.errors import UsageError
 
@@ -86,7 +89,7 @@ class Availability:
 
     @classmethod
     def from_dict(cls, data: dict) -> Availability:
-        """Build from a JSON/YAML mapping (SKILL.md or the generated snapshot)."""
+        """Build from a JSON/YAML mapping (SKILL.md ``metadata.availability``)."""
         if not isinstance(data, dict):
             raise UsageError(f"availability must be a mapping; got {type(data).__name__}.")
         unknown = set(data) - {
@@ -133,7 +136,7 @@ class Availability:
         )
 
     def to_dict(self) -> dict:
-        """JSON-ready mapping (no variants; those are expanded by the catalog builder)."""
+        """JSON-ready mapping (no variants; ``load_products`` expands those)."""
         out = {"shape": self.shape, "policy": self.policy, "note": self.note}
         if self.lag_days is not None:
             out["lag_days"] = self.lag_days
@@ -142,6 +145,113 @@ class Availability:
         if self.earliest is not None:
             out["earliest"] = self.earliest.isoformat()
         return out
+
+
+def _parse_frontmatter(skill_md: Path) -> dict:
+    text = skill_md.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    if not lines or lines[0] != "---":
+        raise UsageError(f"{skill_md}: no YAML frontmatter")
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            block = "\n".join(lines[1:index])
+            break
+    else:
+        raise UsageError(f"{skill_md}: frontmatter has no closing `---` line")
+    # Unquoted descriptions often contain ": ", which YAML treats as a nested map.
+    quoted = []
+    for line in block.split("\n"):
+        if line.startswith("description:"):
+            value = line[len("description:") :].strip()
+            quoted.append("description: " + json.dumps(value))
+        else:
+            quoted.append(line)
+    try:
+        data = yaml.safe_load("\n".join(quoted))
+    except yaml.YAMLError as exc:
+        raise UsageError(f"{skill_md}: invalid YAML frontmatter: {exc}") from None
+    if not isinstance(data, dict):
+        raise UsageError(f"{skill_md}: frontmatter is not a mapping")
+    return data
+
+
+def _merge_availability(base: dict, override: dict | None) -> dict:
+    out = {k: v for k, v in base.items() if k != "variants"}
+    for key, value in (override or {}).items():
+        if key == "variants":
+            continue
+        out[key] = value
+    return out
+
+
+def _spec(raw: dict, *, origin: str) -> Availability:
+    try:
+        return Availability.from_dict(raw)
+    except UsageError as exc:
+        raise UsageError(f"{origin}: {exc}") from None
+
+
+def load_products(skills_dir: Path) -> dict[str, Availability]:
+    """Read ``metadata.availability`` from each ``skills_dir/*/SKILL.md``.
+
+    Variants flatten to ``name:variant``. If any variant's ``shape`` differs from
+    the skill's base shape, the bare skill name is omitted (callers must pick a
+    variant). Every ``catalog-group: fetchers`` skill must declare availability
+    and a non-empty ``metadata.variables`` list.
+    """
+    skills_dir = Path(skills_dir)
+    skill_mds = sorted(skills_dir.glob("*/SKILL.md"), key=lambda p: p.parent.name)
+    if not skill_mds:
+        raise UsageError(f"no skills/*/SKILL.md found under {skills_dir}")
+
+    products: dict[str, Availability] = {}
+    for skill_md in skill_mds:
+        front = _parse_frontmatter(skill_md)
+        name = front.get("name")
+        if name != skill_md.parent.name:
+            raise UsageError(
+                f"{skill_md}: frontmatter name {name!r} != directory {skill_md.parent.name!r}"
+            )
+        metadata = front.get("metadata")
+        if not isinstance(metadata, dict):
+            raise UsageError(f"{skill_md}: frontmatter has no metadata map")
+        group = metadata.get("catalog-group")
+        avail = metadata.get("availability")
+        if group == "fetchers" and not avail:
+            raise UsageError(f"{skill_md}: catalog-group fetchers requires metadata.availability")
+        if group == "fetchers":
+            variables = metadata.get("variables")
+            if not isinstance(variables, list) or not variables:
+                raise UsageError(
+                    f"{skill_md}: catalog-group fetchers requires metadata.variables "
+                    "(a non-empty list of exact --variable / -v names)"
+                )
+            if not all(isinstance(item, str) and item.strip() for item in variables):
+                raise UsageError(
+                    f"{skill_md}: metadata.variables must be a list of non-empty names"
+                )
+        if not avail:
+            continue
+        if not isinstance(avail, dict):
+            raise UsageError(f"{skill_md}: metadata.availability is not a mapping")
+        variants = avail.get("variants") or {}
+        if variants and not isinstance(variants, dict):
+            raise UsageError(f"{skill_md}: metadata.availability.variants is not a mapping")
+
+        base = _spec(_merge_availability(avail, None), origin=f"{skill_md} ({name})")
+        variant_specs: list[Availability] = []
+        for variant, override in variants.items():
+            if override is None:
+                override = {}
+            if not isinstance(override, dict):
+                raise UsageError(f"{skill_md}: variant {variant!r} must be a mapping (or empty)")
+            key = f"{name}:{variant}"
+            spec = _spec(_merge_availability(avail, override), origin=f"{skill_md} ({key})")
+            products[key] = spec
+            variant_specs.append(spec)
+        if all(item.shape == base.shape for item in variant_specs):
+            products[name] = base
+    return dict(sorted(products.items()))
 
 
 def available_through(spec: Availability, as_of: date) -> date | None:

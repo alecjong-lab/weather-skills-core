@@ -241,6 +241,49 @@ def test_should_geocode_landmarks_not_admin_keys():
     assert should_geocode("KEN-nairbi") is False
     assert should_geocode("ZZZ") is False
     assert should_geocode("  ") is False
+    assert should_geocode("East Africa") is False
+    assert should_geocode("Eastern Africa") is False
+    assert should_geocode("Western Africa") is False
+    assert should_geocode("Sub-Saharan Africa") is False
+
+
+def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
+    def _fail_nominatim(query):
+        raise AssertionError(f"Nominatim should not run for named region; got {query!r}")
+
+    monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
+
+    kenya = lookup_region("KEN")
+    kn, kw, ks, ke = bbox_from_feature(kenya)
+    east = lookup_region("East Africa")
+    eastern = lookup_region("Eastern Africa")
+    assert east["properties"]["name"] == "Eastern Africa"
+    assert east["properties"]["level"] == "region"
+    assert east["properties"]["region_name"] == "eastern_africa"
+    assert east["geometry"]["type"] == "MultiPolygon"
+    n, w, s, e = bbox_from_feature(east)
+    assert bbox_from_feature(eastern) == (n, w, s, e)
+    assert s <= ks <= kn <= n
+    assert w <= kw <= ke <= e
+    # UN-style Eastern Africa includes Madagascar, not a Ugandan POI.
+    assert s < -20
+    assert n > 10
+
+
+def test_south_africa_is_the_country_not_the_subregion():
+    feature = lookup_region("South Africa")
+    assert feature["properties"]["level"] == "country"
+    assert feature["properties"]["iso3"] == "ZAF"
+
+
+def test_lookup_ne_western_africa():
+    ghana = lookup_region("GHA")
+    gn, gw, gs, ge = bbox_from_feature(ghana)
+    west = lookup_region("West Africa")
+    assert west["properties"]["name"] == "Western Africa"
+    n, w, s, e = bbox_from_feature(west)
+    assert s <= gs <= gn <= n
+    assert w <= gw <= ge <= e
 
 
 def test_geocode_nominatim_polygon(monkeypatch):

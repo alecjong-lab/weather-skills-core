@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=2.5",
     "pillow>=10",
     "pint-xarray>=0.6",
+    "pyyaml>=6",
     "xarray>=2026.7",
     "zarr>=3.2",
 ]
@@ -41,6 +42,7 @@ packages = ["src/weather_skills_core"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/weather_skills_core/data/countries.geojson" = "weather_skills_core/data/countries.geojson"
+"src/weather_skills_core/data/country_regions.json" = "weather_skills_core/data/country_regions.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

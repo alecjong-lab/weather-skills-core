@@ -25,9 +25,10 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 ### Region
 
 Named places are not a decorator flag. The resolve-region skill turns an ISO3
-code or hierarchical admin key into a printed `N/W/S/E` bbox (and optional
-GeoJSON). Queries that are not an ISO3 / `country-admin…` key fall through to
-OSM Nominatim (`limit=1`) for landmarks. Consumer skills take `--bbox` (and
+code, a Natural Earth multi-country region (`East Africa`), or a hierarchical
+admin key into a printed `N/W/S/E` bbox (and optional GeoJSON). Queries that
+are not an ISO3 / NE-region / `country-admin…` key fall through to OSM
+Nominatim (`limit=1`) for landmarks. Consumer skills take `--bbox` (and
 skill-specific `--geojson` / `--mask-geojson`).
 
 | Concept | Flag | Notes |
@@ -49,8 +50,8 @@ current UTC date and that product's embargo / publication lag. Mutual exclusion
 of `--date` vs the range flags is skill-owned when needed.
 
 Fetcher skills declare that lag on SKILL.md as `metadata.availability` (next to
-`catalog-group`). Core owns only the calendar math
-(`weather_skills_core.availability`); skill names stay out of core. Schema:
+`catalog-group`). Core owns the calendar math and `load_products(skills_dir)`,
+which reads sibling SKILL.md files at runtime. Schema:
 
 ```yaml
 metadata:
@@ -62,7 +63,7 @@ metadata:
     schedule: pentad      # optional: pentad | ecmwf-s2s
     earliest: 2000-06-01  # optional YYYY-MM-DD coverage start
     note: IMERG late ~4 days behind realtime
-    variants:             # optional; flatten to name:variant in the catalog
+    variants:             # optional; flatten to name:variant
       final:
         lag_days: 110
   variables:              # exact --variable / -v names (not ARCO names on dynamical, etc.)
@@ -74,16 +75,17 @@ metadata:
 no `lag_days`/`schedule` means no realtime cap (future dates stay). Named
 schedules: `pentad` (close on 5/10/15/20/25/last of month, files 2 days later)
 and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
-`catalog-group: fetchers` skill must declare this block. resolve-time consumes
-a generated snapshot of it (`--list-products`).
+`catalog-group: fetchers` skill must declare this block. resolve-time calls
+`load_products` on the sibling `skills/` directory (`--list-products`). If a
+skill's variants do not all share the base `shape`, the bare skill name is not
+a product — use `skill:variant` (`dynamical-fetch:noaa-gfs-forecast`).
 
 `variables` is a non-empty list of exact `--variable` / `-v` tokens for that
 fetcher, **most-used first**. Names are catalog-specific (`precipitation_surface`
 on dynamical, `total_precipitation` on ARCO, `tp` on ECMWF S2S). Open catalogs
 (ARCO, CMIP6, dynamical) and closed ones with many fields (ECMWF S2S) list the
 usual first choices, not every field the source can serve.
-The conformance check (`tools/build_availability.py --check`) requires this
-list on every fetcher.
+`load_products` requires this list on every fetcher.
 
 ### Variable
 

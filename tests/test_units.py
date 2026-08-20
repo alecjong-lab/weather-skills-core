@@ -313,6 +313,21 @@ def test_stamp_data_interval_irregular_step_writes_cf_bounds():
     )
 
 
+def test_stamp_data_interval_irregular_datetime_defaults_origin():
+    times = np.array(
+        ["2026-08-18T03:00", "2026-08-18T06:00", "2026-08-18T12:00"],
+        dtype="datetime64[ns]",
+    )
+    ds = xr.Dataset(
+        {"tp": (("time",), np.ones(3), {"units": "mm day-1"})},
+        coords={"time": times},
+    )
+    out = stamp_data_interval(ds)
+    bounds = np.asarray(out["time_bounds"].values)
+    assert bounds[0, 0] == np.datetime64("2026-08-18T00:00")
+    assert bounds[0, 1] == times[0]
+
+
 def test_assert_nonoverlapping_uses_min_spacing_when_bounds_present():
     """Median gap can hide overlap; bounds path uses the minimum label spacing."""
     steps = np.array([7, 10, 14, 21], dtype="timedelta64[D]")
@@ -387,6 +402,10 @@ def test_expected_samples_and_filter_min_coverage():
     assert kept.sizes["time"] == 2
     one = filter_min_coverage(ds, "time", 1.0)
     assert one.sizes["time"] == 1
+
+    empty = ds.isel(time=slice(0, 0))
+    with pytest.raises(UsageError, match="empty time axis"):
+        filter_min_coverage(empty, "time", 1.0)
     assert float(one["precip"].values[0]) == pytest.approx(2.0)
 
 

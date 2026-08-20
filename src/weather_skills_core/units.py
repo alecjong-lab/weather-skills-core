@@ -610,7 +610,8 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
     omitted, spacing is inferred from ``dim`` (or ``time`` / ``step``): equal
     steps get ``data_interval``; unequal steps get ``{dim}_bounds`` (start,
     end) and no ``data_interval``. ``origin`` is the left edge of the first
-    cell when writing bounds (timedelta ``step`` defaults to 0).
+    cell when writing bounds. Timedelta ``step`` defaults to 0; datetime
+    defaults to ``t0 - (t1 - t0)`` (right-labeled first cell).
     """
     if period is not None:
         period = format_duration(parse_aggregation_period(period))
@@ -637,12 +638,11 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
         return ds
 
     if origin is None:
-        if np.issubdtype(values.dtype, np.timedelta64):
-            origin = np.asarray(0).astype(values.dtype)
-        else:
+        origin = _default_bounds_origin(values)
+        if origin is None:
             raise UsageError(
                 f"irregular {axis!r} axis needs an origin for CF bounds "
-                "(timedelta step defaults to 0)"
+                "(timedelta step defaults to 0; datetime defaults to t0 minus the first gap)"
             )
     n = values.size
     pairs = np.empty((n, 2), dtype=values.dtype)
@@ -655,6 +655,23 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
     for name in out.data_vars:
         out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
     return out
+
+
+def _default_bounds_origin(values):
+    """Left edge of the first right-labeled cell, or None if it cannot be inferred."""
+    values = np.asarray(values)
+    if values.size < 2:
+        return None
+    if np.issubdtype(values.dtype, np.timedelta64):
+        return np.asarray(0).astype(values.dtype)
+    if np.issubdtype(values.dtype, np.datetime64):
+        return values[0] - (values[1] - values[0])
+    first = values.flat[0]
+    second = values.flat[1]
+    try:
+        return first - (second - first)
+    except TypeError:
+        return None
 
 
 def expected_samples_in_period(aggregation_period: str, data_interval: str) -> int:
@@ -686,6 +703,10 @@ def filter_min_coverage(ds, dim: str, min_coverage: float):
         raise UsageError(f"--min-coverage must be in [0, 1]; got {min_coverage}")
     if dim not in ds.dims:
         raise UsageError(f"dimension {dim!r} not in dataset (have {list(ds.dims)})")
+    if ds.sizes[dim] == 0:
+        raise UsageError(
+            f"no {dim} intervals to convert (empty {dim} axis)."
+        )
     cov = coverage_values(ds, dim)
     if cov.size != ds.sizes[dim]:
         raise UsageError(
