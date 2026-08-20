@@ -123,7 +123,10 @@ temp → `degree_Celsius`, precip → `mm day-1`. Known standard kinds must carr
 `units` for explicit skill treatment; other variables may include units
 optionally. When you need period amounts (`mm`), convert with the totals
 utilities after aggregation stamps `aggregation_period`. The decorator
-quantifies on input and dequantifies before writing Zarr.
+quantifies on input and dequantifies before writing Zarr. Fetch stamps
+`data_interval`; aggregation adds `aggregation_period` and
+`aggregation_coverage`. Convert-to-totals requires those stamps, 100%
+coverage by default, and non-overlapping intervals.
 
 Full details:
 [`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md).
@@ -144,19 +147,16 @@ do **not** re-parse in the skill body (no `bbox.split("/")`, no
 `date.fromisoformat` on these).
 
 For example, add `--bbox` and you receive a parsed
-`(north, west, south, east)` float tuple. Add `--region Kenya` (a plain CLI
-string — country name, ISO3, or sub-national `country-admin1` /
-`country-admin1-admin2`) and the decorator looks up the region and passes
-`region` as a **GeoDataFrame** in kwargs (plus fills `bbox`). Do not treat
-`region` as a string in the skill body. Pass `--region` or `--bbox`, not both
-(`weather-skills-core[geo]` required for `--region`). Add `--start-time` /
-`--end-time` and you get `datetime.date` values, with a check that the start
-is not after the end.
+`(north, west, south, east)` float tuple. Named places are not a decorator
+flag — compose with the resolve-region skill and pass the printed bbox here.
+Add `--start-time` / `--end-time` and you get `datetime.date` values, with a
+check that the start is not after the end. Relative dates (`latest`, `now-3d`)
+are not parsed here — compose with the resolve-time skill and pass the printed
+flags.
 
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
-| `region` | `--region` | GeoDataFrame under kwargs key `region` (CLI is a string like `Kenya` or `kenya-nairobi`; also fills `bbox`) |
 | `date` | `--date` | Single `datetime.date` (`YYYY-MM-DD`) |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |

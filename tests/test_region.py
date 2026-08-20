@@ -1,11 +1,8 @@
-"""Tests for region resolution and --region standard-arg injection."""
-
-from types import SimpleNamespace
+"""Tests for region resolution (ISO3, country name, admin-1/admin-2)."""
 
 import pytest
 
 from weather_skills_core import region as region_mod
-from weather_skills_core.decorator import Argument
 from weather_skills_core.errors import DataError, UsageError
 from weather_skills_core.region import (
     bbox_from_geometry,
@@ -13,7 +10,6 @@ from weather_skills_core.region import (
     lookup_region,
     resolve_region,
 )
-from weather_skills_core.standard_args import convert_standard_args
 
 _NAIROBI = {
     "type": "FeatureCollection",
@@ -131,28 +127,6 @@ def test_resolve_unknown():
 def test_lookup_empty_is_usage_error():
     with pytest.raises(UsageError, match="non-empty"):
         lookup_region("  ")
-
-
-def test_convert_region_fills_bbox_and_gdf():
-    args = SimpleNamespace(region="KEN", bbox=None)
-    arguments = [Argument("--region"), Argument("--bbox")]
-    params = convert_standard_args(args, arguments)
-    assert params["bbox"] == resolve_region("KEN")[0]
-    assert list(params["region"]["iso3"]) == ["KEN"]
-
-
-def test_convert_region_and_bbox_conflict():
-    args = SimpleNamespace(region="KEN", bbox="5/34/-5/42")
-    arguments = [Argument("--region"), Argument("--bbox")]
-    with pytest.raises(UsageError, match="not both"):
-        convert_standard_args(args, arguments)
-
-
-def test_convert_region_injects_bbox_without_bbox_flag():
-    args = SimpleNamespace(region="kenya")
-    arguments = [Argument("--region")]
-    params = convert_standard_args(args, arguments)
-    assert params["bbox"][0] > params["bbox"][2]
 
 
 def test_bbox_wraps_antimeridian():

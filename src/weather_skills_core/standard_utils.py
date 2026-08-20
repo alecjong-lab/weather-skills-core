@@ -82,14 +82,21 @@ def fill_missing_data_var_attrs(src, dst):
     """Fill attrs present on ``src`` but missing on matching ``dst`` data vars.
 
     Heals stripped metadata (regrid, etc.) without overwriting attrs a skill set.
+    Does not restore ``aggregation_period`` onto vars whose ``cell_methods``
+    already record a sum (convert-to-totals amounts).
     """
+    from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, cell_methods_has_sum
+
     out = dst
     dirty = False
     for name in dst.data_vars:
         if name not in src.data_vars:
             continue
+        skip_period = cell_methods_has_sum(dst[name].attrs.get("cell_methods"))
         for key, value in src[name].attrs.items():
             if key in dst[name].attrs:
+                continue
+            if skip_period and key == AGGREGATION_PERIOD_ATTR:
                 continue
             if not dirty:
                 out = dst.copy()
@@ -547,8 +554,7 @@ def roll_and_agg(
     dtype = ds[dim].dtype
     if not (np.issubdtype(dtype, np.datetime64) or np.issubdtype(dtype, np.timedelta64)):
         raise UsageError(
-            f"rolling aggregation requires datetime64 or timedelta64 on {dim!r}; "
-            f"got dtype {dtype}"
+            f"rolling aggregation requires datetime64 or timedelta64 on {dim!r}; got dtype {dtype}"
         )
     rolled = ds.rolling({dim: window}, min_periods=min_periods, center=False)
     fn = {"mean": rolled.mean, "max": rolled.max, "min": rolled.min}.get(method)

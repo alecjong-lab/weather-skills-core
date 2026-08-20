@@ -151,30 +151,6 @@ class TestRunLoop:
         assert isinstance(seen["start_time"], date)
         assert seen["end_time"] == date(2026, 1, 10)
 
-    def test_region_cli_string_becomes_geodataframe(self, tmp_path):
-        import geopandas as gpd
-
-        src = tmp_path / "in.zarr"
-        out = tmp_path / "out.zarr"
-        make_data().to_zarr(src, mode="w", consolidated=True)
-        seen = {}
-
-        @weather_skill(name="s", version="0.1.0")
-        @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        @weather_skill.argument("--region")
-        def skill(input, output, region=None, **kwargs):
-            seen["region"] = region
-            seen["bbox"] = kwargs.get("bbox")
-            return input
-
-        skill(["-i", str(src), "-o", str(out), "--region", "Kenya"])
-        assert isinstance(seen["region"], gpd.GeoDataFrame)
-        assert list(seen["region"]["name"]) == ["Kenya"]
-        assert seen["bbox"] is not None
-        n, w, s, e = seen["bbox"]
-        assert n > s and w < e
-        assert load_history(out)[-1]["args"]["region"] == "Kenya"
-
     def test_start_after_end_exits(self, tmp_path):
         out = tmp_path / "out.zarr"
 

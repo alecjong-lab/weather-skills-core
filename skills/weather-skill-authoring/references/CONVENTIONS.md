@@ -24,10 +24,14 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 
 ### Region
 
+Named places are not a decorator flag. The resolve-region skill turns an ISO3
+code or hierarchical admin key into a printed `N/W/S/E` bbox (and optional
+GeoJSON). Consumer skills take `--bbox` (and skill-specific `--geojson` /
+`--mask-geojson`).
+
 | Concept | Flag | Notes |
 | --- | --- | --- |
 | Bounding box | `--bbox` | CLI is `N/W/S/E` decimal degrees. Skill receives `(N, W, S, E)` floats — do not re-parse. |
-| Country / region | `--region` | CLI string (e.g. `Kenya`, `kenya-nairobi`). Skill gets kwargs `region` as a GeoDataFrame; `bbox` is also filled. Requires `weather-skills-core[geo]`. Do not pass with `--bbox`. |
 | Boundary GeoJSON | `--geojson` / `--mask-geojson` | Skill-specific. |
 
 ### Time
@@ -37,9 +41,11 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 | Date range | `--start-time` / `--end-time` | CLI is absolute `YYYY-MM-DD` (inclusive). Skill receives `datetime.date`; when both set, `start_time <= end_time`. Do not re-parse. |
 | Single date | `--date` | CLI is absolute `YYYY-MM-DD`. Skill receives `datetime.date`. |
 
-Relative / rolling dates (`now`, `latest`, offsets) are resolved by the caller
-before invoking weather skills. Mutual exclusion of `--date` vs the range flags
-is skill-owned when needed.
+Relative / rolling dates (`now`, `latest`, offsets, "the last two weeks") are
+not decorator flags. The resolve-time skill turns a query token plus an optional
+`--product` into printed `--start-time`/`--end-time` or `--date`, applying the
+current UTC date and that product's embargo / publication lag. Mutual exclusion
+of `--date` vs the range flags is skill-owned when needed.
 
 ### Variable
 

@@ -41,7 +41,6 @@ class TestStandardParameters:
             "--end-time",
             "--date",
             "--bbox",
-            "--region",
             "--variable",
             "-v",
         } <= flags

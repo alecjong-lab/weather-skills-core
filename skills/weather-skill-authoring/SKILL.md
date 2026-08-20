@@ -99,18 +99,20 @@ conversion.
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
-| `region` | `--region` | GeoDataFrame in kwargs as `region` (CLI string e.g. `Kenya` or `kenya-nairobi`; also fills `bbox`) |
 | `date` | `--date` | `datetime.date` |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |
 | `variable` | `--variable` / `-v` | Variable name(s) |
 
-When both `start_time` and `end_time` are set, start must be ≤ end. Pass
-`--region` or `--bbox`, not both. `--region` needs `weather-skills-core[geo]`;
-the skill body receives a GeoDataFrame, not the CLI string.
+When both `start_time` and `end_time` are set, start must be ≤ end. Named
+places are not a decorator flag: compose with the resolve-region skill and
+pass the printed `N/W/S/E` as `--bbox`. `--geojson` / `--mask-geojson` stay
+skill-specific.
 
-Absolute dates are `datetime.date`. Relative tokens (`latest`, `now-3d`) are not
-parsed by the decorator — resolve them in the skill or agent before calling.
+Absolute dates are `datetime.date`. Relative tokens (`latest`, `now-3d`,
+"the last two weeks") are not parsed by the decorator — compose with the
+resolve-time skill and pass the printed `--start-time`/`--end-time` or
+`--date`.
 
 ## Skill shapes
 

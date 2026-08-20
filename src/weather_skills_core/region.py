@@ -355,7 +355,7 @@ def lookup_region(query: str) -> dict:
         )
 
     raise DataError(
-        f"--region {query!r} is not a known ISO3 code, country name, or "
+        f"{query!r} is not a known ISO3 code, country name, or "
         "sub-national region (country-admin1 / country-admin1-admin2)."
     )
 

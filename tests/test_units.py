@@ -7,17 +7,24 @@ from conftest import make_gridded
 
 from weather_skills_core.errors import UsageError
 from weather_skills_core.units import (
+    AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
+    DATA_INTERVAL_ATTR,
     STANDARD,
     assert_timestep_ge_aggregation_period,
     classify_variable,
     convert_values,
     dequantify_dataset,
+    expected_samples_in_period,
+    filter_min_coverage,
     format_cell_methods,
+    format_duration,
     infer_timestep,
     parse_aggregation_period,
+    precip_amounts_to_rates,
     quantify_dataset,
     rate_to_total,
+    stamp_data_interval,
     to_standard_units,
     units_convertible,
     units_equal,
@@ -190,9 +197,7 @@ def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
 
 def test_format_cell_methods():
     assert format_cell_methods("time", "mean") == "time: mean"
-    assert format_cell_methods("time", "mean", interval="1 day") == (
-        "time: mean (interval: 1 day)"
-    )
+    assert format_cell_methods("time", "mean", interval="1 day") == ("time: mean (interval: 1 day)")
 
 
 def test_timestep_gate_and_rate_to_total():
@@ -216,7 +221,7 @@ def test_timestep_gate_and_rate_to_total():
         {"precip": (("time",), np.ones(7), {"units": "mm day-1"})},
         coords={"time": np.arange("2026-01-01", "2026-01-08", dtype="datetime64[D]")},
     )
-    with pytest.raises(UsageError, match="aggregate-temporal"):
+    with pytest.raises(UsageError, match="select"):
         assert_timestep_ge_aggregation_period(daily, "time", "7 day")
 
 
@@ -254,3 +259,87 @@ def test_infer_timestep_timedelta64_us_weekly():
     dt = infer_timestep(ds, "step")
     assert abs(float(dt.to("day").magnitude) - 7.0) < 1e-9
     assert_timestep_ge_aggregation_period(ds, "step", "7 day")
+
+
+def test_format_duration_subday():
+    assert format_duration(ureg.Quantity("30 minute")) == "30 minute"
+    assert format_duration(ureg.Quantity("7 day")) == "7 day"
+    assert format_duration(parse_aggregation_period("1 hour")) == "1 hour"
+
+
+def test_stamp_data_interval_explicit_and_inferred():
+    ds = make_gridded(n_time=2)
+    stamp_data_interval(ds, period="30 minute")
+    assert ds["precip"].attrs[DATA_INTERVAL_ATTR] == "30 minute"
+    assert AGGREGATION_PERIOD_ATTR not in ds["precip"].attrs
+    assert AGGREGATION_COVERAGE_COORD not in ds.coords
+
+    daily = make_gridded(n_time=3)
+    stamp_data_interval(daily)
+    assert daily["precip"].attrs[DATA_INTERVAL_ATTR] == "1 day"
+
+
+def test_expected_samples_and_filter_min_coverage():
+    assert expected_samples_in_period("7 day", "30 minute") == 336
+    assert expected_samples_in_period("21 day", "1 day") == 21
+
+    times = np.array(["2026-01-21", "2026-02-11"], dtype="datetime64[D]")
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time",),
+                [1.0, 2.0],
+                {
+                    AGGREGATION_PERIOD_ATTR: "21 day",
+                    DATA_INTERVAL_ATTR: "1 day",
+                    "units": "mm day-1",
+                },
+            )
+        },
+        coords={
+            "time": times,
+            AGGREGATION_COVERAGE_COORD: ("time", [0.9, 1.0]),
+        },
+    )
+    with pytest.raises(UsageError, match="min-coverage"):
+        filter_min_coverage(ds.isel(time=slice(0, 1)), "time", 1.0)
+    kept = filter_min_coverage(ds, "time", 0.6)
+    assert kept.sizes["time"] == 2
+    one = filter_min_coverage(ds, "time", 1.0)
+    assert one.sizes["time"] == 1
+    assert float(one["precip"].values[0]) == pytest.approx(2.0)
+
+
+def test_precip_amounts_to_rates_daily_and_step():
+    daily = make_gridded(n_time=2, fill=4.0, units="mm")
+    daily["precip"].attrs["standard_name"] = "precipitation_amount"
+    out = precip_amounts_to_rates(daily, interval="1 day")
+    assert out["precip"].attrs["units"] == STANDARD["precip"]["units"]
+    np.testing.assert_allclose(out["precip"].values, daily["precip"].values)
+
+    steps = np.array([np.timedelta64(d, "D") for d in (1, 2, 3)])
+    tp = xr.Dataset(
+        {
+            "tp": (
+                ("step",),
+                np.array([1.0, 3.0, 6.0]),
+                {"units": "mm", "standard_name": "precipitation_amount"},
+            )
+        },
+        coords={"step": steps},
+    )
+    rates = precip_amounts_to_rates(tp)
+    assert rates.sizes["step"] == 2
+    np.testing.assert_allclose(rates["tp"].values, [2.0, 3.0])
+    assert rates["tp"].attrs["units"] == STANDARD["precip"]["units"]
+
+
+def test_precip_convertible_names_skips_temp_with_leftover_precip_standard_name():
+    ds = make_gridded(n_time=2, name="2m_temperature", fill=280.0, units="K")
+    ds["2m_temperature"].attrs["standard_name"] = "lwe_precipitation_rate"
+    from weather_skills_core.units import precip_convertible_names
+
+    assert precip_convertible_names(ds) == []
+
+    rain = make_gridded(n_time=2, fill=1.0, units="mm day-1")
+    assert precip_convertible_names(rain) == ["precip"]

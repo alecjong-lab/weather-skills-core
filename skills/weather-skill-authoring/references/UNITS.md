@@ -64,29 +64,41 @@ to the table above (rates → `mm day-1`, amounts → `mm`), stamps the kind's C
 
 ## Aggregation and totals
 
-Temporal aggregation stamps two complementary data-variable attrs:
+Fetch writes native-resolution rates and stamps **`data_interval`** (how far
+apart samples are: `30 minute`, `1 day`, …). Aggregation then adds two more
+stamps; convert-to-totals reads those and does not guess.
 
-- `aggregation_period` — **how much time each value represents** (the resampling
-  step), as a pint duration string: `1 day`, `7 day`, `1 dekad`, `1 month`, ….
-  Parse it with `parse_aggregation_period`.
-- CF `cell_methods` — **how values were combined** over that window
-  (e.g. `time: mean (interval: 1 day)`, `time: sum`).
+| Name | On | When | Meaning |
+| --- | --- | --- | --- |
+| `data_interval` | data variable (pint string) | fetch; kept through aggregate | Native sample spacing |
+| `aggregation_period` | data variable (pint string) | **aggregate-temporal only** | Length of each aggregated interval (`7 day`, `21 day`) |
+| `aggregation_coverage` | time/step coordinate, 0–1 | **aggregate-temporal only** | Completeness of that interval vs `data_interval` |
 
-The two are orthogonal: `cell_methods` names the operation, `aggregation_period`
-names the window length. A daily-mean variable carries both `time: mean` and
-`aggregation_period = "1 day"`.
+`data_interval` is not the aggregation window. Convert-to-totals multiplies
+rates by `aggregation_period`, not by `data_interval`.
+
+CF `cell_methods` is orthogonal: it names the operation (`time: mean`,
+`time: sum`). A weekly-mean rate carries `time: mean`, `aggregation_period =
+"7 day"`, and the original `data_interval`.
 
 CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
-`weekly` → `7 day`, `dekadal` → `1 dekad`, `monthly` → `1 month`).
+`weekly` → `7 day`, `dekadal` → `1 dekad`, `monthly` → `1 month`). Custom pint
+durations (`21 day`) are also valid `--period` values.
 
 **`convert-to-totals`** multiplies rates by `aggregation_period` → amounts
-(`mm`). When the time/step axis has ≥ 2 points, it requires sample spacing ≥
-`aggregation_period` (so overlapping rolling windows are not silently turned
-into period totals). A singleton axis (one aggregated bin) skips that check.
-If the series is still native resolution (e.g. half-hourly IMERG vs a 21-day
-period), run `aggregate-temporal --period '21 day'` first. Use that when you
-want amounts for plotting or reporting; keep rates in the
-middle of the pipeline.
+(`mm`). It requires:
+
+- a stamped `aggregation_period` (run `aggregate-temporal` first)
+- coverage at or above `--min-coverage` (default 1.0; incomplete bins fail
+  unless you pass a lower threshold)
+- non-overlapping intervals (sample spacing ≥ `aggregation_period`)
+
+Overlapping series (rolling `--window`, or 21-day bins whose labels are 10
+days apart) are refused — run **`select`** on `time` or `step` to keep a
+non-overlapping subset, then convert-to-totals. A singleton axis (one
+aggregated bin) skips the overlap check. Native-only cubes have
+`data_interval` and no `aggregation_period`; convert-to-totals will not
+invent a period from the native spacing.
 
 ## Helpers skills use
 
@@ -95,8 +107,11 @@ middle of the pipeline.
 | `units_equal` | Spelling-independent equality (`mm/day` ≈ `mm day-1`) |
 | `convert_dataarray` / `convert_values` | Explicit unit ↔ unit |
 | `to_standard_units` | Temp / precip → standard display units |
+| `stamp_data_interval` | Stamp native sample spacing on fetch |
+| `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate on `step`, else ÷ interval) |
 | `rate_to_total` | Rate × period → amount |
-| `parse_aggregation_period` | Parse an `aggregation_period` string |
+| `parse_aggregation_period` | Parse an `aggregation_period` / duration string |
+| `filter_min_coverage` | Drop aggregated intervals below a coverage threshold |
 
 ## Author checklist
 
@@ -104,6 +119,7 @@ middle of the pipeline.
   attr; other variables may include units optionally.
 - Keep accumulated variables as rates (`mm day-1`) through most skills; convert
   to totals when you need amounts.
-- After `aggregate-temporal`, expect `aggregation_period` + `cell_methods`.
+- After fetch, expect `data_interval` (no `aggregation_period`).
+- After `aggregate-temporal`, expect `aggregation_period` + `aggregation_coverage` + `cell_methods`.
 - For full dim/type contract, see
   [`STANDARD_DATASET.md`](STANDARD_DATASET.md).

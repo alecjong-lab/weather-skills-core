@@ -30,10 +30,25 @@ if "pentad" not in ureg:
 if "dekad" not in ureg:
     ureg.define("dekad = 10 * day")
 
-# Data-variable attr: the time window each value spans, as a pint duration
-# string (``"1 day"``, ``"1 dekad"``). Complements CF ``cell_methods`` (which
-# says *how* values combined) and drives ``convert-to-totals`` (rate × period).
+# Data-variable attr: native sample spacing as a pint duration string
+# (``"30 minute"``, ``"1 day"``). Stamped by fetchers; kept through aggregate.
+DATA_INTERVAL_ATTR = "data_interval"
+
+# Data-variable attr: the time window each aggregated value spans, as a pint
+# duration string (``"1 day"``, ``"1 dekad"``). Complements CF ``cell_methods``
+# (which says *how* values combined) and drives ``convert-to-totals``
+# (rate × period). Stamped by aggregate-temporal only.
 AGGREGATION_PERIOD_ATTR = "aggregation_period"
+
+# Coordinate on the aggregated time/step axis: completeness of each interval
+# vs ``data_interval`` (0–1). Stamped by aggregate-temporal only.
+AGGREGATION_COVERAGE_COORD = "aggregation_coverage"
+
+_TIME = r"(?:second|sec|minute|min|hour|hr|day|s|h|d)"
+_RATE_RE = re.compile(
+    rf"(?:/\s*{_TIME}\b|\b{_TIME}(?:\*\*|\^)?-1\b|\b(?:W|watts?)\b)",
+    re.IGNORECASE,
+)
 
 # CLI period label → the aggregation_period string stamped for that window.
 PERIOD_TO_AGGREGATION = {
@@ -241,7 +256,14 @@ def parse_aggregation_period(period: str):
 
 
 def format_duration(q) -> str:
-    """Format a pint duration for ``interval:`` / human-readable stamps."""
+    """Format a pint duration as a compact stamp (``1 day``, ``30 minute``)."""
+    for unit in ("day", "hour", "minute", "second"):
+        try:
+            mag = float(q.to(unit).magnitude)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if mag >= 1 and abs(mag - round(mag)) <= 1e-6:
+            return f"{round(mag)} {unit}"
     try:
         days = float(q.to("day").magnitude)
     except (AttributeError, TypeError, ValueError):
@@ -265,9 +287,7 @@ def infer_timestep(ds, dim: str):
 
     # Use the array's native datetime/timedelta unit. Casting timedelta64[us] to
     # datetime64[ns] "succeeds" but treats µs counts as ns (7 day → 0.007 day).
-    if np.issubdtype(values.dtype, np.timedelta64) or np.issubdtype(
-        values.dtype, np.datetime64
-    ):
+    if np.issubdtype(values.dtype, np.timedelta64) or np.issubdtype(values.dtype, np.datetime64):
         unit, _ = np.datetime_data(values.dtype)
         diffs = np.diff(values.astype(values.dtype).astype(np.int64))
         return _from_int_diffs(diffs, unit)
@@ -300,9 +320,9 @@ def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
         raise UsageError(
             f"timestep on {dim!r} ({format_duration(dt)}) is smaller than "
             f"aggregation_period {period!r}; refusing convert-to-totals "
-            "(overlapping/rolling windows would overcount). "
-            f"Run aggregate-temporal --period {period!r} onto non-overlapping "
-            "bins first, then convert-to-totals."
+            "(overlapping intervals would overcount). "
+            f"Run select --dim {dim} to keep a non-overlapping subset, "
+            "then convert-to-totals."
         )
 
 
@@ -513,3 +533,234 @@ def stamp_precip_amounts(ds):
             ds[name].attrs["standard_name"] = amount_sn
             ds[name].attrs.setdefault("long_name", "Total precipitation")
     return ds
+
+
+def _time_or_step_dim(ds, dim=None) -> str | None:
+    if dim is not None:
+        if dim not in ds.dims:
+            raise UsageError(f"dimension {dim!r} not in dataset (have {list(ds.dims)})")
+        return dim
+    if "time" in ds.dims:
+        if ds.sizes["time"] == 1 and "step" in ds.dims:
+            return "step"
+        return "time"
+    if "step" in ds.dims:
+        return "step"
+    return None
+
+
+def data_interval_of(ds) -> str | None:
+    """First stamped ``data_interval`` on a data variable, or None."""
+    for name in ds.data_vars:
+        val = ds[name].attrs.get(DATA_INTERVAL_ATTR)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+def stamp_data_interval(ds, period=None, dim=None):
+    """Stamp ``data_interval`` on every data variable (in place).
+
+    ``period`` is a pint duration string (``"1 day"``, ``"30 minute"``). When
+    omitted, the spacing is inferred from ``dim`` (or ``time`` / ``step``).
+    """
+    if period is None:
+        axis = _time_or_step_dim(ds, dim)
+        if axis is None:
+            raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
+        period = format_duration(infer_timestep(ds, axis))
+    else:
+        period = format_duration(parse_aggregation_period(period))
+    for name in ds.data_vars:
+        ds[name].attrs[DATA_INTERVAL_ATTR] = period
+    return ds
+
+
+def expected_samples_in_period(aggregation_period: str, data_interval: str) -> int:
+    """How many native samples a complete ``aggregation_period`` should hold."""
+    period = parse_aggregation_period(aggregation_period)
+    native = parse_aggregation_period(data_interval)
+    ratio = float((period / native).to("dimensionless").magnitude)
+    if ratio <= 0:
+        raise UsageError(
+            f"expected samples for {aggregation_period!r} / {data_interval!r} is not positive"
+        )
+    return max(1, round(ratio))
+
+
+def coverage_values(ds, dim: str):
+    """``aggregation_coverage`` along ``dim``, or ones if the coord is missing."""
+    if AGGREGATION_COVERAGE_COORD in ds.coords and dim in ds[AGGREGATION_COVERAGE_COORD].dims:
+        return np.asarray(ds[AGGREGATION_COVERAGE_COORD].values, dtype=float)
+    n = ds.sizes.get(dim, 0)
+    return np.ones(n, dtype=float)
+
+
+def filter_min_coverage(ds, dim: str, min_coverage: float):
+    """Drop intervals whose ``aggregation_coverage`` is below ``min_coverage``.
+
+    Raises if nothing remains. Missing coverage is treated as 1.0.
+    """
+    if min_coverage < 0 or min_coverage > 1:
+        raise UsageError(f"--min-coverage must be in [0, 1]; got {min_coverage}")
+    if dim not in ds.dims:
+        raise UsageError(f"dimension {dim!r} not in dataset (have {list(ds.dims)})")
+    cov = coverage_values(ds, dim)
+    if cov.size != ds.sizes[dim]:
+        raise UsageError(
+            f"{AGGREGATION_COVERAGE_COORD!r} length {cov.size} does not match "
+            f"{dim!r} size {ds.sizes[dim]}"
+        )
+    keep = cov >= min_coverage - 1e-12
+    if not np.any(keep):
+        raise UsageError(
+            f"no {dim} intervals meet --min-coverage {min_coverage} "
+            f"(coverage {np.array2string(cov, precision=3)})"
+        )
+    if np.all(keep):
+        return ds
+    return ds.isel({dim: keep})
+
+
+def _step_delta_days(ds):
+    steps = np.asarray(ds["step"].values)
+    if steps.size < 2:
+        raise UsageError("need at least 2 steps to deaccumulate")
+    try:
+        diffs_ns = np.diff(steps.astype("timedelta64[ns]").astype(np.int64))
+    except (TypeError, ValueError) as exc:
+        raise UsageError(f"could not diff step axis: {exc}") from None
+    if np.any(diffs_ns <= 0):
+        raise UsageError("step axis must be strictly increasing")
+    return diffs_ns.astype(np.float64) / 1e9 / 86400.0
+
+
+def _broadcast_along_step(delta_days, dims):
+    shape = [1] * len(dims)
+    shape[dims.index("step")] = -1
+    return delta_days.reshape(shape)
+
+
+def deaccumulate_along_step(ds, names=None):
+    """Per-step diff along ``step``. Precip amounts become ``mm day-1`` rates.
+
+    Drops the first step. Refuses variables that already look like rates.
+    """
+    if "step" not in ds.dims:
+        raise UsageError("deaccumulate requires a step dim")
+    names = list(names) if names is not None else list(ds.data_vars)
+    out = ds.isel(step=slice(1, None))
+    delta_days = _step_delta_days(ds)
+    for name in names:
+        if name not in ds.data_vars:
+            raise UsageError(f"variable {name!r} not in dataset (have {list(ds.data_vars)})")
+        da = ds[name]
+        units = variable_units(da) or da.attrs.get("units")
+        std = da.attrs.get("standard_name")
+        if (isinstance(std, str) and std.strip().lower().endswith(("_rate", "_flux"))) or (
+            isinstance(units, str) and _RATE_RE.search(units)
+        ):
+            raise UsageError(f"'{name}' looks like a rate; refuse to deaccumulate")
+        plain = da.pint.dequantify() if da.pint.units is not None else da
+        src_units = plain.attrs.get("units") or units
+        sliced = plain.isel(step=slice(1, None))
+        diffs = np.clip(
+            sliced.values - plain.isel(step=slice(0, -1)).values,
+            a_min=0,
+            a_max=None,
+        )
+        kind = classify_variable(name, units=src_units, standard_name=std)
+        if kind is None and isinstance(src_units, str) and src_units.strip():
+            kind = kind_from_units(src_units)
+        attrs = dict(plain.attrs)
+        if kind == "precip_amount":
+            if "step" not in sliced.dims:
+                raise UsageError(f"variable {name!r} has no step dim")
+            mm, _ = convert_values(diffs, src_units, STANDARD["precip_amount"]["units"])
+            rate = mm / _broadcast_along_step(delta_days, sliced.dims)
+            diffed = sliced.copy(data=rate)
+            attrs["units"] = STANDARD["precip"]["units"]
+            attrs["standard_name"] = STANDARD["precip"]["standard_name"]
+        else:
+            diffed = sliced.copy(data=diffs)
+        diffed.attrs = attrs
+        out[name] = diffed
+    return out
+
+
+def precip_amounts_to_rates(ds, *, interval=None):
+    """Convert precip-amount data vars to ``mm day-1`` rates.
+
+    Cumulative-since-init forecast amounts (every data var is an amount on
+    ``step``) are deaccumulated. Otherwise amounts are divided by ``interval``
+    or stamped/inferred ``data_interval``. Already-rate precip is unchanged.
+    """
+    amount_names = []
+    for name in ds.data_vars:
+        da = ds[name]
+        units = variable_units(da) or da.attrs.get("units")
+        kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
+        if kind == "precip_amount":
+            amount_names.append(name)
+    if not amount_names:
+        return ds
+
+    if "step" in ds.dims and ds.sizes["step"] >= 2 and set(amount_names) == set(ds.data_vars):
+        return deaccumulate_along_step(ds, names=amount_names)
+
+    period = interval or data_interval_of(ds)
+    if period is None:
+        axis = _time_or_step_dim(ds)
+        if axis is None:
+            raise UsageError(
+                "cannot convert precip amounts to rates: no data_interval and no time/step dim"
+            )
+        period = format_duration(infer_timestep(ds, axis))
+    duration = parse_aggregation_period(period)
+    out = ds.copy(deep=False)
+    dirty = False
+    for name in amount_names:
+        da = ds[name]
+        quantified_in = da.pint.units is not None
+        qda = da if quantified_in else da.pint.quantify()
+        rate = qda / duration
+        try:
+            rate = rate.pint.to(STANDARD["precip"]["units"])
+        except (pint_xarray.pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
+            pass
+        if not quantified_in:
+            rate = rate.pint.dequantify()
+        attrs = dict(rate.attrs)
+        attrs["units"] = STANDARD["precip"]["units"]
+        attrs["standard_name"] = STANDARD["precip"]["standard_name"]
+        if not dirty:
+            out = ds.copy()
+            dirty = True
+        out[name] = rate
+        out[name].attrs = attrs
+    return out
+
+
+def precip_convertible_names(ds):
+    """Data-var names classified as precip whose units convert to a rate or amount.
+
+    Skips companions that inherit a precip ``standard_name`` or name hint but
+    carry non-precip units (e.g. temperature in ``K``).
+    """
+    names = []
+    for name in ds.data_vars:
+        da = ds[name]
+        units = variable_units(da) or da.attrs.get("units")
+        kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
+        if kind not in ("precip", "precip_amount"):
+            continue
+        if not isinstance(units, str) or not units.strip():
+            continue
+        if kind_from_units(units) in ("precip", "precip_amount"):
+            names.append(name)
+            continue
+        if units_convertible(units, STANDARD["precip"]["units"]) or units_convertible(
+            units, STANDARD["precip_amount"]["units"]
+        ):
+            names.append(name)
+    return names
