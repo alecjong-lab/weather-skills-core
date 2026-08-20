@@ -43,14 +43,14 @@ synonym; those still count (see [Names on disk](#names-on-disk)).
 
 ## Types
 
-| Type (and aliases) | Required dimensions |
+| Type | Required dimensions |
 | --- | --- |
-| `spatial`, `space` | `lat` + `lon` |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
+| `spatial` | `lat` + `lon` |
+| `observations` | `lat` + `lon` + `time` |
 | `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
 | `vertical_forecast` | forecast + `vertical` |
 | `ensemble_forecast` | forecast + `member` |
-| `point_obs`, `station` | `point_id` + `time` |
+| `point_obs` | `point_id` + `time` |
 | `any` | any Zarr (skip the dim check) |
 
 `any` still opens a Zarr. Opaque files and figures use `pathlib.Path`,

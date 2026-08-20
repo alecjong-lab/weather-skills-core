@@ -51,17 +51,6 @@ TYPE_DIMS: dict[str, frozenset[str]] = {
     "point_obs": frozenset({POINT_ID, TIME}),
 }
 
-# Type name synonyms → primary key in TYPE_DIMS
-TYPE_ALIASES: dict[str, str] = {
-    "space": "spatial",
-    "obs": "observations",
-    "analysis": "observations",
-    "retrieval": "observations",
-    "field": "observations",
-    "data": "observations",
-    "station": "point_obs",
-}
-
 # Dataset / CF names → preferred ontology name (lat/lon preferred; x/y also ontology dims).
 ALIASES: dict[str, str] = {
     "lat": "lat",
@@ -89,9 +78,6 @@ ALIASES: dict[str, str] = {
     "doy": "day_of_year",
 }
 
-# Non-dim I/O kinds
-UNSTRUCTURED = "unstructured"
-FIGURE = "figure"
 ANY = "any"
 
 
@@ -103,72 +89,40 @@ def names_for(preferred: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class IoSpec:
-    """What one Zarr path is allowed to be.
+    """Required ontology dims for one Zarr path.
 
     Built by :class:`~weather_skills_core.Dataset` (or :func:`normalize_io_spec`).
-    The decorator uses it for CLI help and to check opened Zarrs via
-    :func:`validate_input`.
-
-    Examples (author shorthand via ``Dataset(...)`` → meaning)::
-
-        Dataset("forecast")                     # forecast dims (see TYPE_DIMS)
-        Dataset("time")                         # has a time dimension
-        Dataset("lat, lon")                     # has *all* (comma string = AND)
-        Dataset(("lat", "lon", "member"))       # same AND as a tuple
-        Dataset(["observations", "forecast"])   # matches *either* (list = OR)
-        Dataset("any")                          # any Zarr; skip dimension checks
+    Each alternative is a set of dims that must all be present; the dataset
+    may match any one. ``None`` means no dim check (``"any"``).
 
     Opaque files use ``pathlib.Path``, not ``Dataset``.
-
-    Fields:
-        kind: ``"zarr"``, ``"unstructured"``, or ``"figure"`` (legacy; new skills
-            use ``Path`` for non-Zarr).
-        alternatives: For Zarr, each item is a set of ontology dims that must
-            all be present. The dataset may match any one item. ``None`` means
-            no dim check (``"any"``) or a non-Zarr kind.
-        variadic: Legacy ``+`` suffix on old ``inputs=`` entries.
-        label: Text for help and errors (e.g. ``"forecast"``).
     """
 
-    kind: str  # "zarr" | "unstructured" | "figure"
     alternatives: tuple[frozenset[str], ...] | None  # None = any (no dim check)
-    variadic: bool = False
-    label: str = ""
 
 
 def required_dims_for(name: str) -> frozenset[str]:
-    """Ontology dims required by one type or dim name (``TYPE_ALIASES`` → ``TYPE_DIMS``, else ``DIMS``/``ALIASES``)."""
-    primary = TYPE_ALIASES.get(name, name)
-    if primary in TYPE_DIMS:
-        return TYPE_DIMS[primary]
+    """Ontology dims required by one type or dim name (``TYPE_DIMS`` or ``DIMS``)."""
+    if name in TYPE_DIMS:
+        return TYPE_DIMS[name]
     if name in DIMS:
         return frozenset({name})
-    dim = ALIASES.get(name, name)  # dataset-name synonyms: doy → day_of_year, …
-    if dim in DIMS:
-        return frozenset({dim})
     raise ValueError(
-        f"unknown type or dimension {name!r}; expected a dimension {sorted(DIMS)}, "
-        f"a type {sorted(TYPE_DIMS)}, or any/unstructured/figure"
+        f"unknown type or dimension {name!r}; expected a dimension {sorted(DIMS)} "
+        f"or a type {sorted(TYPE_DIMS)}"
     )
 
 
 def and_group(spec) -> frozenset[str]:
-    """Flatten a str or AND-tuple into one required dim-set."""
+    """Flatten a str or AND-tuple of ontology names into one required dim-set."""
     if isinstance(spec, str):
         return required_dims_for(spec)
     if isinstance(spec, tuple):
-        if not spec:
-            return frozenset()
         out: set[str] = set()
         for part in spec:
-            if isinstance(part, (list, tuple)) and not isinstance(part, str):
-                if isinstance(part, list):
-                    raise ValueError(f"OR lists cannot appear inside an AND tuple; got {part!r}")
-                out |= and_group(part)
-            elif isinstance(part, str):
-                out |= required_dims_for(part)
-            else:
+            if not isinstance(part, str):
                 raise ValueError(f"invalid AND-group entry {part!r}")
+            out |= required_dims_for(part)
         return frozenset(out)
     raise ValueError(f"expected str or tuple for AND-group, got {type(spec).__name__}")
 
@@ -191,48 +145,11 @@ def parse_alternatives(spec) -> tuple[frozenset[str], ...]:
     raise ValueError(f"invalid IO entry {spec!r}; expected str, list (OR), or tuple (AND)")
 
 
-def normalize_io_spec(raw, *, allow_variadic: bool = False, for_input: bool = True) -> IoSpec:
-    """Parse one ``inputs=``/``outputs=`` entry into a :class:`IoSpec` (kinds, ``+``, then dim spec)."""
-    variadic = False
-    label = repr(raw)
-    if isinstance(raw, str) and raw.endswith("+"):
-        if not allow_variadic:
-            raise ValueError(f"outputs do not support variadic '+'; got {raw!r}")
-        variadic = True
-        raw = raw[:-1]
-        label = raw + "+"
-
-    if isinstance(raw, str):
-        if raw == ANY:
-            return IoSpec(kind="zarr", alternatives=None, variadic=variadic, label=label or ANY)
-        if raw == UNSTRUCTURED:
-            return IoSpec(kind="unstructured", alternatives=None, variadic=variadic, label=raw)
-        if raw == FIGURE:
-            if for_input:
-                raise ValueError("figure is output-only")
-            return IoSpec(kind="figure", alternatives=None, variadic=False, label=raw)
-
-    alternatives = parse_alternatives(raw)
-    label = label if isinstance(raw, str) else repr(raw)
-    return IoSpec(kind="zarr", alternatives=alternatives, variadic=variadic, label=label)
-
-
-def normalize_io_specs(
-    raw_specs, *, allow_variadic: bool, for_input: bool
-) -> tuple[list[IoSpec], bool]:
-    """Parse ``inputs=``/``outputs=`` → ``(specs, is_variadic)``; ``+`` must be the sole entry."""
-    specs = list(raw_specs or [])
-    if not specs:
-        return [], False
-    parsed = [normalize_io_spec(s, allow_variadic=allow_variadic, for_input=for_input) for s in specs]
-    if any(s.variadic for s in parsed):
-        if len(parsed) != 1 or not parsed[0].variadic:
-            raise ValueError(
-                "variadic IO must be a single entry like 'any+' or 'time+'; "
-                "cannot mix fixed and variadic entries"
-            )
-        return parsed, True
-    return parsed, False
+def normalize_io_spec(raw) -> IoSpec:
+    """Parse a Dataset declaration body into a :class:`IoSpec`."""
+    if isinstance(raw, str) and raw == ANY:
+        return IoSpec(alternatives=None)
+    return IoSpec(alternatives=parse_alternatives(raw))
 
 
 def has_dim(ds, dim: str) -> bool:
@@ -359,52 +276,15 @@ def detect_type(ds) -> str:
 def validate_input(
     ds, allowed, name: str, *, dims: str | None = None, time_dim: str | None = None
 ) -> str:
-    """Check ``ds`` against an IoSpec or IO declaration; return ``detect_type``."""
+    """Check ``ds`` against an IoSpec or Dataset declaration; return ``detect_type``."""
     if isinstance(allowed, IoSpec):
-        if allowed.kind != "zarr":
-            return allowed.kind
-        validate_dims(ds, allowed.alternatives, name, dims=dims, time_dim=time_dim)
-        return detect_type(ds)
-
-    # String / list / tuple IO entry body (including legacy "data")
-    if isinstance(allowed, (str, list, tuple)):
-        if (
-            isinstance(allowed, list)
-            and allowed
-            and all(
-                isinstance(x, str)
-                and x
-                in (
-                    "data",
-                    "forecast",
-                    "station",
-                    "point_obs",
-                    "observations",
-                    "any",
-                )
-                for x in allowed
-            )
-        ):
-            mapped = [
-                ("observations" if x == "data" else "point_obs" if x == "station" else x)
-                for x in allowed
-            ]
-            spec = normalize_io_spec(mapped if len(mapped) > 1 else mapped[0], for_input=True)
-        else:
-            body = (
-                "observations"
-                if allowed == "data"
-                else "point_obs"
-                if allowed == "station"
-                else allowed
-            )
-            spec = normalize_io_spec(body, for_input=True)
-        if spec.kind != "zarr":
-            return spec.kind
-        validate_dims(ds, spec.alternatives, name, dims=dims, time_dim=time_dim)
-        return detect_type(ds)
-
-    raise ValueError(f"invalid validate_input allowed={allowed!r}")
+        spec = allowed
+    elif isinstance(allowed, (str, list, tuple)):
+        spec = normalize_io_spec(allowed)
+    else:
+        raise ValueError(f"invalid validate_input allowed={allowed!r}")
+    validate_dims(ds, spec.alternatives, name, dims=dims, time_dim=time_dim)
+    return detect_type(ds)
 
 
 def detect_spatial_dims(ds, override: str | None = None) -> tuple:

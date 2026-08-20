@@ -57,27 +57,6 @@ def normalize_step_coord(ds, dim: str = "step"):
     return ds.assign_coords({dim: values.astype("timedelta64[ns]")})
 
 
-def restore_data_var_attrs(src, dst):
-    """Copy data-variable attrs from ``src`` onto matching vars in ``dst``.
-
-    Used after operations (e.g. ``xarray-regrid``) that drop ``units`` and other
-    CF attrs from data variables.
-    """
-    out = dst
-    dirty = False
-    for name in src.data_vars:
-        if name not in dst.data_vars:
-            continue
-        attrs = dict(src[name].attrs)
-        if dict(dst[name].attrs) == attrs:
-            continue
-        if not dirty:
-            out = dst.copy()
-            dirty = True
-        out[name].attrs = attrs
-    return out
-
-
 def fill_missing_data_var_attrs(src, dst):
     """Fill attrs present on ``src`` but missing on matching ``dst`` data vars.
 

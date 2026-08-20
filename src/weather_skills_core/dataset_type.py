@@ -27,8 +27,20 @@ class Dataset:
     """
 
     def __init__(self, spec: str | list | tuple):
+        if isinstance(spec, str) and spec != std.ANY and "," in spec:
+            parts = tuple(p.strip() for p in spec.split(",") if p.strip())
+            if not parts:
+                raise ValueError(f"empty Dataset dim list in {spec!r}")
+            body: str | list | tuple = parts
+        elif isinstance(spec, (str, list, tuple)):
+            body = spec
+        else:
+            raise TypeError(f"Dataset() expects str, list, or tuple; got {type(spec).__name__}")
+        try:
+            self.io_spec = std.normalize_io_spec(body)
+        except ValueError as exc:
+            raise ValueError(f"invalid Dataset({spec!r}): {exc}") from exc
         self.raw = spec
-        self.io_spec = _io_spec_from_decl(spec)
 
     def __call__(self, value: str | Path) -> Path:
         """Argparse converter: CLI string → ``Path`` (opening happens in the decorator)."""
@@ -37,40 +49,13 @@ class Dataset:
     def __repr__(self) -> str:
         return f"Dataset({self.raw!r})"
 
-
-def _io_spec_from_decl(spec: str | list | tuple) -> std.IoSpec:
-    if isinstance(spec, str):
-        if spec in (std.UNSTRUCTURED, std.FIGURE):
-            raise ValueError(f"use pathlib.Path for {spec!r}, not Dataset")
-        if spec != std.ANY and "," in spec:
-            parts = tuple(p.strip() for p in spec.split(",") if p.strip())
-            if not parts:
-                raise ValueError(f"empty Dataset dim list in {spec!r}")
-            body: str | list | tuple = parts
-        else:
-            body = spec
-    elif isinstance(spec, (list, tuple)):
-        body = spec
-    else:
-        raise TypeError(
-            f"Dataset() expects str, list, or tuple; got {type(spec).__name__}"
-        )
-    try:
-        io = std.normalize_io_spec(body, allow_variadic=False, for_input=True)
-    except ValueError as exc:
-        raise ValueError(f"invalid Dataset({spec!r}): {exc}") from exc
-    if io.kind != "zarr":
-        raise ValueError(f"Dataset only accepts Zarr types; got kind={io.kind!r}")
-    return io
-
-
-def help_label(ds_type: Dataset) -> str:
-    """Short dim/type label for CLI help."""
-    spec = ds_type.io_spec
-    if spec.alternatives is None:
-        return "any"
-    if len(spec.alternatives) == 1:
-        dims = sorted(spec.alternatives[0])
-        return "+".join(dims) if dims else "any"
-    parts = ["{" + ",".join(sorted(alt)) + "}" for alt in spec.alternatives]
-    return " OR ".join(parts)
+    def help_label(self) -> str:
+        """Short dim/type label for CLI help."""
+        spec = self.io_spec
+        if spec.alternatives is None:
+            return "any"
+        if len(spec.alternatives) == 1:
+            dims = sorted(spec.alternatives[0])
+            return "+".join(dims) if dims else "any"
+        parts = ["{" + ",".join(sorted(alt)) + "}" for alt in spec.alternatives]
+        return " OR ".join(parts)

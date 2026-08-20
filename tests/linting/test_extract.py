@@ -67,13 +67,3 @@ def test_declaration_extraction_kwargs_spread_on_argument_is_dynamic(tmp_path):
     assert decl.arguments_dynamic
     assert any("argument(**kwargs) is dynamic" in note for note in decl.notes)
     assert any("reverse check is suppressed" in note for note in decl.notes)
-
-
-def test_declaration_extraction_arguments_keyword_is_not_supported(tmp_path):
-    script, skill_dir = write_script(
-        tmp_path,
-        '\n            from weather_skills_core import weather_skill\n            _SKILL_VERSION = "0.1.0"\n            SHARED = []\n\n            @weather_skill(name="some-skill", version=_SKILL_VERSION, arguments=SHARED)\n            def some_skill(**kwargs):\n                pass\n            ',
-    )
-    decl = extract_script(script, skill_dir)
-    assert decl.arguments_dynamic
-    assert any("arguments= is not a @weather_skill keyword" in note for note in decl.notes)

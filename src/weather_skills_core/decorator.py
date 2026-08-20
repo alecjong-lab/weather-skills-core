@@ -13,7 +13,7 @@ import xarray as xr
 from weather_skills_core import provenance as provenance_mod
 from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
-from weather_skills_core.dataset_type import Dataset, help_label
+from weather_skills_core.dataset_type import Dataset
 from weather_skills_core.errors import SkillError, UsageError
 from weather_skills_core.standard_utils import (
     fill_missing_data_var_attrs,
@@ -28,6 +28,7 @@ from weather_skills_core.units import (
 
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
+
 
 def argv_has_option(argv: list[str], option_strings) -> bool:
     """True when one of ``option_strings`` is present (bare, space, or ``--flag=``)."""
@@ -68,7 +69,7 @@ class Argument:
         return flag.lstrip("-").replace("-", "_")
 
 
-def build_history(name, version, args, params, input_paths, path_specs, upstream, strip_dests):
+def build_history(name, version, args, params, input_paths, upstream, strip_dests):
     """Append this skill's provenance entry to the first input's history."""
     entry_args = {k: v for k, v in vars(args).items() if k not in strip_dests}
     for dest in ("date", "start_time", "end_time"):
@@ -88,7 +89,7 @@ def build_history(name, version, args, params, input_paths, path_specs, upstream
                 "hash": provenance_mod.hash_zarr(path),
                 "history": hist,
             }
-            for path, _spec, hist in zip(input_paths, path_specs, upstream, strict=True)
+            for path, hist in zip(input_paths, upstream, strict=True)
         ]
         base_history = upstream[0]
 
@@ -149,7 +150,6 @@ def write_output(value, out_path, history, first_ds):
 def open_dataset_params(params, arguments):
     """Replace Dataset-typed Path values with opened/validated/quantified datasets."""
     input_paths: list[Path] = []
-    path_specs: list[std.IoSpec] = []
     upstream: list = []
     first_ds = None
 
@@ -173,28 +173,12 @@ def open_dataset_params(params, arguments):
             ds = quantify_dataset(ds)
             opened.append(ds)
             input_paths.append(path)
-            path_specs.append(arg.dataset_type.io_spec)
             upstream.append(provenance_mod.load_history(path))
             if first_ds is None:
                 first_ds = ds
         params[dest] = opened if isinstance(raw, (list, tuple)) else opened[0]
 
-    return params, input_paths, path_specs, upstream, first_ds
-
-
-def pass_dataset_input_as_ds(params, arguments):
-    """Dataset ``--input`` is passed to the skill as ``ds``.
-
-    argparse dest stays ``input`` (the flag name). The function parameter is
-    ``ds`` so skills do not need ``dest="ds"``. Several ``--input`` paths
-    (nargs / append) arrive as a list still named ``ds``.
-    """
-    if not any(a.dataset_type is not None and a.dest == "input" for a in arguments):
-        return params
-    if "input" not in params:
-        return params
-    params["ds"] = params.pop("input")
-    return params
+    return params, input_paths, upstream, first_ds
 
 
 def argument(*option_strings, **kwargs):
@@ -284,7 +268,7 @@ def weather_skill(
         for arg in arguments:
             kwargs = dict(arg.kwargs)
             if arg.dataset_type is not None:
-                label = help_label(arg.dataset_type)
+                label = arg.dataset_type.help_label()
                 kwargs.setdefault("metavar", "PATH")
                 if "help" not in arg.kwargs:
                     kwargs["help"] = f"Input Zarr ({label})."
@@ -306,8 +290,7 @@ def weather_skill(
 
             try:
                 probing = any(
-                    arg.probe and argv_has_option(argv, arg.option_strings)
-                    for arg in arguments
+                    arg.probe and argv_has_option(argv, arg.option_strings) for arg in arguments
                 )
                 saved_required = [(action, action.required) for action in parser._actions]
                 try:
@@ -319,10 +302,12 @@ def weather_skill(
                     for action, required in saved_required:
                         action.required = required
                 params = standard_args.convert_standard_args(args, arguments)
-                params, input_paths, path_specs, upstream, first_ds = open_dataset_params(
-                    params, arguments
-                )
-                params = pass_dataset_input_as_ds(params, arguments)
+                params, input_paths, upstream, first_ds = open_dataset_params(params, arguments)
+                if (
+                    any(a.dataset_type is not None and a.dest == "input" for a in arguments)
+                    and "input" in params
+                ):
+                    params["ds"] = params.pop("input")
 
                 output_paths: list[Path] = []
                 if output:
@@ -346,7 +331,7 @@ def weather_skill(
                     )
 
                 history = build_history(
-                    name, version, args, params, input_paths, path_specs, upstream, strip_dests
+                    name, version, args, params, input_paths, upstream, strip_dests
                 )
                 for value, out_path in zip(results, output_paths, strict=True):
                     write_output(value, out_path, history, first_ds)

@@ -18,10 +18,7 @@ STANDARD_HELP = {
 @dataclass(frozen=True)
 class StandardParameter:
     name: str
-    dest: str
     flags: tuple
-    kind: str  # "canonical"
-    accepts_help: bool = False
 
 
 def standard_parameters():
@@ -31,11 +28,11 @@ def standard_parameters():
     (``type=Dataset(...)`` / ``type=Path``); they are not catalogued here.
     """
     return (
-        StandardParameter("start_time", "start_time", ("--start-time",), "canonical", True),
-        StandardParameter("end_time", "end_time", ("--end-time",), "canonical", True),
-        StandardParameter("date", "date", ("--date",), "canonical", True),
-        StandardParameter("bbox", "bbox", ("--bbox",), "canonical", True),
-        StandardParameter("variable", "variable", ("--variable", "-v"), "canonical", True),
+        StandardParameter("start_time", ("--start-time",)),
+        StandardParameter("end_time", ("--end-time",)),
+        StandardParameter("date", ("--date",)),
+        StandardParameter("bbox", ("--bbox",)),
+        StandardParameter("variable", ("--variable", "-v")),
     )
 
 

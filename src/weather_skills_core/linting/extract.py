@@ -128,13 +128,13 @@ def _dest_from_option_strings(flags: tuple[str, ...], kwargs: dict) -> str:
     return flag.lstrip("-").replace("-", "_")
 
 
-def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> ArgShape | None:
-    """Build an ArgShape from option-string AST nodes + kwargs AST nodes."""
-    if not isinstance(option_strings, ast.Tuple | ast.List):
-        notes.append("arguments: option_strings is not a literal sequence of strings")
+def _shape_from_argument_call(call: ast.Call, notes: list[str]) -> ArgShape | None:
+    """Build an ArgShape from one ``@weather_skill.argument(...)`` call."""
+    if not call.args:
+        notes.append("arguments: argument() has no option strings; skipped")
         return None
     flags = []
-    for elt in option_strings.elts:
+    for elt in call.args:
         v = _literal(elt)
         if not isinstance(v, str):
             notes.append("arguments: a non-literal option string was skipped")
@@ -142,25 +142,18 @@ def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> A
         flags.append(v)
     flags = tuple(flags)
 
-    if kwargs_node is None:
-        kwargs_node = ast.Dict(keys=[], values=[])
-    if not isinstance(kwargs_node, ast.Dict):
-        notes.append(f"arguments {flags[0]!r}: kwargs is not a literal dict; recorded as dynamic")
-        dest = _dest_from_option_strings(flags, {})
-        return ArgShape(dest=dest, flags=flags, dynamic=True)
-
     spec = {}
     dynamic_keys = []
-    for key_node, value_node in zip(kwargs_node.keys, kwargs_node.values, strict=True):
-        key = _literal(key_node) if key_node is not None else DYNAMIC
-        if key is DYNAMIC or not isinstance(key, str):
-            notes.append(f"arguments {flags[0]!r}: a non-literal kwargs key was skipped")
-            continue
+    for kw in call.keywords:
+        if kw.arg is None:
+            notes.append("arguments: argument(**kwargs) is dynamic")
+            return None
+        key = kw.arg
+        value_node = kw.value
         if key == "type":
             if isinstance(value_node, ast.Name):
                 spec["type"] = value_node.id
             elif isinstance(value_node, ast.Call):
-                # type=Dataset(...), type=Path, type=int(), …
                 func = value_node.func
                 if isinstance(func, ast.Name):
                     spec["type"] = func.id
@@ -215,40 +208,6 @@ def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> A
     )
 
 
-def _shape_from_argument_call(call: ast.Call, notes: list[str]) -> ArgShape | None:
-    """Build an ArgShape from one ``@weather_skill.argument(...)`` call."""
-    if not call.args:
-        notes.append("arguments: argument() has no option strings; skipped")
-        return None
-    # Positional option strings: argument("--foo", "-f", help="...")
-    option_nodes = list(call.args)
-    if call.keywords:
-        keys = []
-        values = []
-        for kw in call.keywords:
-            if kw.arg is None:
-                notes.append("arguments: argument(**kwargs) is dynamic")
-                return None
-            keys.append(ast.Constant(value=kw.arg))
-            values.append(kw.value)
-        kwargs_node = ast.Dict(keys=keys, values=values)
-    else:
-        kwargs_node = ast.Dict(keys=[], values=[])
-    return _shape_from_add_argument(
-        ast.Tuple(elts=option_nodes, ctx=ast.Load()),
-        kwargs_node,
-        notes,
-    )
-
-
-def _is_argument_decorator_call(dec: ast.AST) -> bool:
-    """True for ``@weather_skill.argument(...)`` (or ``@*.argument(...)``)."""
-    if not isinstance(dec, ast.Call):
-        return False
-    func = dec.func
-    return isinstance(func, ast.Attribute) and func.attr == "argument"
-
-
 def _extract_stacked_arguments(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef, notes: list[str]
 ) -> tuple[dict[str, ArgShape], bool]:
@@ -257,10 +216,13 @@ def _extract_stacked_arguments(
     dynamic = False
     found = False
     for dec in func_node.decorator_list:
-        if not _is_argument_decorator_call(dec):
+        if not (
+            isinstance(dec, ast.Call)
+            and isinstance(dec.func, ast.Attribute)
+            and dec.func.attr == "argument"
+        ):
             continue
         found = True
-        assert isinstance(dec, ast.Call)
         shape = _shape_from_argument_call(dec, notes)
         if shape is None:
             dynamic = True
@@ -352,22 +314,6 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
 
     version_node = keywords.get("version")
     decl.version_passed = isinstance(version_node, ast.Name) and version_node.id == "_SKILL_VERSION"
-
-    if "inputs" in keywords:
-        decl.notes.append(
-            "inputs= is not a @weather_skill keyword; declare Dataset-typed "
-            "@weather_skill.argument flags"
-        )
-    if "outputs" in keywords:
-        decl.notes.append(
-            "outputs= is not a @weather_skill keyword; the decorator owns "
-            "-o/--output (or pass output=False)"
-        )
-    if "arguments" in keywords:
-        decl.notes.append(
-            "arguments= is not a @weather_skill keyword; stack @weather_skill.argument(...) instead"
-        )
-        decl.arguments_dynamic = True
 
     stacked, stacked_dynamic = _extract_stacked_arguments(func_node, decl.notes)
     decl.arguments = stacked

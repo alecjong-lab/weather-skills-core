@@ -89,10 +89,6 @@ def main(argv=None) -> int:
     )
 
     args = parser.parse_args(argv)
-    return _lint(args)
-
-
-def _lint(args) -> int:
     from weather_skills_core.errors import UsageError
     from weather_skills_core.linting.render import render_json, render_text
     from weather_skills_core.linting.run import run_lint

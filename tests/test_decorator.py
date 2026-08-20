@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_data, make_forecast
+from conftest import make_forecast, make_gridded
 from PIL import Image
 
 from weather_skills_core import Dataset
@@ -66,7 +66,7 @@ def test_probe_skips_required_input_and_does_not_write(tmp_path):
     def skill(ds, output, ping, **kwargs):
         assert ping is True
         assert ds is None
-        return make_data()
+        return make_gridded()
 
     result = skill(["--ping", "-o", str(out)])
     assert result is not None
@@ -88,7 +88,7 @@ def test_missing_output_still_required_without_probe():
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--ping", action="store_true", probe=True)
     def skill(output, ping, **kwargs):
-        return make_data()
+        return make_gridded()
 
     with pytest.raises(SystemExit):
         skill([])
@@ -100,7 +100,7 @@ def test_parser_dates_range():
     @weather_skill.argument("--start-time", required=True)
     @weather_skill.argument("--end-time", required=True)
     def skill(output, start_time, end_time, **kwargs):
-        return make_data()
+        return make_gridded()
 
     dests = {a.dest for a in skill.parser._actions if a.dest != "help"}
     assert "start_time" in dests and "end_time" in dests
@@ -111,7 +111,7 @@ def test_parser_variable_append():
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--variable", "-v", action="append", required=True)
     def skill(output, variable, **kwargs):
-        return make_data()
+        return make_gridded()
 
     action = next(a for a in skill.parser._actions if a.dest == "variable")
     assert action.required is True
@@ -123,7 +123,7 @@ def test_parser_extra_argument():
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--smoothing", "-s", type=int, default=1)
     def skill(output, smoothing, **kwargs):
-        return make_data()
+        return make_gridded()
 
     action = next(a for a in skill.parser._actions if a.dest == "smoothing")
     assert action.default == 1
@@ -143,7 +143,7 @@ def test_parser_argument_order_matches_source():
     @weather_skill.argument("--date", required=True)
     @weather_skill.argument("--bbox", help="Study area.")
     def skill(output, date, bbox, **kwargs):
-        return make_data()
+        return make_gridded()
 
     dests = [a.dest for a in skill.parser._actions if a.dest in ("date", "bbox")]
     assert dests == ["date", "bbox"]
@@ -154,7 +154,7 @@ def test_parser_canonical_bbox_help_appended():
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--bbox", help="Study area.")
     def skill(output, bbox, **kwargs):
-        return make_data()
+        return make_gridded()
 
     action = next(a for a in skill.parser._actions if a.dest == "bbox")
     assert "Study area." in action.help
@@ -176,7 +176,7 @@ def test_parser_dataset_and_comma_and():
 def test_run_loop_copy_dataset(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="copy", version="0.1.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
@@ -188,26 +188,12 @@ def test_run_loop_copy_dataset(tmp_path):
     assert load_history(out)[-1]["skill"] == "copy"
 
 
-def test_run_loop_explicit_dest_ds_still_works(tmp_path):
-    src = tmp_path / "in.zarr"
-    out = tmp_path / "out.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
-
-    @weather_skill(name="copy", version="0.1.0")
-    @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest="ds")
-    def copy(ds, output, **kwargs):
-        return ds
-
-    copy(["-i", str(src), "-o", str(out)])
-    assert out.exists()
-
-
 def test_run_loop_bbox_passed_as_tuple(tmp_path):
     from datetime import date
 
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
     seen = {}
 
     @weather_skill(name="s", version="0.1.0")
@@ -248,7 +234,7 @@ def test_run_loop_start_after_end_exits(tmp_path):
     @weather_skill.argument("--start-time", required=True)
     @weather_skill.argument("--end-time", required=True)
     def skill(output, start_time, end_time, **kwargs):
-        return make_data()
+        return make_gridded()
 
     with pytest.raises(SystemExit) as exc:
         skill(["-o", str(out), "--start-time", "2026-01-10", "--end-time", "2026-01-01"])
@@ -263,7 +249,7 @@ def test_run_loop_date_parsed(tmp_path):
     @weather_skill.argument("--date", required=True)
     def skill(output, date, **kwargs):
         seen["date"] = date.isoformat()
-        return make_data()
+        return make_gridded()
 
     skill(["-o", str(out), "--date", "2026-01-15"])
     assert seen["date"] == "2026-01-15"
@@ -274,8 +260,8 @@ def test_run_loop_two_inputs(tmp_path):
     a = tmp_path / "a.zarr"
     b = tmp_path / "b.zarr"
     out = tmp_path / "out.zarr"
-    make_data().to_zarr(a, mode="w", consolidated=True)
-    make_data(fill=2.0).to_zarr(b, mode="w", consolidated=True)
+    make_gridded().to_zarr(a, mode="w", consolidated=True)
+    make_gridded(fill=2.0).to_zarr(b, mode="w", consolidated=True)
 
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), nargs=2, required=True)
@@ -295,7 +281,7 @@ def test_run_loop_path_input_not_dataset(tmp_path):
     @weather_skill.argument("-i", "--input", type=Path, required=True)
     def wrap(input, output, **kwargs):
         assert input == raw
-        return make_data()
+        return make_gridded()
 
     wrap(["-i", str(raw), "-o", str(out)])
     assert out.exists()
@@ -304,7 +290,7 @@ def test_run_loop_path_input_not_dataset(tmp_path):
 def test_run_loop_figure_output(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "plot.png"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="plot", version="0.1.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
@@ -334,7 +320,7 @@ def test_run_loop_figure_wrong_path_exits(tmp_path):
 def test_run_loop_output_kwarg_single(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
     seen = {}
 
     @weather_skill(name="copy", version="0.1.0")
@@ -349,7 +335,7 @@ def test_run_loop_output_kwarg_single(tmp_path):
 
 def test_run_loop_no_artifact(tmp_path):
     src = tmp_path / "in.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="inspect", version="0.1.0", output=False)
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
@@ -365,14 +351,14 @@ def test_run_loop_rejects_manual_output_flag():
         @weather_skill(name="s", version="0.1.0")
         @weather_skill.argument("-o", "--output", type=Path, required=True)
         def skill(output, **kwargs):
-            return make_data()
+            return make_gridded()
 
 
 def test_run_loop_multi_output_writes_both(tmp_path):
     src = tmp_path / "in.zarr"
     a = tmp_path / "a.zarr"
     b = tmp_path / "b.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="split", version="0.1.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
@@ -388,7 +374,7 @@ def test_run_loop_output_count_mismatch_exits(tmp_path):
     src = tmp_path / "in.zarr"
     a = tmp_path / "a.zarr"
     b = tmp_path / "b.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="copy", version="0.1.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
@@ -403,7 +389,7 @@ def test_run_loop_output_count_mismatch_exits(tmp_path):
 def test_run_loop_any_accepts_shapes(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    make_data().to_zarr(src, mode="w", consolidated=True)
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
 
     @weather_skill(name="s", version="0.1.0")
     @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
@@ -418,7 +404,7 @@ def test_run_loop_variadic_inputs(tmp_path):
     paths = []
     for i in range(3):
         p = tmp_path / f"{i}.zarr"
-        make_data(fill=float(i)).to_zarr(p, mode="w", consolidated=True)
+        make_gridded(fill=float(i)).to_zarr(p, mode="w", consolidated=True)
         paths.append(p)
     out = tmp_path / "out.zarr"
     seen = {}
@@ -442,7 +428,7 @@ def test_run_loop_negative_bbox_latitude(tmp_path):
     @weather_skill.argument("--bbox", required=True)
     def skill(output, bbox, **kwargs):
         seen["bbox"] = bbox
-        return make_data()
+        return make_gridded()
 
     skill(["-o", str(out), "--bbox", "-10/20/-20/30"])
     assert seen["bbox"] == (-10.0, 20.0, -20.0, 30.0)
@@ -454,7 +440,7 @@ def test_run_loop_history_args_json(tmp_path):
     @weather_skill(name="s", version="0.1.0")
     @weather_skill.argument("--variable", "-v", action="append", required=True)
     def skill(output, variable, **kwargs):
-        return make_data()
+        return make_gridded()
 
     skill(["-o", str(out), "-v", "precip", "-v", "temp"])
     entry = load_history(out)[-1]
@@ -466,7 +452,7 @@ def test_run_loop_history_args_json(tmp_path):
 def test_run_loop_attrs_merge_from_input(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    ds = make_data()
+    ds = make_gridded()
     ds.attrs["weather_skills_source"] = "test-src"
     ds.to_zarr(src, mode="w", consolidated=True)
 
@@ -506,7 +492,7 @@ def test_run_loop_write_normalizes_step_and_fills_stripped_units(tmp_path):
 def test_run_loop_write_stamps_amount_standard_name(tmp_path):
     src = tmp_path / "in.zarr"
     out = tmp_path / "out.zarr"
-    ds = make_data(name="tp", units="kg m-2")
+    ds = make_gridded(name="tp", units="kg m-2")
     ds["tp"].attrs["standard_name"] = "lwe_precipitation_rate"
     ds.to_zarr(src, mode="w", consolidated=True)
 

@@ -104,16 +104,10 @@ def _finding(rule_id: str, decl: SkillDeclaration, flag: str | None, message: st
 def _standard_lookup() -> dict[str, StandardParameter]:
     lookup: dict[str, StandardParameter] = {}
     for param in standard_parameters():
-        lookup[param.dest] = param
+        lookup[param.name] = param
         for flag in param.flags:
             lookup[flag] = param
     return lookup
-
-
-def _shadow_remedy(param: StandardParameter) -> str:
-    return (
-        f"use the canonical @weather_skill.argument({'/'.join(repr(f) for f in param.flags)}) form"
-    )
 
 
 def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
@@ -129,20 +123,22 @@ def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
             if flag in lookup:
                 param = lookup[flag]
                 break
-        if param is None and shape.dest in lookup:
-            param = lookup[shape.dest]
-        if param is None or param.kind != "canonical":
+        if param is None:
+            param = lookup.get(shape.dest)
+        if param is None:
             continue
         # Declaring the canonical flag set is required, not a shadow.
         if set(shape.flags) == set(param.flags) or set(param.flags) <= set(shape.flags):
             continue
+        canonical = "/".join(repr(f) for f in param.flags)
         findings.append(
             _finding(
                 "WSK101",
                 decl,
                 shape.identity,
                 f"arguments {shape.dest!r} uses a non-canonical spelling of the standard "
-                f"{param.name} parameter ({'/'.join(param.flags)}); {_shadow_remedy(param)}.",
+                f"{param.name} parameter ({'/'.join(param.flags)}); "
+                f"use the canonical @weather_skill.argument({canonical}) form.",
             )
         )
     return findings

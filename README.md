@@ -188,18 +188,16 @@ def compare(forecast, obs, output, **kwargs):
 
 A type is a shortcut for a required set of dimensions.
 `Dataset("forecast")` is the same check as
-`Dataset("lat, lon, init_time, prediction_timedelta")`. Some types have extra
-names (`space` for `spatial`, `station` for `point_obs`); those are listed in
-the first column.
+`Dataset("lat, lon, init_time, prediction_timedelta")`.
 
 | Type | Required dimensions |
 | --- | --- |
-| `spatial`, `space` | `lat` + `lon` |
-| `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
+| `spatial` | `lat` + `lon` |
+| `observations` | `lat` + `lon` + `time` |
 | `forecast` | `lat` + `lon` + `init_time` + `prediction_timedelta` |
 | `vertical_forecast` | forecast dims + `vertical` |
 | `ensemble_forecast` | forecast dims + `member` |
-| `point_obs`, `station` | `point_id` + `time` |
+| `point_obs` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
 
 See

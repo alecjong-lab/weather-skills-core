@@ -1,13 +1,13 @@
 """Provenance helpers: history load/stamp and figure metadata."""
 
-from conftest import make_data
+from conftest import make_gridded
 from PIL import Image
 
 from weather_skills_core import provenance
 
 
 def write_store(path, history=None, fill=1.0):
-    ds = make_data(fill=fill)
+    ds = make_gridded(fill=fill)
     if history is not None:
         provenance.stamp_zarr(ds, history)
     ds.to_zarr(path, mode="w", consolidated=True)

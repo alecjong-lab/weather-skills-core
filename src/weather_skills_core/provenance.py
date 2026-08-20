@@ -322,27 +322,10 @@ def load_history(zarr_path: Path) -> list:
     return [] if parsed is None else parsed
 
 
-def hash_file(path: Path) -> str:
-    """Sha256 of a single file's bytes."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def input_ref(path: Path, *, include_hash: bool = True) -> dict:
-    """Single-input ``input`` value: ``{basename[, hash]}``."""
+def input_ref(path: Path) -> dict:
+    """Single-input ``input`` value: ``{basename, hash}``."""
     path = Path(path)
-    ref = {"basename": path.name}
-    if include_hash:
-        ref["hash"] = hash_zarr(path)
-    return ref
-
-
-def multi_input_ref(paths, histories) -> list:
-    """Multi-input ``input`` value: per-input ``{basename, hash, history}``."""
-    paths = [Path(p) for p in paths]
-    return [
-        {"basename": p.name, "hash": hash_zarr(p), "history": h}
-        for p, h in zip(paths, histories, strict=True)
-    ]
+    return {"basename": path.name, "hash": hash_zarr(path)}
 
 
 def build_entry(skill: str, version: str, args: dict, input) -> dict:

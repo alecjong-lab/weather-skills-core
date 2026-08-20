@@ -84,10 +84,6 @@ def test_detect_type_point_obs():
     assert dataset.detect_type(make_station()) == "point_obs"
 
 
-def test_detect_type_station_alias_same_as_point_obs():
-    assert dataset.parse_alternatives("station") == dataset.parse_alternatives("point_obs")
-
-
 def test_detect_type_step_with_time_dim_is_not_forecast():
     ds = make_forecast()
     ds = ds.drop_vars("time")
@@ -97,12 +93,6 @@ def test_detect_type_step_with_time_dim_is_not_forecast():
 
 def test_parse_io_spec_canonical_observations():
     assert dataset.parse_alternatives("observations") == (frozenset({"lat", "lon", "time"}),)
-
-
-def test_parse_io_spec_obs_aliases_same_as_observations():
-    expected = dataset.parse_alternatives("observations")
-    for alias in ("obs", "analysis", "retrieval", "field", "data"):
-        assert dataset.parse_alternatives(alias) == expected
 
 
 def test_parse_io_spec_or_list():
@@ -118,9 +108,8 @@ def test_parse_io_spec_and_tuple():
     )
 
 
-def test_parse_io_spec_spatial_alias():
+def test_parse_io_spec_spatial():
     assert dataset.parse_alternatives("spatial") == (frozenset({"lat", "lon"}),)
-    assert dataset.parse_alternatives("space") == (frozenset({"lat", "lon"}),)
 
 
 def test_parse_io_spec_vertical_forecast():
@@ -139,10 +128,6 @@ def test_validate_input_matching_type_passes():
     assert dataset.validate_input(make_gridded(), "observations", "in.zarr") == "observations"
 
 
-def test_validate_input_legacy_data_alias():
-    assert dataset.validate_input(make_gridded(), "data", "in.zarr") == "observations"
-
-
 def test_validate_input_list_of_alternatives():
     assert (
         dataset.validate_input(make_forecast(n_number=0), ["observations", "forecast"], "in.zarr")
@@ -159,7 +144,6 @@ def test_validate_input_or_canonical_list():
 
 def test_validate_input_dim_only_spatial():
     assert dataset.validate_input(make_gridded(), "spatial", "in.zarr") == "observations"
-    assert dataset.validate_input(make_gridded(), "space", "in.zarr") == "observations"
 
 
 def test_validate_input_gridded_rejected_when_forecast_expected():
@@ -167,27 +151,27 @@ def test_validate_input_gridded_rejected_when_forecast_expected():
         dataset.validate_input(make_gridded(), "forecast", "in.zarr")
 
 
-def test_validate_input_forecast_rejected_when_station_expected():
+def test_validate_input_forecast_rejected_when_point_obs_expected():
     with pytest.raises(UsageError, match="point_id"):
-        dataset.validate_input(make_forecast(), "station", "in.zarr")
+        dataset.validate_input(make_forecast(), "point_obs", "in.zarr")
 
 
 def test_validate_input_error_names_the_input():
     with pytest.raises(UsageError, match="my/path.zarr"):
-        dataset.validate_input(make_gridded(), "station", "my/path.zarr")
+        dataset.validate_input(make_gridded(), "point_obs", "my/path.zarr")
 
 
-def test_validate_input_station_missing_latitude_coord():
+def test_validate_input_point_obs_missing_latitude_coord():
     ds = make_station().drop_vars("latitude")
     with pytest.raises(UsageError, match="point_id"):
-        dataset.validate_input(ds, "station", "in.zarr")
+        dataset.validate_input(ds, "point_obs", "in.zarr")
 
 
-def test_validate_input_station_latitude_on_wrong_dim():
+def test_validate_input_point_obs_latitude_on_wrong_dim():
     ds = make_station()
     ds = ds.assign_coords(latitude=("time", np.zeros(ds.sizes["time"])))
     with pytest.raises(UsageError, match="point_id"):
-        dataset.validate_input(ds, "station", "in.zarr")
+        dataset.validate_input(ds, "point_obs", "in.zarr")
 
 
 def test_validate_input_point_obs_accepts_lat_lon_aliases():
