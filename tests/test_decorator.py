@@ -25,11 +25,27 @@ class TestParser:
         @weather_skill(name="s", version="1.0.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
         @weather_skill.argument("--bbox")
-        def skill(input, output, bbox, **kwargs):
-            return input
+        def skill(ds, output, bbox, **kwargs):
+            return ds
 
         dests = {a.dest for a in skill.parser._actions if a.dest != "help"}
         assert dests == {"input", "output", "bbox"}
+
+    def test_probe_latest_skips_required_output_and_flags(self, capsys):
+        from weather_skills_core.probe import PROBE_LATEST_KWARGS
+
+        @weather_skill(name="s", version="1.0.0")
+        @weather_skill.argument("--start-time", required=True)
+        @weather_skill.argument("--probe-latest", **PROBE_LATEST_KWARGS)
+        def skill(output, start_time, probe_latest, **kwargs):
+            print("none")
+
+        skill(["--probe-latest"])
+        assert capsys.readouterr().out.strip() == "none"
+        out_action = next(a for a in skill.parser._actions if a.dest == "output")
+        start_action = next(a for a in skill.parser._actions if a.dest == "start_time")
+        assert out_action.required is True
+        assert start_action.required is True
 
     def test_dates_range(self):
         @weather_skill(name="s", version="1.0.0")
@@ -106,12 +122,27 @@ class TestRunLoop:
 
         @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def copy(input, output, **kwargs):
-            return input
+        def copy(ds, output, **kwargs):
+            return ds
 
         copy(["-i", str(src), "-o", str(out)])
         assert out.exists()
         assert load_history(out)[-1]["skill"] == "copy"
+
+    def test_explicit_dest_ds_still_works(self, tmp_path):
+        src = tmp_path / "in.zarr"
+        out = tmp_path / "out.zarr"
+        make_data().to_zarr(src, mode="w", consolidated=True)
+
+        @weather_skill(name="copy", version="0.1.0")
+        @weather_skill.argument(
+            "-i", "--input", type=Dataset("observations"), required=True, dest="ds"
+        )
+        def copy(ds, output, **kwargs):
+            return ds
+
+        copy(["-i", str(src), "-o", str(out)])
+        assert out.exists()
 
     def test_bbox_passed_as_tuple(self, tmp_path):
         from datetime import date
@@ -126,11 +157,11 @@ class TestRunLoop:
         @weather_skill.argument("--bbox", required=True)
         @weather_skill.argument("--start-time", required=True)
         @weather_skill.argument("--end-time", required=True)
-        def skill(input, output, bbox, start_time, end_time, **kwargs):
+        def skill(ds, output, bbox, start_time, end_time, **kwargs):
             seen["bbox"] = bbox
             seen["start_time"] = start_time
             seen["end_time"] = end_time
-            return input
+            return ds
 
         skill(
             [
@@ -196,8 +227,8 @@ class TestRunLoop:
 
         @weather_skill(name="s", version="1.0.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), nargs=2, required=True)
-        def skill(input, output, **kwargs):
-            return input[0]
+        def skill(ds, output, **kwargs):
+            return ds[0]
 
         skill(["-i", str(a), str(b), "-o", str(out)])
         assert out.exists()
@@ -223,7 +254,7 @@ class TestRunLoop:
 
         @weather_skill(name="plot", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def plot(input, output, **kwargs):
+        def plot(ds, output, **kwargs):
             Image.new("RGB", (8, 8), color=(1, 2, 3)).save(output)
             return output
 
@@ -252,9 +283,9 @@ class TestRunLoop:
 
         @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def copy(input, output, **kwargs):
+        def copy(ds, output, **kwargs):
             seen["output"] = output
-            return input
+            return ds
 
         copy(["-i", str(src), "-o", str(out)])
         assert seen["output"] == out
@@ -265,8 +296,8 @@ class TestRunLoop:
 
         @weather_skill(name="inspect", version="0.1.0", output=False)
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def inspect(input, **kwargs):
-            return {"n": int(input.sizes["time"])}
+        def inspect(ds, **kwargs):
+            return {"n": int(ds.sizes["time"])}
 
         assert inspect(["-i", str(src)]) == {"n": 2}
 
@@ -286,9 +317,9 @@ class TestRunLoop:
 
         @weather_skill(name="split", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def split(input, output, **kwargs):
+        def split(ds, output, **kwargs):
             assert output == [a, b]
-            return input, input
+            return ds, ds
 
         split(["-i", str(src), "-o", str(a), "-o", str(b)])
         assert a.exists() and b.exists()
@@ -301,8 +332,8 @@ class TestRunLoop:
 
         @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def copy(input, output, **kwargs):
-            return input  # one Dataset, two -o paths
+        def copy(ds, output, **kwargs):
+            return ds  # one Dataset, two -o paths
 
         with pytest.raises(SystemExit) as exc:
             copy(["-i", str(src), "-o", str(a), "-o", str(b)])
@@ -315,8 +346,8 @@ class TestRunLoop:
 
         @weather_skill(name="s", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
-        def skill(input, output, **kwargs):
-            return input
+        def skill(ds, output, **kwargs):
+            return ds
 
         skill(["-i", str(src), "-o", str(out)])
         assert out.exists()
@@ -332,9 +363,9 @@ class TestRunLoop:
 
         @weather_skill(name="cat", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("any"), nargs="+", required=True)
-        def cat(input, output, **kwargs):
-            seen["n"] = len(input)
-            return input[0]
+        def cat(ds, output, **kwargs):
+            seen["n"] = len(ds)
+            return ds[0]
 
         argv = ["-i", *[str(p) for p in paths], "-o", str(out)]
         cat(argv)
@@ -376,8 +407,8 @@ class TestRunLoop:
 
         @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def copy(input, output, **kwargs):
-            return input.assign(precip=input["precip"] * 2)
+        def copy(ds, output, **kwargs):
+            return ds.assign(precip=ds["precip"] * 2)
 
         copy(["-i", str(src), "-o", str(out)])
         written = xr.open_zarr(out, consolidated=True)
@@ -393,8 +424,8 @@ class TestRunLoop:
 
         @weather_skill(name="strip", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("forecast"), required=True)
-        def strip(input, output, **kwargs):
-            out_ds = input.copy(deep=True)
+        def strip(ds, output, **kwargs):
+            out_ds = ds.copy(deep=True)
             for name in out_ds.data_vars:
                 out_ds[name].attrs.pop("units", None)
             return out_ds
@@ -414,8 +445,8 @@ class TestRunLoop:
 
         @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-        def copy(input, output, **kwargs):
-            return input
+        def copy(ds, output, **kwargs):
+            return ds
 
         copy(["-i", str(src), "-o", str(out)])
         written = xr.open_zarr(out, consolidated=True)
@@ -424,7 +455,7 @@ class TestRunLoop:
         )
 
     def test_none_return_skips_write(self, tmp_path):
-        out = tmp_path / "out.eml"
+        out = tmp_path / "out.txt"
 
         @weather_skill(name="compose", version="0.1.0")
         def compose(output, **kwargs):

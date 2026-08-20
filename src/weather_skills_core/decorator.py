@@ -15,6 +15,7 @@ from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
 from weather_skills_core.dataset_type import Dataset, help_label
 from weather_skills_core.errors import SkillError, UsageError
+from weather_skills_core.probe import argv_has_probe_latest
 from weather_skills_core.standard_utils import (
     fill_missing_data_var_attrs,
     normalize_step_coord,
@@ -168,6 +169,21 @@ def open_dataset_params(params, arguments):
     return params, input_paths, path_specs, upstream, first_ds
 
 
+def pass_dataset_input_as_ds(params, arguments):
+    """Dataset ``--input`` is passed to the skill as ``ds``.
+
+    argparse dest stays ``input`` (the flag name). The function parameter is
+    ``ds`` so skills do not need ``dest="ds"``. Several ``--input`` paths
+    (nargs / append) arrive as a list still named ``ds``.
+    """
+    if not any(a.dataset_type is not None and a.dest == "input" for a in arguments):
+        return params
+    if "input" not in params:
+        return params
+    params["ds"] = params.pop("input")
+    return params
+
+
 def argument(*option_strings, **kwargs):
     """Declare a CLI flag under ``@weather_skill`` (argparse-style)."""
     arg = Argument(*option_strings, **kwargs)
@@ -190,7 +206,8 @@ def weather_skill(
     """Turn a function into a weather skill CLI with validated I/O and provenance.
 
     Stack ``@weather_skill.argument`` for flags. Use ``type=Dataset(...)`` for
-    Zarr inputs (opened and dim-checked before the skill runs).
+    Zarr inputs (opened and dim-checked before the skill runs). Dataset
+    ``--input`` is passed to the skill as ``ds`` (a list when nargs/append).
 
     When ``output=True`` (default), the decorator owns ``-o/--output``
     (repeatable). It injects ``output`` as a ``Path`` (one path) or
@@ -199,6 +216,9 @@ def weather_skill(
     artifact per ``--output``. The number of returned values must match the
     number of ``--output`` paths. Returning ``None`` skips decorator write
     (skill already wrote). Set ``output=False`` for inspect-only skills.
+    ``--probe-latest`` (declared by fetchers) drops the ``--output``
+    requirement and any other ``required=True`` flags so a probe can run
+    without a download window.
 
     Skills open precip rates and amounts alike. The operation that cannot take
     amounts is ``rate_to_total`` (used by ``convert-to-totals``): multiplying
@@ -274,18 +294,31 @@ def weather_skill(
                 argv = standard_args.rewrite_bbox_argv(argv)
 
             try:
-                args = parser.parse_args(argv)
+                probing = argv_has_probe_latest(argv)
+                saved_required = [(action, action.required) for action in parser._actions]
+                try:
+                    if probing:
+                        for action in parser._actions:
+                            action.required = False
+                    args = parser.parse_args(argv)
+                finally:
+                    for action, required in saved_required:
+                        action.required = required
                 params = standard_args.convert_standard_args(args, arguments)
                 params, input_paths, path_specs, upstream, first_ds = open_dataset_params(
                     params, arguments
                 )
+                params = pass_dataset_input_as_ds(params, arguments)
 
                 output_paths: list[Path] = []
                 if output:
                     output_paths = [Path(p) for p in (args.output or [])]
-                    params["output"] = (
-                        output_paths[0] if len(output_paths) == 1 else output_paths
-                    )
+                    if not output_paths:
+                        params["output"] = None
+                    else:
+                        params["output"] = (
+                            output_paths[0] if len(output_paths) == 1 else output_paths
+                        )
 
                 result = fn(**params)
                 if not output or result is None:

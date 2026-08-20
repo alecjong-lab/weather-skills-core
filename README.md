@@ -218,9 +218,11 @@ a decorator flag. First call resolve-region to print the `N/W/S/E` bbox, then
 pass that to `--bbox`. `--start-time` / `--end-time` arrive as
 `datetime.date`, with a check that start is not after end. Relative dates
 (`latest`, `now-3d`) are not parsed here. First call resolve-time to print
-the `--start-time`/`--end-time` or `--date` flags, then pass those through.
-Fetcher skills also declare `--probe-latest` (latest available `YYYY-MM-DD`
-or `none` on stdout; no `-o`); resolve-time calls it when `--product` is set.
+the `--start-time`/`--end-time` or `--date` flags (calendar math against
+UTC today / `--as-of`), then pass those through. Fetcher skills also
+declare `--probe-latest` (latest available `YYYY-MM-DD` or `none` on
+stdout; no `-o`) — call the fetcher directly for that; do not expect
+resolve-time to probe.
 
 | Parameter | Flag | What you get |
 | --- | --- | --- |

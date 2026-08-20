@@ -19,7 +19,7 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 
 | Concept | Flag | Notes |
 | --- | --- | --- |
-| Zarr input | often `--input` / `-i` | `type=Dataset(...)`. Free-form names allowed. Use `nargs`/`append` for multi-input. |
+| Zarr input | often `--input` / `-i` | `type=Dataset(...)`. Arrives as `ds`. Free-form names allowed. Use `nargs`/`append` for multi-input. |
 | Output path | `--output` / `-o`, repeated | Owned by the decorator (`output=True` default). Count must match returned artifacts. |
 
 ### Region
@@ -44,49 +44,33 @@ skill-specific `--geojson` / `--mask-geojson`).
 | Single date | `--date` | CLI is absolute `YYYY-MM-DD`. Skill receives `datetime.date`. |
 
 Relative / rolling dates (`now`, `latest`, offsets, "the last two weeks") are
-not decorator flags. The resolve-time skill turns a query token plus an optional
-`--product` into printed `--start-time`/`--end-time` or `--date`, applying the
-current UTC date and that product's embargo / publication lag. Mutual exclusion
-of `--date` vs the range flags is skill-owned when needed.
+not decorator flags. The resolve-time skill turns a query token into printed
+`--start-time`/`--end-time` or `--date` from the current UTC date (or
+`--as-of`). It is calendar math only — it does not probe a product or clip
+to what is on disk. Mutual exclusion of `--date` vs the range flags is
+skill-owned when needed.
 
-Fetcher skills declare that lag on SKILL.md as `metadata.availability` (next to
-`catalog-group`). Core owns the calendar math and `load_products(skills_dir)`,
-which reads sibling SKILL.md files at runtime. Schema:
+Latest-available dates are not in YAML. Every fetcher implements
+`--probe-latest` (see `weather_skills_core.probe.PROBE_LATEST_KWARGS`).
+Stdout is one line `YYYY-MM-DD` or `none` (no realtime cap, e.g. CMIP6). Do
+not GET full fields — HEAD, directory listing, time coordinate, or a tiny
+catalog query. Optional IDENT selects a product (`--probe-latest final`,
+`--probe-latest noaa-gfs-forecast`). Agents call the fetcher directly; to
+end a rolling window on that day, pass it as resolve-time `--as-of`.
 
 ```yaml
 metadata:
   catalog-group: fetchers
-  availability:
-    shape: range          # date | range | either
-    policy: lag           # lag | embargo | none
-    lag_days: 4           # omit when schedule is set, or when policy is none with no cap
-    schedule: pentad      # optional: pentad | ecmwf-s2s
-    earliest: 2000-06-01  # optional YYYY-MM-DD coverage start
-    note: IMERG late ~4 days behind realtime
-    variants:             # optional; flatten to name:variant
-      final:
-        lag_days: 110
-  variables:              # exact --variable / -v names (not ARCO names on dynamical, etc.)
+  variables:                 # exact --variable / -v names, most-used first
     - precip
 ```
 
-`shape` is the fetcher's time flag (`date` → `--date`, `range` →
-`--start-time`/`--end-time`, `either` follows the query). `policy: none` with
-no `lag_days`/`schedule` means no realtime cap (future dates stay). Named
-schedules: `pentad` (close on 5/10/15/20/25/last of month, files 2 days later)
-and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
-`catalog-group: fetchers` skill must declare this block. resolve-time looks up
-the named `--product` via `load_products` on the sibling `skills/` directory
-(`--list-products` prints that live view). If a skill's variants do not all
-share the base `shape`, the bare skill name is not a product — use
-`skill:variant` (`dynamical-fetch:noaa-gfs-forecast`).
-
 `variables` is a non-empty list of exact `--variable` / `-v` tokens for that
-fetcher, **most-used first**. Names are catalog-specific (`precipitation_surface`
-on dynamical, `total_precipitation` on ARCO, `tp` on ECMWF S2S). Open catalogs
-(ARCO, CMIP6, dynamical) and closed ones with many fields (ECMWF S2S) list the
-usual first choices, not every field the source can serve.
-`load_products` requires this list on every fetcher.
+fetcher, **most-used first**. Names are catalog-specific
+(`precipitation_surface` on dynamical, `total_precipitation` on ARCO, `tp`
+on ECMWF S2S). Open catalogs (ARCO, CMIP6, dynamical) and closed ones with
+many fields (ECMWF S2S) list the usual first choices, not every field the
+source can serve.
 
 ### Variable
 
@@ -102,3 +86,4 @@ usual first choices, not every field the source can serve.
 | Calendar align | `--align-on` | `date` \| `year`. |
 | Workers | `--workers` | Parallelism (skill-specific). |
 | Title | `--title` | Plot title (skill-specific). |
+| Latest available | `--probe-latest` | Fetchers only. Print `YYYY-MM-DD` or `none` on stdout and exit. Optional ident. |

@@ -24,10 +24,11 @@ Mass precip flux (`kg m-2 s-1`) converts to depth rate using liquid-water
 density (1000 kg m⁻³).
 
 For accumulated variables like precip, fetch writes **rates**; period
-**totals** come from `convert-to-totals` / `rate_to_total` (rate × period).
-Skills otherwise open rates and amounts alike. `rate_to_total` is the
-operation that refuses precip amounts — multiplying an amount by a period
-would double-count.
+**totals** come from `convert-to-totals` / `rate_to_total` (rate × period),
+or in-memory via `precip_for_display` when a plotter sees
+`aggregation_period`. Skills otherwise open rates and amounts alike.
+`rate_to_total` is the operation that refuses precip amounts — multiplying
+an amount by a period would double-count.
 
 ## What the decorator does
 

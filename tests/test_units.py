@@ -25,6 +25,7 @@ from weather_skills_core.units import (
     looks_like_rate_display_name,
     parse_aggregation_period,
     precip_amounts_to_rates,
+    precip_for_display,
     quantify_dataset,
     rate_to_total,
     stamp_data_interval,
@@ -190,6 +191,22 @@ def test_rate_to_total_refuses_cell_methods_sum():
     q = quantify_dataset(ds)
     with pytest.raises(UsageError, match="precip total"):
         rate_to_total(q["precip"], "1 day")
+
+
+def test_precip_for_display_converts_aggregated_rate():
+    ds = make_gridded(name="precip", fill=2.0, units="mm day-1")
+    ds["precip"].attrs["aggregation_period"] = "1 day"
+    ds["precip"].attrs["standard_name"] = "lwe_precipitation_rate"
+    out = precip_for_display(ds, "precip")
+    assert out["precip"].attrs["units"] == STANDARD["precip_amount"]["units"]
+    assert out["precip"].attrs["long_name"] == PRECIP_AMOUNT_LONG_NAME
+    np.testing.assert_allclose(out["precip"].values, 2.0)
+
+
+def test_precip_for_display_noop_without_period():
+    ds = make_gridded(name="precip", units="mm day-1")
+    out = precip_for_display(ds, "precip")
+    assert out["precip"].attrs["units"] == "mm day-1"
 
 
 def test_quantify_dataset_passes_unitless_other_vars():

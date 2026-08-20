@@ -11,8 +11,8 @@ from weather_skills_core.standard_args import standard_parameters
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--variable", "-v")
-def _full(input, output, bbox, start_time, end_time, variable, **kwargs):
-    return input
+def _full(ds, output, bbox, start_time, end_time, variable, **kwargs):
+    return ds
 
 
 @weather_skill(name="date-only", version="0.1.0")

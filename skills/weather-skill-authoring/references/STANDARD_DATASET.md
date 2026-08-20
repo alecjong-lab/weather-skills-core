@@ -55,7 +55,7 @@ Declare the write path with `type=Path` on `-o/--output`.
 from weather_skills_core import Dataset, weather_skill
 
 @weather_skill(name="clip-region", version=_SKILL_VERSION)
-@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True)
 def clip_region(ds, output, **kwargs):
     return ds
 ```

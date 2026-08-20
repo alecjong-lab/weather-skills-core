@@ -38,7 +38,7 @@ _SKILL_VERSION = "0.1.0"
     name="my-skill",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True)
 @weather_skill.argument("--bbox", required=True)
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
@@ -62,8 +62,8 @@ and custom flags alike.
 ## Dataset inputs
 
 Use `type=Dataset(...)` for Zarr inputs. The decorator opens the path, checks
-required dims, quantifies units, and injects the opened dataset (not the path
-string). Grammar:
+required dims, quantifies units, and injects the opened dataset as `ds` (a
+list if you used `nargs`/`append`). Grammar:
 
 | Form | Meaning |
 | --- | --- |
@@ -73,7 +73,7 @@ string). Grammar:
 | `Dataset(["spatial", "point_obs"])` | OR of alternatives |
 | `Dataset("any")` | any Zarr; skip dim checks |
 
-Opaque files (GeoJSON, `.eml`, …) use `type=Path`, not `Dataset`. Flag names are
+Opaque files (GeoJSON, …) use `type=Path`, not `Dataset`. Flag names are
 free-form (`-i/--input`, `--forecast`, …). Multi-input: `nargs=2` / `nargs="+"`
 or separate Dataset args.
 
@@ -85,7 +85,7 @@ It injects ``output`` as a ``Path`` (one path) or ``list[Path]`` (several).
 - Return an ``xr.Dataset`` → decorator stamps provenance and ``to_zarr(output)``.
 - Return a ``Path`` (plots) → decorator stamps that file (must match an ``--output``).
 - Return a sequence → one write per ``--output``; counts must match.
-- Return ``None`` → skill already wrote; decorator skips write (e.g. email-report).
+- Return ``None`` → skill already wrote; decorator skips write.
 - Inspect-only skills: ``@weather_skill(..., output=False)``.
 
 There is no output dim check; output shape is whatever the skill returns.
@@ -117,7 +117,8 @@ skill-specific.
 Absolute dates are `datetime.date`. Relative tokens (`latest`, `now-3d`,
 "the last two weeks") are not parsed by the decorator — compose with the
 resolve-time skill and pass the printed `--start-time`/`--end-time` or
-`--date`.
+`--date`. For the latest day a fetcher has published, run that skill with
+`--probe-latest`.
 
 ## Skill shapes
 

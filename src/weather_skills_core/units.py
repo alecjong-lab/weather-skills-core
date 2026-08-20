@@ -388,6 +388,49 @@ def rate_to_total(da, period: str):
     return total
 
 
+def precip_for_display(ds, name: str):
+    """In-memory precip rate → period total for plotting.
+
+    Uses stamped ``aggregation_period`` (from ``aggregate-temporal``). No-op
+    when the variable is not a precip rate, has no period, or the time axis
+    would overlap (same gates as convert-to-totals). Plotters call this so
+    precip defaults to ``mm`` totals without a separate Zarr.
+    """
+    if name not in ds.data_vars:
+        return ds
+    da = ds[name]
+    units = variable_units(da) or da.attrs.get("units")
+    kind = classify_variable(
+        name, units=units, standard_name=da.attrs.get("standard_name")
+    )
+    if kind != "precip":
+        return ds
+    period = da.attrs.get(AGGREGATION_PERIOD_ATTR)
+    if not (isinstance(period, str) and period.strip()):
+        return ds
+    dim = "step" if "step" in da.dims else "time" if "time" in da.dims else None
+    if dim is None:
+        return ds
+    try:
+        assert_nonoverlapping_intervals(ds, dim, period)
+        total = rate_to_total(da, period)
+    except UsageError:
+        return ds
+    plain = total.pint.dequantify() if total.pint.units is not None else total
+    attrs = {**da.attrs, **plain.attrs}
+    attrs["units"] = STANDARD["precip_amount"]["units"]
+    attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
+    attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
+    if looks_like_rate_display_name(attrs.get("GRIB_name")):
+        attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
+    attrs["cell_methods"] = format_cell_methods(dim, "sum")
+    attrs.pop(AGGREGATION_PERIOD_ATTR, None)
+    out = ds.copy(deep=False)
+    out[name] = plain
+    out[name].attrs = attrs
+    return out
+
+
 def quantify_dataset(ds):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
