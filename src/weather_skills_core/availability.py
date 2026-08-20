@@ -103,7 +103,9 @@ class Availability:
         if "shape" not in data or "policy" not in data:
             raise UsageError("availability requires shape and policy.")
         earliest = data.get("earliest")
-        if earliest is not None:
+        if isinstance(earliest, date):
+            pass
+        elif earliest is not None:
             if not isinstance(earliest, str):
                 raise UsageError("availability.earliest must be YYYY-MM-DD.")
             try:

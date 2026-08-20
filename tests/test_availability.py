@@ -96,6 +96,20 @@ def test_ecmwf_s2s_schedule_via_spec():
     assert available_through(spec, AS_OF) == date(2026, 8, 18)
 
 
+def test_from_dict_accepts_date_earliest():
+    spec = Availability.from_dict(
+        {
+            "shape": "range",
+            "policy": "lag",
+            "lag_days": 1,
+            "earliest": date(1981, 9, 1),
+            "note": "yaml date",
+        }
+    )
+    assert spec.earliest == date(1981, 9, 1)
+    assert spec.to_dict()["earliest"] == "1981-09-01"
+
+
 def test_roundtrip_dict():
     src = {
         "shape": "range",
