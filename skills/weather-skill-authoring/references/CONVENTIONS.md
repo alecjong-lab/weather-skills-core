@@ -75,10 +75,11 @@ metadata:
 no `lag_days`/`schedule` means no realtime cap (future dates stay). Named
 schedules: `pentad` (close on 5/10/15/20/25/last of month, files 2 days later)
 and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
-`catalog-group: fetchers` skill must declare this block. resolve-time calls
-`load_products` on the sibling `skills/` directory (`--list-products`). If a
-skill's variants do not all share the base `shape`, the bare skill name is not
-a product — use `skill:variant` (`dynamical-fetch:noaa-gfs-forecast`).
+`catalog-group: fetchers` skill must declare this block. resolve-time looks up
+the named `--product` via `load_products` on the sibling `skills/` directory
+(`--list-products` prints that live view). If a skill's variants do not all
+share the base `shape`, the bare skill name is not a product — use
+`skill:variant` (`dynamical-fetch:noaa-gfs-forecast`).
 
 `variables` is a non-empty list of exact `--variable` / `-v` tokens for that
 fetcher, **most-used first**. Names are catalog-specific (`precipitation_surface`
