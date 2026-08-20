@@ -70,26 +70,13 @@ Consumer skills take `--bbox`. Polygon clipping is skill-specific
 | Opaque file | whatever fits | GeoJSON, PNG, … — `type=Path`, not `Dataset`. |
 | Output path | `-o` / `--output`, repeatable | Owned by the decorator (`output=True` default). Count must match returned artifacts. |
 
-### Standalone flags
-
-`@weather_skill.argument(..., standalone=True)` marks a probe or dummy
-call. When that flag is present, the decorator drops every
-`required=True` flag (including `-i` and `-o`) and does not write
-`--output`. The skill body still runs; return whatever you print from,
-usually `None`.
-
-Fetchers use this for `--probe-latest` via `PROBE_LATEST_KWARGS`. Any
-flag can use it.
-
 ## Fetchers
 
 Two extra conventions apply only to skills that pull from a catalog.
 
 ### `--probe-latest`
 
-Every fetcher implements this (see
-`weather_skills_core.probe.PROBE_LATEST_KWARGS`, which sets
-`standalone=True`). It prints one line on
+Every fetcher implements this. It prints one line on
 stdout — `YYYY-MM-DD` or `none` (no realtime cap, e.g. CMIP6) — and
 exits. No `-o`. Do not GET full fields: HEAD, a directory listing, a
 time coordinate, or a tiny catalog query.

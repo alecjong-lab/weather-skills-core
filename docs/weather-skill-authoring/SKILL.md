@@ -89,9 +89,6 @@ It injects ``output`` as a ``Path`` (one path) or ``list[Path]`` (several).
 - Return a sequence → one write per ``--output``; counts must match.
 - Return ``None`` → skill already wrote; decorator skips write.
 - Inspect-only skills: ``@weather_skill(..., output=False)``.
-- Standalone / probe call: ``@weather_skill.argument(..., standalone=True)``.
-  When that flag is present, required inputs and ``-o`` are dropped and
-  the decorator does not write. Fetchers use this for ``--probe-latest``.
 
 There is no output dim check; output shape is whatever the skill returns.
 

@@ -41,11 +41,11 @@ def test_argv_has_option():
 
 
 def test_parser_probe_latest_skips_required_output_and_flags(capsys):
-    from weather_skills_core.probe import PROBE_LATEST_KWARGS
-
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--start-time", required=True)
-    @weather_skill.argument("--probe-latest", **PROBE_LATEST_KWARGS)
+    @weather_skill.argument(
+        "--probe-latest", nargs="?", const="", default=None, probe=True
+    )
     def skill(output, start_time, probe_latest, **kwargs):
         print("none")
 
@@ -57,12 +57,12 @@ def test_parser_probe_latest_skips_required_output_and_flags(capsys):
     assert start_action.required is True
 
 
-def test_standalone_skips_required_input_and_does_not_write(tmp_path):
+def test_probe_skips_required_input_and_does_not_write(tmp_path):
     out = tmp_path / "out.zarr"
 
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-    @weather_skill.argument("--ping", action="store_true", standalone=True)
+    @weather_skill.argument("--ping", action="store_true", probe=True)
     def skill(ds, output, ping, **kwargs):
         assert ping is True
         assert ds is None
@@ -73,10 +73,10 @@ def test_standalone_skips_required_input_and_does_not_write(tmp_path):
     assert not out.exists()
 
 
-def test_standalone_equals_form_skips_required_flags(capsys):
+def test_probe_equals_form_skips_required_flags(capsys):
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--start-time", required=True)
-    @weather_skill.argument("--ident", nargs="?", const="", default=None, standalone=True)
+    @weather_skill.argument("--ident", nargs="?", const="", default=None, probe=True)
     def skill(output, start_time, ident, **kwargs):
         print(ident)
 
@@ -84,9 +84,9 @@ def test_standalone_equals_form_skips_required_flags(capsys):
     assert capsys.readouterr().out.strip() == "final"
 
 
-def test_missing_output_still_required_without_standalone():
+def test_missing_output_still_required_without_probe():
     @weather_skill(name="s", version="1.0.0")
-    @weather_skill.argument("--ping", action="store_true", standalone=True)
+    @weather_skill.argument("--ping", action="store_true", probe=True)
     def skill(output, ping, **kwargs):
         return make_data()
 

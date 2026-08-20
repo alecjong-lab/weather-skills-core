@@ -219,11 +219,10 @@ pass that to `--bbox`. `--start-time` / `--end-time` arrive as
 `datetime.date`, with a check that start is not after end. Relative dates
 (`latest`, `now-3d`) are not parsed here. First call resolve-time to print
 the `--start-time`/`--end-time` or `--date` flags (calendar math against
-UTC today / `--as-of`), then pass those through. A flag marked
-`standalone=True` is a probe or dummy call: required inputs and `-o` are
-dropped, and the decorator does not write. Fetchers declare
-`--probe-latest` that way (latest available `YYYY-MM-DD` or `none` on
-stdout) — call the fetcher directly; do not expect resolve-time to probe.
+UTC today / `--as-of`), then pass those through. Fetcher skills also
+declare `--probe-latest` (latest available `YYYY-MM-DD` or `none` on
+stdout; no `-o`) — call the fetcher directly for that; do not expect
+resolve-time to probe.
 
 | Parameter | Flag | What you get |
 | --- | --- | --- |
