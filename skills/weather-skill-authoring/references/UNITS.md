@@ -52,7 +52,10 @@ rate-oriented skills.
 1. CF `standard_name`
 2. Named variable hints (`t2m`, `tp`, `precip`, …); for precip hints, amount
    vs rate is taken from `units` when that fingerprint is clear
-   (`kg m-2` / `mm` → amount, `kg m-2 s-1` / `mm day-1` → rate)
+   (`kg m-2` / `mm` → amount, `kg m-2 s-1` / `mm day-1` → rate). If units are
+   present but not convertible to a precip rate or amount, the name hint is
+   ignored (so `precipitation_quality_index_surface` with `units="1"` is not
+   treated as precip).
 
 Units alone do **not** classify a variable (a bare `kg m-2 s-1` field is not
 treated as precip). `to_standard_units` converts recognized temp / precip vars

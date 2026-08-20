@@ -19,6 +19,7 @@ from weather_skills_core.units import (
     quantify_dataset,
     rate_to_total,
     to_standard_units,
+    units_convertible,
     units_equal,
     ureg,
 )
@@ -62,6 +63,10 @@ def test_classify_variable():
     assert classify_variable("tp", units="kg m-2") == "precip_amount"  # amount units win
     assert classify_variable("flux", units="kg m-2 s-1") is None  # units alone are not enough
     assert classify_variable("humidity", units="1") is None
+    # Prefix "precip" must not classify a dimensionless companion field.
+    assert classify_variable("precipitation_quality_index_surface", units="1") is None
+    assert classify_variable("precipitation_surface", units="kg m-2 s-1") == "precip"
+    assert classify_variable("precipitation_surface", units="mm/h") == "precip"
     # Not air / 2 m temperature
     assert classify_variable("sst", units="K", standard_name="sea_surface_temperature") is None
     assert classify_variable("d2m", units="K", standard_name="dew_point_temperature") is None
@@ -103,6 +108,19 @@ def test_to_standard_units_noop_unknown():
     ds = make_gridded(name="humidity", fill=0.5, units="1")
     out = to_standard_units(ds)
     assert out["humidity"].attrs["units"] == "1"
+
+
+def test_to_standard_units_skips_dimensionless_precip_named_companion():
+    ds = make_gridded(name="precipitation_quality_index_surface", fill=0.8, units="1")
+    out = to_standard_units(ds)
+    assert out["precipitation_quality_index_surface"].attrs["units"] == "1"
+    np.testing.assert_allclose(out["precipitation_quality_index_surface"].values, 0.8)
+
+
+def test_units_convertible():
+    assert units_convertible("kg m-2 s-1", "mm day-1")
+    assert units_convertible("mm/h", "mm day-1")
+    assert not units_convertible("1", "mm day-1")
 
 
 def test_to_standard_units_missing_variable():

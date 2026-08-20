@@ -172,7 +172,10 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
     not classify a variable (e.g. bare ``kg m-2 s-1`` is not precip). When a
     name hint matches ``precip``, amount vs rate is taken from ``units`` when
     that fingerprint is unambiguous (``kg m-2`` / ``mm`` → ``precip_amount``,
-    ``kg m-2 s-1`` / ``mm day-1`` → ``precip``).
+    ``kg m-2 s-1`` / ``mm day-1`` → ``precip``). If units are present but not
+    convertible to a precip rate or amount (e.g. IMERG
+    ``precipitation_quality_index_surface`` with ``units="1"``), the name hint
+    is ignored.
     """
     sn = standard_name.strip().lower() if isinstance(standard_name, str) else ""
     for kind, spec in STANDARD.items():
@@ -187,10 +190,20 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
     for kind, spec in STANDARD.items():
         if any(h == key or key.startswith(h) or key.endswith(h) for h in spec["name_hints"]):
             if kind == "precip" and isinstance(units, str) and units.strip():
-                from_units = kind_from_units(units)
-                if from_units in ("precip", "precip_amount"):
-                    return from_units
+                return _precip_kind_from_hint_units(units)
             return kind
+    return None
+
+
+def _precip_kind_from_hint_units(units: str) -> str | None:
+    """Map precip name-hint units to a kind, or None if they are not precip."""
+    from_units = kind_from_units(units)
+    if from_units in ("precip", "precip_amount"):
+        return from_units
+    if units_convertible(units, STANDARD["precip"]["units"]):
+        return "precip"
+    if units_convertible(units, STANDARD["precip_amount"]["units"]):
+        return "precip_amount"
     return None
 
 
@@ -389,6 +402,15 @@ def convert_values(values, src_units: str, dst_units: str):
         except pint_xarray.pint.DimensionalityError:
             continue
     raise UsageError(f"{src_units!r} not convertible to {dst_units!r}")
+
+
+def units_convertible(src_units: str, dst_units: str) -> bool:
+    """True if ``convert_values`` can take ``src_units`` to ``dst_units``."""
+    try:
+        convert_values(np.array([1.0]), src_units, dst_units)
+    except Exception:  # noqa: BLE001 — unparseable or incompatible units
+        return False
+    return True
 
 
 def convert_dataarray(da, dst_units: str):
