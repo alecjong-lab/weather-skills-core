@@ -27,7 +27,7 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 | Concept | Flag | Notes |
 | --- | --- | --- |
 | Bounding box | `--bbox` | CLI is `N/W/S/E` decimal degrees. Skill receives `(N, W, S, E)` floats — do not re-parse. |
-| Country / region | `--region` | CLI string (e.g. `Kenya`). Skill gets kwargs `region` as a GeoDataFrame; `bbox` is also filled. Requires `weather-skills-core[geo]`. Do not pass with `--bbox`. |
+| Country / region | `--region` | CLI string (e.g. `Kenya`, `kenya-nairobi`). Skill gets kwargs `region` as a GeoDataFrame; `bbox` is also filled. Requires `weather-skills-core[geo]`. Do not pass with `--bbox`. |
 | Boundary GeoJSON | `--geojson` / `--mask-geojson` | Skill-specific. |
 
 ### Time

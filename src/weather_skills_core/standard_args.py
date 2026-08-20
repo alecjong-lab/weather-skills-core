@@ -8,10 +8,11 @@ from weather_skills_core.errors import UsageError
 from weather_skills_core.standard_utils import parse_bbox, parse_date
 
 STANDARD_HELP = {
-    "bbox": "N/W/S/E decimal degrees. Prefer --region when you have a country name or ISO3 code.",
+    "bbox": "N/W/S/E decimal degrees. Prefer --region when you have a country or admin name.",
     "region": (
-        "Country name or ISO3 code as a string (e.g. Kenya). The skill receives "
-        "region as a GeoDataFrame (and bbox is filled). Requires weather-skills-core[geo]."
+        "Country name, ISO3 code, or sub-national region (e.g. Kenya, kenya-nairobi). "
+        "The skill receives region as a GeoDataFrame (and bbox is filled). "
+        "Requires weather-skills-core[geo]."
     ),
     "date": "Absolute date YYYY-MM-DD.",
     "start_time": "Range start, inclusive. Absolute YYYY-MM-DD.",
@@ -75,6 +76,7 @@ def convert_standard_args(args, arguments) -> dict:
     """Build skill kwargs from parsed CLI.
 
     ``--region Kenya`` (string) becomes ``region=<GeoDataFrame>`` and fills ``bbox``.
+    Sub-national queries (``kenya-nairobi``) resolve the same way.
     ``--bbox`` becomes an ``(N, W, S, E)`` float tuple. Dates become ``datetime.date``.
     Pass ``--region`` or ``--bbox``, not both.
 

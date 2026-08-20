@@ -145,7 +145,8 @@ do **not** re-parse in the skill body (no `bbox.split("/")`, no
 
 For example, add `--bbox` and you receive a parsed
 `(north, west, south, east)` float tuple. Add `--region Kenya` (a plain CLI
-string — name or ISO3) and the decorator looks up the country and passes
+string — country name, ISO3, or sub-national `country-admin1` /
+`country-admin1-admin2`) and the decorator looks up the region and passes
 `region` as a **GeoDataFrame** in kwargs (plus fills `bbox`). Do not treat
 `region` as a string in the skill body. Pass `--region` or `--bbox`, not both
 (`weather-skills-core[geo]` required for `--region`). Add `--start-time` /
@@ -155,7 +156,7 @@ is not after the end.
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
-| `region` | `--region` | GeoDataFrame under kwargs key `region` (CLI is a string like `Kenya`; also fills `bbox`) |
+| `region` | `--region` | GeoDataFrame under kwargs key `region` (CLI is a string like `Kenya` or `kenya-nairobi`; also fills `bbox`) |
 | `date` | `--date` | Single `datetime.date` (`YYYY-MM-DD`) |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |

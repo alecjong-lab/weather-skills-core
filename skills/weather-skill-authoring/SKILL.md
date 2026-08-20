@@ -99,7 +99,7 @@ conversion.
 | Argument | Flag | What you get |
 | --- | --- | --- |
 | `bbox` | `--bbox` | Bounding box `(N, W, S, E)` floats |
-| `region` | `--region` | GeoDataFrame in kwargs as `region` (CLI string e.g. `Kenya`; also fills `bbox`) |
+| `region` | `--region` | GeoDataFrame in kwargs as `region` (CLI string e.g. `Kenya` or `kenya-nairobi`; also fills `bbox`) |
 | `date` | `--date` | `datetime.date` |
 | `start_time` | `--start-time` | Range start as `datetime.date` |
 | `end_time` | `--end-time` | Range end as `datetime.date` |
