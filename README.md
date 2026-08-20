@@ -72,7 +72,7 @@ the rest.
 receives an opened `xarray.Dataset` as `ds` that already passed the dimension
 check and has pint units attached. Use it for weather-skills Zarr stores.
 
-Opaque files (GeoJSON, `.eml`, a PNG you read) use `type=Path`. Those stay
+Opaque files (GeoJSON, a PNG you read) use `type=Path`. Those stay
 paths; the decorator does not open them.
 
 ### Outputs
@@ -127,14 +127,15 @@ comparison can plug together without custom glue.
 
 We follow [CF conventions](https://cfconventions.org/) for coordinates and
 metadata, and expose a small set of **standard dimensions**. `Dataset(...)`
-declares what an input must have: either those dimension names, or a **type**
-— a short alias for a fixed set of required dimensions (`forecast` means
-`lat` + `lon` + `init_time` + `prediction_timedelta`). The decorator checks
-that before your function runs.
+declares what an input must have, in one of two ways: a dimension name
+(`lat`, `time`, `member`, …), or a **type** — a named bundle of those
+dimensions. `forecast` means the Zarr must have `lat`, `lon`, `init_time`,
+and `prediction_timedelta`; `spatial` means `lat` and `lon`. The decorator
+checks that before your function runs.
 
-On disk, common aliases are accepted (`step` counts as `prediction_timedelta`,
-`number` as `member`). Declare the ontology name or type rather than listing
-every alias.
+Incoming datasets often use other names for the same axes (`step` for
+`prediction_timedelta`, `number` for `member`). Those count. Declare the
+ontology name or a type, not every possible name.
 
 ## Dataset inputs
 
@@ -146,8 +147,25 @@ every alias.
 | List | Any one of these (OR) | `Dataset(["forecast", "ensemble_forecast"])` |
 | `"any"` | Any Zarr (no dim check) | `Dataset("any")` |
 
-Pass several Zarrs with `nargs=2` or `nargs="+"` on one Dataset argument, or
-with separate Dataset flags.
+Pass several Zarrs on one flag with `nargs=2` (exactly two paths) or
+`nargs="+"` (one or more). `--input` still arrives as `ds`, now a list. Give
+each input its own flag when the roles differ (`--forecast` vs `--obs`).
+
+```python
+@weather_skill(name="concat", version="0.1.0")
+@weather_skill.argument("-i", "--input", type=Dataset("any"), nargs="+", required=True)
+def concat(ds, output, **kwargs):
+    # uv run concat.py -i a.zarr b.zarr -o stacked.zarr
+    return xr.concat(ds, dim="member")
+
+
+@weather_skill(name="compare", version="0.1.0")
+@weather_skill.argument("--forecast", type=Dataset("forecast"), required=True)
+@weather_skill.argument("--obs", type=Dataset("observations"), required=True)
+def compare(forecast, obs, output, **kwargs):
+    # uv run compare.py --forecast fc.zarr --obs imerg.zarr -o diff.zarr
+    return forecast - obs
+```
 
 ### Dimensions
 
@@ -166,7 +184,13 @@ with separate Dataset flags.
 
 ### Types
 
-| Type aliases | Required dimensions |
+A type is a shortcut for a required set of dimensions.
+`Dataset("forecast")` is the same check as
+`Dataset("lat, lon, init_time, prediction_timedelta")`. Some types have extra
+names (`space` for `spatial`, `station` for `point_obs`); those are listed in
+the first column.
+
+| Type | Required dimensions |
 | --- | --- |
 | `spatial`, `space` | `lat` + `lon` |
 | `observations`, `obs`, `analysis`, `retrieval`, `field`, `data` | `lat` + `lon` + `time` |
@@ -188,10 +212,13 @@ below; do **not** re-parse in the skill body (no `bbox.split("/")`, no
 `date.fromisoformat` on these).
 
 `--bbox` arrives as `(north, west, south, east)` floats. Named places are not
-a decorator flag — compose with resolve-region and pass the printed bbox.
-`--start-time` / `--end-time` arrive as `datetime.date`, with a check that
-start is not after end. Relative dates (`latest`, `now-3d`) are not parsed
-here — compose with resolve-time and pass the printed flags.
+a decorator flag. First call resolve-region to print the `N/W/S/E` bbox, then
+pass that to `--bbox`. `--start-time` / `--end-time` arrive as
+`datetime.date`, with a check that start is not after end. Relative dates
+(`latest`, `now-3d`) are not parsed here. First call resolve-time to print
+the `--start-time`/`--end-time` or `--date` flags, then pass those through.
+Fetcher skills also declare `--probe-latest` (latest available `YYYY-MM-DD`
+or `none` on stdout; no `-o`); resolve-time calls it when `--product` is set.
 
 | Parameter | Flag | What you get |
 | --- | --- | --- |
@@ -201,20 +228,30 @@ here — compose with resolve-time and pass the printed flags.
 | `end_time` | `--end-time` | Range end as `datetime.date` |
 | `variable` | `--variable` / `-v` | Variable name(s); `action="append"` for several |
 
-Canonical spellings (`--bbox`, dates, `--variable`) are linted; Dataset input
-flag names are free-form (`-i/--input`, `--forecast`, …).
-
 ## Units
 
-Fetch writes precipitation as a **rate** (`mm day-1`), temperature as
-`degree_Celsius`. Period **amounts** (`mm`) come from multiplying a rate by a
-stamped `aggregation_period` (`convert-to-totals` / `rate_to_total`). Most
-skills accept rates and amounts alike; those totals helpers refuse amounts so
-they cannot double-count.
+Units live on each data variable as a CF `units` string. The decorator
+**quantifies** with pint when it opens a Zarr and **dequantifies** before it
+writes, so the skill body sees pint quantities and the file stores a plain
+string. Those strings must be **pintable** — parseable by pint / UDUNITS
+(`mm day-1`, `degree_Celsius`, `kg m-2 s-1`). Known kinds (temp, precip)
+must carry pintable units; other variables may include units optionally.
 
-The decorator quantifies units when it opens a Zarr and dequantifies before
-it writes. Known kinds (temp, precip) must carry parseable `units`; other
-variables may include units optionally.
+A few kinds also have a **standard unit** that skills convert to for
+display and comparison:
+
+| Kind | Standard units |
+| --- | --- |
+| temp | `degree_Celsius` |
+| precip (rate) | `mm day-1` |
+| precip (amount) | `mm` |
+
+For accumulated variables such as precipitation, fetch writes a **rate**
+(`mm day-1`), not a period total. A **total** (`mm`) is the rate multiplied
+by a stamped `aggregation_period` (`convert-to-totals` / `rate_to_total`).
+Most skills open rates and totals alike. Those totals helpers refuse
+inputs that are already amounts, so multiplying by the period cannot
+double-count.
 
 See
 [`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md)
@@ -228,13 +265,12 @@ uv add "weather-skills-core @ git+https://github.com/rhiza-research/weather-skil
 
 ## Development
 
-We are building toward an **open registry of shared weather skills** that
-anyone can use and contribute to — fetchers, transforms, and figures on the
-same standard dataset and provenance model. Today this repo is the core
-library and authoring tools; companion collections (such as
-[weather-skills](https://github.com/rhiza-research/weather-skills)) already
-ship real skills. Next: clearer contribution paths, stronger linting and CI,
-and a public place to discover and publish skills.
+This repository is the core library (`weather_skills_core`) and the tools
+for writing skills. The skills themselves — fetchers, clips, plots — live
+in companion collections such as
+[weather-skills](https://github.com/rhiza-research/weather-skills).
+
+To work on this library:
 
 ```
 uv sync
@@ -244,8 +280,12 @@ uv run ruff check .
 uv run pre-commit run --all-files
 ```
 
-To author a skill, see
+To write a new skill, follow
 [`skills/weather-skill-authoring/SKILL.md`](skills/weather-skill-authoring/SKILL.md)
-and the linting CLI (`weather-skills-core lint`). Contributions that improve
-the decorator, the standard dataset contract, or contributor docs are welcome
-— open a PR against this repository.
+and check the script with `weather-skills-core lint`. Pull requests that
+improve the decorator, the standard dataset contract, or the docs are
+welcome.
+
+The longer-term aim is an open registry of shared weather skills on the
+same dataset and provenance model, with a public place to discover and
+publish them.
