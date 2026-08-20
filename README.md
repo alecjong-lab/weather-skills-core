@@ -14,6 +14,8 @@ carries provenance: a record of which skill, version, and arguments produced
 it, so someone else can rerun or check the chain. The skill is the script you
 checked in; nothing is generated at runtime unless you want it to be.
 
+![Composable weather skills: fetchers write a standard Zarr, transforms take Zarr to Zarr, and a figure skill writes a PNG](docs/composable-skills.svg)
+
 ```bash
 # Fetch an ensemble forecast over Kenya
 uv run ecmwf-fetch.py --bbox 5/34/-5/42 --date 2026-01-15 -o forecast.zarr
