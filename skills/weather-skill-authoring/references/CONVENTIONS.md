@@ -26,8 +26,9 @@ core README). Types and dimensions live in STANDARD_DATASET.md.
 
 Named places are not a decorator flag. The resolve-region skill turns an ISO3
 code or hierarchical admin key into a printed `N/W/S/E` bbox (and optional
-GeoJSON). Consumer skills take `--bbox` (and skill-specific `--geojson` /
-`--mask-geojson`).
+GeoJSON). Queries that are not an ISO3 / `country-admin…` key fall through to
+OSM Nominatim (`limit=1`) for landmarks. Consumer skills take `--bbox` (and
+skill-specific `--geojson` / `--mask-geojson`).
 
 | Concept | Flag | Notes |
 | --- | --- | --- |

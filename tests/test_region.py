@@ -5,10 +5,13 @@ import pytest
 from weather_skills_core import region as region_mod
 from weather_skills_core.errors import DataError, UsageError
 from weather_skills_core.region import (
+    bbox_from_feature,
     bbox_from_geometry,
     clean_region_name,
+    geocode_nominatim,
     lookup_region,
     resolve_region,
+    should_geocode,
 )
 
 _NAIROBI = {
@@ -79,8 +82,10 @@ _WESTLANDS = {
 @pytest.fixture(autouse=True)
 def _clear_admin_cache():
     region_mod._admin_collection.cache_clear()
+    region_mod._nominatim_collection.cache_clear()
     yield
     region_mod._admin_collection.cache_clear()
+    region_mod._nominatim_collection.cache_clear()
 
 
 def _fake_admin(iso3, level):
@@ -200,3 +205,84 @@ def test_hyphenated_country_is_not_split_into_admin():
     feature = lookup_region("Guinea-Bissau")
     assert feature["properties"]["level"] == "country"
     assert feature["properties"]["iso3"] == "GNB"
+
+
+_MOUNT_KENYA_POLYGON = {
+    "type": "Polygon",
+    "coordinates": [
+        [
+            [37.2, -0.25],
+            [37.4, -0.25],
+            [37.4, -0.05],
+            [37.2, -0.05],
+            [37.2, -0.25],
+        ]
+    ],
+}
+
+
+def _mount_kenya_hit(*, geojson=None):
+    return [
+        {
+            "display_name": "Mount Kenya, Kenya",
+            "name": "Mount Kenya",
+            "boundingbox": ["-0.25", "-0.05", "37.2", "37.4"],
+            "lat": "-0.15",
+            "lon": "37.3",
+            "geojson": geojson,
+        }
+    ]
+
+
+def test_should_geocode_landmarks_not_admin_keys():
+    assert should_geocode("Mount Kenya") is True
+    assert should_geocode("Mount Kenya, Kenya") is True
+    assert should_geocode("kenya-nairbi") is False
+    assert should_geocode("KEN-nairbi") is False
+    assert should_geocode("ZZZ") is False
+    assert should_geocode("  ") is False
+
+
+def test_geocode_nominatim_polygon(monkeypatch):
+    monkeypatch.setattr(
+        "weather_skills_core.region._load_nominatim",
+        lambda query: _mount_kenya_hit(geojson=_MOUNT_KENYA_POLYGON),
+    )
+
+    feature = geocode_nominatim("Mount Kenya")
+    props = feature["properties"]
+    assert props["level"] == "nominatim"
+    assert props["name"] == "Mount Kenya"
+    assert props["display_name"] == "Mount Kenya, Kenya"
+    assert props["bbox"] == pytest.approx([-0.05, 37.2, -0.25, 37.4])
+    n, w, s, e = bbox_from_feature(feature)
+    assert (n, w, s, e) == pytest.approx((-0.05, 37.2, -0.25, 37.4))
+    assert feature["geometry"]["type"] == "Polygon"
+
+
+def test_geocode_nominatim_point_uses_bbox_rectangle(monkeypatch):
+    monkeypatch.setattr(
+        "weather_skills_core.region._load_nominatim",
+        lambda query: _mount_kenya_hit(geojson={"type": "Point", "coordinates": [37.3, -0.15]}),
+    )
+
+    feature = geocode_nominatim("Mount Kenya")
+    assert feature["geometry"]["type"] == "Polygon"
+    n, w, s, e = bbox_from_feature(feature)
+    assert (n, w, s, e) == pytest.approx((-0.05, 37.2, -0.25, 37.4))
+
+
+def test_geocode_nominatim_empty(monkeypatch):
+    monkeypatch.setattr("weather_skills_core.region._load_nominatim", lambda query: [])
+
+    with pytest.raises(DataError, match="Nominatim found no matching place"):
+        geocode_nominatim("Not A Real Volcano 12345")
+
+
+def test_bbox_from_feature_prefers_stored_bbox():
+    feature = {
+        "type": "Feature",
+        "properties": {"bbox": [1.0, 2.0, -1.0, 4.0]},
+        "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+    }
+    assert bbox_from_feature(feature) == (1.0, 2.0, -1.0, 4.0)

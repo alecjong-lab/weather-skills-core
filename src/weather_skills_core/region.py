@@ -5,7 +5,8 @@ lookups (admin-1 states/provinces/counties, admin-2 counties/districts) use
 geoBoundaries ``gbOpen`` (https://www.geoboundaries.org): the API is queried for
 the country/level, then the simplified GeoJSON it returns is matched on
 ``shapeName``. Queries are cleaned ``country-admin1`` / ``country-admin1-admin2``
-keys (or an ISO3 prefix, e.g. ``KEN-nairobi``).
+keys (or an ISO3 prefix, e.g. ``KEN-nairobi``). Leftover free-text queries
+(landmarks, cities that are not admin keys) use OSM Nominatim.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import json
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from functools import lru_cache
 from importlib.resources import files
@@ -20,8 +22,11 @@ from importlib.resources import files
 from weather_skills_core.errors import DataError, UsageError
 
 _GB_API = "https://www.geoboundaries.org/api/current/gbOpen/{iso3}/ADM{level}/"
+_NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 _HTTP_TIMEOUT = 60
-_USER_AGENT = "weather-skills-core"
+_USER_AGENT = (
+    "weather-skills-core/resolve-region (https://github.com/rhiza-research/weather-skills)"
+)
 
 # Country-name aliases (keys and values are already cleaned).
 _COUNTRY_ALIASES = {
@@ -131,6 +136,52 @@ def bbox_from_geometry(geometry) -> tuple[float, float, float, float]:
         max_lat = max(max_lat, lat)
     west, east = _lon_bounds(lons)
     return max_lat, west, min_lat, east
+
+
+def bbox_from_feature(feature: dict) -> tuple[float, float, float, float]:
+    """Return ``(N, W, S, E)`` from a slim Feature.
+
+    Nominatim hits store the search API ``boundingbox`` on ``properties.bbox``
+    so a Point geometry is never used as a zero-area clip box. Admin features
+    fall through to ``bbox_from_geometry``.
+    """
+    props = feature.get("properties") or {}
+    bbox = props.get("bbox")
+    if bbox is not None:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            raise DataError("feature properties.bbox must be [N, W, S, E].")
+        return float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    geometry = feature.get("geometry")
+    if not isinstance(geometry, dict) or "coordinates" not in geometry:
+        raise DataError("feature has no geometry to derive a bbox from.")
+    return bbox_from_geometry(geometry)
+
+
+def _bbox_rectangle(north: float, west: float, south: float, east: float) -> dict:
+    """GeoJSON Polygon covering a simple (non-wrapped) N/W/S/E box."""
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [west, south],
+                [east, south],
+                [east, north],
+                [west, north],
+                [west, south],
+            ]
+        ],
+    }
+
+
+def _parse_nominatim_bbox(raw) -> tuple[float, float, float, float]:
+    """Nominatim ``boundingbox`` is ``[south, north, west, east]`` strings."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        raise DataError("Nominatim result is missing a 4-value boundingbox.")
+    try:
+        south, north, west, east = (float(v) for v in raw)
+    except (TypeError, ValueError) as exc:
+        raise DataError(f"Nominatim boundingbox {raw!r} is not numeric.") from exc
+    return north, west, south, east
 
 
 @lru_cache(maxsize=1)
@@ -311,6 +362,101 @@ def _split_subnational(cleaned: str) -> tuple[dict, str] | None:
             if remainder:
                 return by_clean[name], remainder
     return None
+
+
+def should_geocode(query: str) -> bool:
+    """True when a failed admin lookup may fall through to Nominatim.
+
+    ISO3-shaped tokens and hierarchical admin keys (``kenya-nairbi``) stay on
+    the admin error path so typos are not silently sent to OSM.
+    """
+    text = query.strip()
+    if not text:
+        return False
+    cleaned = clean_region_name(text)
+    if len(cleaned) == 3 and cleaned.isalpha():
+        return False
+    return _split_subnational(cleaned) is None
+
+
+def _load_nominatim(query: str) -> list:
+    """GET Nominatim search. Overridable in tests."""
+    params = urllib.parse.urlencode(
+        {
+            "q": query,
+            "format": "jsonv2",
+            "limit": "1",
+            "polygon_geojson": "1",
+        }
+    )
+    url = f"{_NOMINATIM_SEARCH}?{params}"
+    try:
+        payload = _http_json(url, what=f"Nominatim search for {query!r}")
+    except _AdminMissing:
+        raise DataError(f"Nominatim found no place matching {query!r}.") from None
+    if not isinstance(payload, list):
+        raise DataError(f"Nominatim search for {query!r} did not return a JSON list.")
+    return payload
+
+
+@lru_cache(maxsize=32)
+def _nominatim_collection(query: str) -> tuple:
+    """Cached Nominatim hits as a tuple so callers do not mutate the cache."""
+    return tuple(_load_nominatim(query))
+
+
+def _nominatim_geometry(hit: dict, north: float, west: float, south: float, east: float) -> dict:
+    geo = hit.get("geojson")
+    if isinstance(geo, dict) and geo.get("type") in {"Polygon", "MultiPolygon"}:
+        return geo
+    if west <= east:
+        return _bbox_rectangle(north, west, south, east)
+    # Wrapped longitude: keep a degenerate-safe geometry at the centroid.
+    lat = hit.get("lat")
+    lon = hit.get("lon")
+    try:
+        plat, plon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        plat, plon = (south + north) / 2.0, west
+    return {"type": "Point", "coordinates": [plon, plat]}
+
+
+def geocode_nominatim(query: str) -> dict:
+    """Resolve leftover free text through OSM Nominatim (limit=1).
+
+    Returns a slim GeoJSON Feature. ``properties.bbox`` is ``[N, W, S, E]``
+    from Nominatim's boundingbox. Geometry is the OSM polygon when present,
+    otherwise a rectangle from that bbox.
+    """
+    text = query.strip()
+    if not text:
+        raise UsageError("Nominatim query must be a non-empty place name.")
+    hits = _nominatim_collection(text)
+    if not hits:
+        raise DataError(
+            f"{query!r} is not a known ISO3 code, country name, or sub-national "
+            "region, and Nominatim found no matching place. Pass an ISO3 code, "
+            "country-admin1, or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
+        )
+    hit = hits[0]
+    if not isinstance(hit, dict):
+        raise DataError(f"Nominatim search for {query!r} returned a malformed hit.")
+    north, west, south, east = _parse_nominatim_bbox(hit.get("boundingbox"))
+    display = hit.get("display_name") or hit.get("name") or text
+    name = hit.get("name") or display
+    return {
+        "type": "Feature",
+        "properties": {
+            "iso3": None,
+            "name": name,
+            "region_name": clean_region_name(text),
+            "level": "nominatim",
+            "country": None,
+            "display_name": display,
+            "bbox": [north, west, south, east],
+        },
+        "geometry": _nominatim_geometry(hit, north, west, south, east),
+    }
 
 
 def lookup_region(query: str) -> dict:
