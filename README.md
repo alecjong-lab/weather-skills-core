@@ -203,7 +203,7 @@ the first column.
 | `any` | any Zarr (no dimension check) |
 
 See
-[`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md)
+[`docs/weather-skill-authoring/references/STANDARD_DATASET.md`](docs/weather-skill-authoring/references/STANDARD_DATASET.md)
 for the full contract.
 
 ## Standard flags
@@ -219,10 +219,11 @@ pass that to `--bbox`. `--start-time` / `--end-time` arrive as
 `datetime.date`, with a check that start is not after end. Relative dates
 (`latest`, `now-3d`) are not parsed here. First call resolve-time to print
 the `--start-time`/`--end-time` or `--date` flags (calendar math against
-UTC today / `--as-of`), then pass those through. Fetcher skills also
-declare `--probe-latest` (latest available `YYYY-MM-DD` or `none` on
-stdout; no `-o`) — call the fetcher directly for that; do not expect
-resolve-time to probe.
+UTC today / `--as-of`), then pass those through. A flag marked
+`standalone=True` is a probe or dummy call: required inputs and `-o` are
+dropped, and the decorator does not write. Fetchers declare
+`--probe-latest` that way (latest available `YYYY-MM-DD` or `none` on
+stdout) — call the fetcher directly; do not expect resolve-time to probe.
 
 | Parameter | Flag | What you get |
 | --- | --- | --- |
@@ -258,7 +259,7 @@ inputs that are already amounts, so multiplying by the period cannot
 double-count.
 
 See
-[`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md)
+[`docs/weather-skill-authoring/references/UNITS.md`](docs/weather-skill-authoring/references/UNITS.md)
 for the full units contract.
 
 ## Install
@@ -296,7 +297,7 @@ uv run python tools/build_countries.py
 ```
 
 To write a new skill, follow
-[`skills/weather-skill-authoring/SKILL.md`](skills/weather-skill-authoring/SKILL.md)
+[`docs/weather-skill-authoring/SKILL.md`](docs/weather-skill-authoring/SKILL.md)
 and check the script with `weather-skills-core lint`. Pull requests that
 improve the decorator, the standard dataset contract, or the docs are
 welcome.

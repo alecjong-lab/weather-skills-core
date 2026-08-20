@@ -16,9 +16,11 @@ is domain logic only.
 
 ## References
 
-- `references/STANDARD_DATASET.md` — dim ontology, Zarr shapes, and `weather_skills_history`
-- `references/UNITS.md` — rate defaults for accumulated vars, quantify/dequantify, totals utilities
-- `references/CONVENTIONS.md` — canonical CLI flag names
+One question per file:
+
+- `references/CONVENTIONS.md` — what should this flag be called?
+- `references/STANDARD_DATASET.md` — what dims does this Zarr need?
+- `references/UNITS.md` — rate or amount, and which attrs to stamp?
 
 ## Declaration
 
@@ -87,6 +89,9 @@ It injects ``output`` as a ``Path`` (one path) or ``list[Path]`` (several).
 - Return a sequence → one write per ``--output``; counts must match.
 - Return ``None`` → skill already wrote; decorator skips write.
 - Inspect-only skills: ``@weather_skill(..., output=False)``.
+- Standalone / probe call: ``@weather_skill.argument(..., standalone=True)``.
+  When that flag is present, required inputs and ``-o`` are dropped and
+  the decorator does not write. Fetchers use this for ``--probe-latest``.
 
 There is no output dim check; output shape is whatever the skill returns.
 

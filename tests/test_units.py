@@ -38,18 +38,21 @@ from weather_skills_core.units import (
 
 
 def test_units_equal_spelling():
+    """Pint-equivalent unit strings compare equal; rates and amounts do not."""
     assert units_equal("mm/day", "mm day-1")
     assert units_equal("degC", "degree_Celsius")
     assert not units_equal("mm", "mm day-1")
 
 
 def test_pentad_dekad_registry():
+    """pentad and dekad convert to day on the units registry."""
     assert ureg.Quantity(1, "mm/pentad").to("mm/day").magnitude == pytest.approx(0.2)
     assert parse_aggregation_period("1 dekad").to("day").magnitude == pytest.approx(10.0)
     assert parse_aggregation_period("7 day").to("day").magnitude == pytest.approx(7.0)
 
 
 def test_convert_values_temp_and_precip_density():
+    """K→°C and kg m-2 flux/amount convert with the water-density path."""
     k, _ = convert_values(np.array([273.15]), "K", STANDARD["temp"]["units"])
     np.testing.assert_allclose(k, [0.0], atol=1e-6)
     mm, density_converted = convert_values(
@@ -65,6 +68,7 @@ def test_convert_values_temp_and_precip_density():
 
 
 def test_classify_variable():
+    """Name, units, and standard_name classify temp vs precip vs unknown."""
     assert classify_variable("t2m", units="K", standard_name="air_temperature") == "temp"
     assert classify_variable("2m_temperature", units="K") == "temp"
     assert classify_variable("tas", units="K") == "temp"
@@ -87,6 +91,7 @@ def test_classify_variable():
 
 
 def test_to_standard_units_converts_amount_named_tp_to_mm():
+    """Named tp in kg m-2 becomes mm with the amount standard_name."""
     ds = make_gridded(name="tp", fill=2.0, units="kg m-2")
     out = to_standard_units(ds)
     assert out["tp"].attrs["units"] == STANDARD["precip_amount"]["units"]
@@ -95,6 +100,7 @@ def test_to_standard_units_converts_amount_named_tp_to_mm():
 
 
 def test_to_standard_units_name_hint_sets_standard_name_keeps_name():
+    """A rate named tp keeps its name and gets the rate standard_name."""
     ds = make_gridded(name="tp", fill=1.0, units="mm/day")
     out = to_standard_units(ds)
     assert "tp" in out.data_vars
@@ -104,6 +110,7 @@ def test_to_standard_units_name_hint_sets_standard_name_keeps_name():
 
 
 def test_to_standard_units_normalizes_amount_and_temp():
+    """Amount precip and air temp convert to display units."""
     ds = make_gridded(name="tp", fill=2.0, units=None)
     ds["tp"].attrs.update(units="kg m-2", standard_name="precipitation_amount")
     out = to_standard_units(ds)
@@ -118,12 +125,14 @@ def test_to_standard_units_normalizes_amount_and_temp():
 
 
 def test_to_standard_units_noop_unknown():
+    """An unclassified variable is left unchanged."""
     ds = make_gridded(name="humidity", fill=0.5, units="1")
     out = to_standard_units(ds)
     assert out["humidity"].attrs["units"] == "1"
 
 
 def test_to_standard_units_skips_dimensionless_precip_named_companion():
+    """A dimensionless precip-named companion is not converted."""
     ds = make_gridded(name="precipitation_quality_index_surface", fill=0.8, units="1")
     out = to_standard_units(ds)
     assert out["precipitation_quality_index_surface"].attrs["units"] == "1"
@@ -131,18 +140,21 @@ def test_to_standard_units_skips_dimensionless_precip_named_companion():
 
 
 def test_units_convertible():
+    """Flux and mm/h convert to mm day-1; dimensionless does not."""
     assert units_convertible("kg m-2 s-1", "mm day-1")
     assert units_convertible("mm/h", "mm day-1")
     assert not units_convertible("1", "mm day-1")
 
 
 def test_to_standard_units_missing_variable():
+    """A missing --variable name is a UsageError."""
     ds = make_gridded()
     with pytest.raises(UsageError, match="not in dataset"):
         to_standard_units(ds, variables=["nope"])
 
 
 def test_to_standard_units_normalizes_already_standard_spelling():
+    """mm/day spelling is rewritten without changing values."""
     ds = make_gridded(name="precip", fill=1.0, units="mm/day")
     ds["precip"].attrs["standard_name"] = "precipitation_flux"
     values_before = ds["precip"].values.copy()
@@ -153,6 +165,7 @@ def test_to_standard_units_normalizes_already_standard_spelling():
 
 
 def test_to_standard_units_raises_when_classified_but_not_convertible():
+    """Temp classified with wind units is a UsageError."""
     ds = make_gridded(name="t2m", fill=1.0, units="m s-1")
     ds["t2m"].attrs["standard_name"] = "air_temperature"
     with pytest.raises(UsageError, match="not convertible"):
@@ -160,18 +173,21 @@ def test_to_standard_units_raises_when_classified_but_not_convertible():
 
 
 def test_quantify_dataset_requires_units_for_temp_precip():
+    """Temp/precip without units refuse to quantify."""
     ds = make_gridded(name="precip", units=None)
     with pytest.raises(UsageError, match="requires a units attribute"):
         quantify_dataset(ds)
 
 
 def test_quantify_dataset_accepts_amount_totals():
+    """mm amounts quantify."""
     ds = make_gridded(name="precip", units="mm")
     q = quantify_dataset(ds)
     assert q["precip"].pint.units is not None
 
 
 def test_quantify_dataset_accepts_cell_methods_sum():
+    """A summed rate still quantifies."""
     ds = make_gridded(name="precip", units="mm day-1")
     ds["precip"].attrs["cell_methods"] = "time: sum"
     q = quantify_dataset(ds)
@@ -179,6 +195,7 @@ def test_quantify_dataset_accepts_cell_methods_sum():
 
 
 def test_rate_to_total_refuses_amount_totals():
+    """rate_to_total refuses variables that are already amounts."""
     ds = make_gridded(name="precip", units="mm")
     q = quantify_dataset(ds)
     with pytest.raises(UsageError, match="precip total"):
@@ -186,6 +203,7 @@ def test_rate_to_total_refuses_amount_totals():
 
 
 def test_rate_to_total_refuses_cell_methods_sum():
+    """rate_to_total refuses cell_methods sum (already a total)."""
     ds = make_gridded(name="precip", units="mm day-1")
     ds["precip"].attrs["cell_methods"] = "time: sum"
     q = quantify_dataset(ds)
@@ -194,6 +212,7 @@ def test_rate_to_total_refuses_cell_methods_sum():
 
 
 def test_precip_for_display_converts_aggregated_rate():
+    """A rate with aggregation_period becomes an amount for display."""
     ds = make_gridded(name="precip", fill=2.0, units="mm day-1")
     ds["precip"].attrs["aggregation_period"] = "1 day"
     ds["precip"].attrs["standard_name"] = "lwe_precipitation_rate"
@@ -204,12 +223,14 @@ def test_precip_for_display_converts_aggregated_rate():
 
 
 def test_precip_for_display_noop_without_period():
+    """Without aggregation_period the rate is left as a rate."""
     ds = make_gridded(name="precip", units="mm day-1")
     out = precip_for_display(ds, "precip")
     assert out["precip"].attrs["units"] == "mm day-1"
 
 
 def test_quantify_dataset_passes_unitless_other_vars():
+    """Non-temp/precip vars may stay unitless."""
     ds = make_gridded(name="humidity", units=None)
     ds["humidity"].attrs.pop("units", None)
     q = quantify_dataset(ds)
@@ -218,6 +239,7 @@ def test_quantify_dataset_passes_unitless_other_vars():
 
 
 def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
+    """Data vars quantify; coordinate unit attrs are preserved."""
     ds = make_gridded(name="precip", units="mm day-1")
     ds["latitude"].attrs["units"] = "degrees_north"
     q = quantify_dataset(ds)
@@ -229,11 +251,13 @@ def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
 
 
 def test_format_cell_methods():
+    """cell_methods strings include an optional interval clause."""
     assert format_cell_methods("time", "mean") == "time: mean"
     assert format_cell_methods("time", "mean", interval="1 day") == ("time: mean (interval: 1 day)")
 
 
 def test_timestep_gate_and_rate_to_total():
+    """Weekly bins convert; daily labels refuse a 7-day period."""
     times = np.array(["2026-01-07", "2026-01-14"], dtype="datetime64[D]")
     ds = xr.Dataset(
         {
@@ -295,12 +319,14 @@ def test_infer_timestep_timedelta64_us_weekly():
 
 
 def test_format_duration_subday():
+    """Durations format as pint-style 'N unit' strings."""
     assert format_duration(ureg.Quantity("30 minute")) == "30 minute"
     assert format_duration(ureg.Quantity("7 day")) == "7 day"
     assert format_duration(parse_aggregation_period("1 hour")) == "1 hour"
 
 
 def test_stamp_data_interval_explicit_and_inferred():
+    """An explicit period stamps; otherwise daily spacing is inferred."""
     ds = make_gridded(n_time=2)
     stamp_data_interval(ds, period="30 minute")
     assert ds["precip"].attrs[DATA_INTERVAL_ATTR] == "30 minute"
@@ -313,6 +339,7 @@ def test_stamp_data_interval_explicit_and_inferred():
 
 
 def test_stamp_data_interval_irregular_step_writes_cf_bounds():
+    """Irregular step drops a scalar interval and writes CF bounds."""
     days = np.array([7, 10, 14, 21], dtype="timedelta64[D]").astype("timedelta64[ns]")
     ds = xr.Dataset(
         {"tp": (("step",), np.ones(4), {"units": "mm day-1", DATA_INTERVAL_ATTR: "1 day"})},
@@ -331,6 +358,7 @@ def test_stamp_data_interval_irregular_step_writes_cf_bounds():
 
 
 def test_stamp_data_interval_irregular_datetime_defaults_origin():
+    """Irregular times bound the first bin from midnight of that day."""
     times = np.array(
         ["2026-08-18T03:00", "2026-08-18T06:00", "2026-08-18T12:00"],
         dtype="datetime64[ns]",
@@ -359,6 +387,7 @@ def test_assert_nonoverlapping_uses_min_spacing_when_bounds_present():
 
 
 def test_deaccumulate_stamps_scalar_on_daily_step():
+    """Daily accumulated tp deaccumulates with a scalar data_interval."""
     ds = make_forecast(n_number=None, n_step=4)
     ds["tp"].attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     out = deaccumulate_along_step(ds)
@@ -367,6 +396,7 @@ def test_deaccumulate_stamps_scalar_on_daily_step():
 
 
 def test_deaccumulate_stamps_bounds_on_irregular_step():
+    """Irregular step deaccumulation writes CF bounds from the previous sample."""
     days = [0, 7, 10, 14, 20, 21, 28]
     steps = np.array(days, dtype="timedelta64[D]")
     accum = np.cumsum(np.arange(len(days), dtype=float))
@@ -392,6 +422,7 @@ def test_deaccumulate_stamps_bounds_on_irregular_step():
 
 
 def test_expected_samples_and_filter_min_coverage():
+    """Coverage filtering drops bins below the threshold and refuses an empty axis."""
     assert expected_samples_in_period("7 day", "30 minute") == 336
     assert expected_samples_in_period("21 day", "1 day") == 21
 
@@ -427,6 +458,7 @@ def test_expected_samples_and_filter_min_coverage():
 
 
 def test_looks_like_rate_display_name():
+    """Rate-like long_names match; totals and empty strings do not."""
     assert looks_like_rate_display_name("precipitation rate")
     assert looks_like_rate_display_name("Precipitation rate")
     assert looks_like_rate_display_name("daily precipitation rate")
@@ -438,6 +470,7 @@ def test_looks_like_rate_display_name():
 
 
 def test_stamp_precip_amounts_overwrites_rate_display_names():
+    """Rate display names become amount names; a real product long_name is kept."""
     ds = make_gridded(n_time=1, fill=1.0, units="mm")
     ds["precip"].attrs.update(
         standard_name="lwe_precipitation_rate",
@@ -456,6 +489,7 @@ def test_stamp_precip_amounts_overwrites_rate_display_names():
 
 
 def test_precip_amounts_to_rates_daily_and_step():
+    """Daily amounts stay numerically; step amounts become per-step rates."""
     daily = make_gridded(n_time=2, fill=4.0, units="mm")
     daily["precip"].attrs["standard_name"] = "precipitation_amount"
     out = precip_amounts_to_rates(daily, interval="1 day")
@@ -487,6 +521,7 @@ def test_precip_amounts_to_rates_daily_and_step():
 
 
 def test_precip_convertible_names_skips_temp_with_leftover_precip_standard_name():
+    """A temperature var with a leftover precip standard_name is not treated as precip."""
     ds = make_gridded(n_time=2, name="2m_temperature", fill=280.0, units="K")
     ds["2m_temperature"].attrs["standard_name"] = "lwe_precipitation_rate"
     from weather_skills_core.units import precip_convertible_names

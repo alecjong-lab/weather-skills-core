@@ -37,7 +37,7 @@ def normalize_requirement_name(requirement: str) -> str | None:
 
 @dataclass(frozen=True)
 class ArgShape:
-    """The comparable CLI shape of one declared ``Argument`` entry."""
+    """The comparable CLI shape of one ``@weather_skill.argument``."""
 
     dest: str
     flags: tuple[str, ...] = ()
@@ -70,7 +70,6 @@ class SkillDeclaration:
     error: str | None = None  # set: the script could not be analyzed at all
     arguments: dict[str, ArgShape] = field(default_factory=dict)
     arguments_dynamic: bool = False  # the declared-flag set is not statically knowable
-    input_names: list[str] | None = None
     has_input: bool = False
     input_arity: str = "single"
     has_output: bool = False
@@ -78,19 +77,6 @@ class SkillDeclaration:
     version_passed: bool = False
     pep723_deps: list[str] | None = None  # None: no parseable script block
     notes: list[str] = field(default_factory=list)
-
-    # Back-compat aliases used by older rule helpers during migration.
-    @property
-    def extra_args(self) -> dict[str, ArgShape]:
-        return self.arguments
-
-    @property
-    def extra_args_dynamic(self) -> bool:
-        return self.arguments_dynamic
-
-    @property
-    def toggles(self) -> dict:
-        return {}
 
     @property
     def display_name(self) -> str:
@@ -102,9 +88,6 @@ class SkillDeclaration:
             return str(self.script.relative_to(self.skill_dir.parent))
         except ValueError:
             return str(self.script)
-
-    def toggle_enabled(self, keyword: str) -> bool:
-        return False
 
 
 def _literal(node):
@@ -146,22 +129,18 @@ def _dest_from_option_strings(flags: tuple[str, ...], kwargs: dict) -> str:
 
 
 def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> ArgShape | None:
-    """Build an ArgShape from Argument option strings + kwargs AST nodes."""
-    flags_val = _literal(option_strings) if not isinstance(option_strings, list | tuple) else None
-    if isinstance(option_strings, ast.Tuple | ast.List):
-        flags = []
-        for elt in option_strings.elts:
-            v = _literal(elt)
-            if not isinstance(v, str):
-                notes.append("arguments: a non-literal option string was skipped")
-                return None
-            flags.append(v)
-        flags = tuple(flags)
-    elif isinstance(flags_val, tuple | list) and all(isinstance(f, str) for f in flags_val):
-        flags = tuple(flags_val)
-    else:
+    """Build an ArgShape from option-string AST nodes + kwargs AST nodes."""
+    if not isinstance(option_strings, ast.Tuple | ast.List):
         notes.append("arguments: option_strings is not a literal sequence of strings")
         return None
+    flags = []
+    for elt in option_strings.elts:
+        v = _literal(elt)
+        if not isinstance(v, str):
+            notes.append("arguments: a non-literal option string was skipped")
+            return None
+        flags.append(v)
+    flags = tuple(flags)
 
     if kwargs_node is None:
         kwargs_node = ast.Dict(keys=[], values=[])
@@ -237,7 +216,7 @@ def _shape_from_add_argument(option_strings, kwargs_node, notes: list[str]) -> A
 
 
 def _shape_from_argument_call(call: ast.Call, notes: list[str]) -> ArgShape | None:
-    """Build an ArgShape from one ``weather_skill.argument(...)`` / ``Argument(...)`` call."""
+    """Build an ArgShape from one ``@weather_skill.argument(...)`` call."""
     if not call.args:
         notes.append("arguments: argument() has no option strings; skipped")
         return None
@@ -289,44 +268,6 @@ def _extract_stacked_arguments(
         shapes[shape.dest] = shape
     if not found:
         return {}, False
-    return shapes, dynamic
-
-
-def _extract_arguments_list(node, notes: list[str]) -> tuple[dict[str, ArgShape], bool]:
-    """Legacy: extract ``arguments=[Argument(...), ...]`` if still present."""
-    if node is None:
-        return {}, False
-    notes.append(
-        "arguments= list is deprecated; use stacked @weather_skill.argument(...) decorators"
-    )
-    if not isinstance(node, ast.List | ast.Tuple):
-        notes.append(
-            "arguments is not a literal list; the declared-flag set is unknown, so the "
-            "SKILL.md reverse check is suppressed for this script"
-        )
-        return {}, True
-    shapes = {}
-    dynamic = False
-    for i, elt in enumerate(node.elts):
-        if not isinstance(elt, ast.Call):
-            notes.append(f"arguments[{i}]: expected Argument(...); skipped")
-            dynamic = True
-            continue
-        func = elt.func
-        name = None
-        if isinstance(func, ast.Name):
-            name = func.id
-        elif isinstance(func, ast.Attribute):
-            name = func.attr
-        if name not in ("Argument", "argument"):
-            notes.append(f"arguments[{i}]: expected Argument(...); got {name!r}")
-            dynamic = True
-            continue
-        shape = _shape_from_argument_call(elt, notes)
-        if shape is None:
-            dynamic = True
-            continue
-        shapes[shape.dest] = shape
     return shapes, dynamic
 
 
@@ -400,9 +341,8 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("declaration spreads **kwargs; those keywords are not analyzed")
 
     name_node = keywords.get("name")
-    if name_node is None and call.args:
-        name_node = call.args[0]
-        decl.notes.append("pass name= as a keyword; positional name is deprecated")
+    if call.args:
+        decl.notes.append("name= and version= are keyword-only; positional arguments are ignored")
     if name_node is not None:
         name = _literal(name_node)
         if isinstance(name, str):
@@ -411,25 +351,32 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
             decl.notes.append("skill name is not a string literal; using the directory name")
 
     version_node = keywords.get("version")
-    if version_node is None and len(call.args) > 1:
-        version_node = call.args[1]
-        decl.notes.append("pass version= as a keyword; positional version is deprecated")
     decl.version_passed = isinstance(version_node, ast.Name) and version_node.id == "_SKILL_VERSION"
 
     if "inputs" in keywords:
-        decl.notes.append("inputs= is removed; declare Dataset-typed @weather_skill.argument flags")
+        decl.notes.append(
+            "inputs= is not a @weather_skill keyword; declare Dataset-typed "
+            "@weather_skill.argument flags"
+        )
     if "outputs" in keywords:
-        decl.notes.append("outputs= is removed; the decorator owns -o/--output (or pass output=False)")
+        decl.notes.append(
+            "outputs= is not a @weather_skill keyword; the decorator owns "
+            "-o/--output (or pass output=False)"
+        )
+    if "arguments" in keywords:
+        decl.notes.append(
+            "arguments= is not a @weather_skill keyword; stack @weather_skill.argument(...) instead"
+        )
+        decl.arguments_dynamic = True
 
     stacked, stacked_dynamic = _extract_stacked_arguments(func_node, decl.notes)
-    if "arguments" in keywords:
-        legacy, legacy_dynamic = _extract_arguments_list(keywords["arguments"], decl.notes)
-        # Prefer stacked when both present; merge stacked over legacy.
-        decl.arguments = {**legacy, **stacked}
-        decl.arguments_dynamic = stacked_dynamic or legacy_dynamic
-    else:
-        decl.arguments = stacked
-        decl.arguments_dynamic = stacked_dynamic
+    decl.arguments = stacked
+    decl.arguments_dynamic = decl.arguments_dynamic or stacked_dynamic
+    if decl.arguments_dynamic:
+        decl.notes.append(
+            "the declared-flag set is unknown, so the SKILL.md reverse check is "
+            "suppressed for this script"
+        )
 
     dataset_shapes = [s for s in decl.arguments.values() if s.type_name == "Dataset"]
     decl.has_input = bool(dataset_shapes)
@@ -440,9 +387,7 @@ def extract_script(script: Path, skill_dir: Path) -> SkillDeclaration:
         decl.notes.append("output= is not a literal; treated as artifact-writing")
     else:
         decl.has_output = bool(output_kw)
-    multi = any(
-        s.arity == "append" or s.nargs in ("+", "*", 2) for s in dataset_shapes
-    )
+    multi = any(s.arity == "append" or s.nargs in ("+", "*", 2) for s in dataset_shapes)
     decl.input_arity = "append" if multi else "single"
     return decl
 

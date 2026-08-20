@@ -1,18 +1,40 @@
-"""Physical units for skill datasets: equivalence, conversion, and quantification.
+"""Units, standard kinds, native spacing, and rate/total conversion.
 
-Skills carry real units on every data variable so datasets can be combined,
-converted, and compared without guessing from a variable's name. Units live in
-the CF ``units`` attr on disk and become pint quantities in memory
-(``quantify_dataset`` on input, ``dequantify_dataset`` before writing Zarr).
+On disk, data-variable units are a CF ``units`` string. The decorator
+**quantifies** with pint when it opens a Zarr and **dequantifies** before it
+writes, so skill bodies see pint quantities and files store plain strings.
+Strings must be pintable (UDUNITS via ``cf_xarray.units``). Custom registry
+extras: ``pentad`` (5 day) and ``dekad`` (10 day).
 
-A few known standard kinds (``STANDARD`` below) get explicit treatment: they
-must carry parseable units and have a standard display unit skills convert to.
-Everything else may include units optionally and is passed through untouched.
-Fetch writes accumulated variables as rates; ``rate_to_total`` refuses precip
-amounts (see UNITS.md).
+**Standard kinds** (``STANDARD``) are a small explicit set. Classification is
+CF ``standard_name``, then variable-name hints — never units alone (a bare
+``kg m-2 s-1`` field is not precip). On a match, ``to_standard_units`` converts
+to the kind's display unit and may stamp CF ``standard_name``; the variable
+**name** is left untouched.
 
-See ``skills/weather-skill-authoring/references/UNITS.md`` for the full policy.
-Built on pint-xarray with CF/UDUNITS strings via ``cf_xarray.units``.
+- ``temp`` → ``degree_Celsius``. Air temperature only (``air_temperature``,
+  ``t2m``, ``2m_temperature``, …). Not SST, dewpoint, skin, soil, or
+  pressure-level ``t`` — callers convert those with ``convert_dataarray``.
+- ``precip`` → ``mm day-1``. Precip **rate** / flux.
+- ``precip_amount`` → ``mm``. Precip **total** (rate × period).
+
+``temp`` and ``precip`` require a units attr (``units_required``). Other
+variables, including ``precip_amount``, may omit units. Unrecognized fields
+are passed through.
+
+Fetch writes accumulated variables as **rates**. Use ``precip_amounts_to_rates``
+(deaccumulate cumulative-since-init ``step`` amounts, else divide by
+``data_interval``). Period **totals** come from ``rate_to_total`` after
+``aggregate-temporal`` stamps ``aggregation_period``. That helper refuses
+amounts (and ``cell_methods`` ``sum``) so multiplying by the period cannot
+double-count. Plotters may convert in memory via ``precip_for_display``.
+
+Native cell geometry is XOR: uniform axes get scalar ``data_interval``;
+irregular axes get CF ``{dim}_bounds``. Aggregation adds
+``aggregation_period`` and ``aggregation_coverage``. Convert-to-totals
+multiplies by ``aggregation_period``, not by ``data_interval`` or bound widths.
+
+See ``docs/weather-skill-authoring/references/UNITS.md`` for the full policy.
 """
 
 from __future__ import annotations
@@ -68,10 +90,10 @@ PERIOD_TO_AGGREGATION = {
 #   units / standard_name  what to_standard_units stamps (None keeps existing)
 #   standard_names, standard_name_endswith, standard_name_contains
 #                          CF standard_name matches, tried first
-#   name_hints             variable-name whole/prefix/suffix match (exact names
-#                          only — not units fingerprinting)
+#   name_hints             variable-name whole/prefix/suffix match — not units
 #   unit_candidates        units for convert/fingerprint helpers (not classify)
 #   depth_candidates       matched after ÷ liquid-water density in converts
+# ``temp`` is 2 m / air temperature only. Do not add sst, d2m, skt, or ``t``.
 STANDARD = {
     "temp": {
         "units_required": True,
@@ -154,7 +176,11 @@ def units_match(units: str, candidates, *, as_depth: bool = False) -> bool:
 
 
 def kind_from_units(units: str) -> str | None:
-    """Fingerprint units as a ``STANDARD`` kind, or None if nothing matches."""
+    """Fingerprint a units string as precip rate/amount or temp, or None.
+
+    Used after a name/standard_name match to tell amount from rate, and by
+    convert helpers. Does **not** classify a variable by itself.
+    """
     for kind, spec in STANDARD.items():
         if units_match(units, spec["unit_candidates"]) or units_match(
             units, spec["depth_candidates"], as_depth=True
@@ -434,11 +460,10 @@ def precip_for_display(ds, name: str):
 def quantify_dataset(ds):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
-    Variables whose kind has ``units_required`` in ``STANDARD`` (known kinds
-    skills treat explicitly) must have a non-empty ``units`` attr. Other
-    variables may omit units. Precip amounts are quantified like any other
-    variable; ``rate_to_total`` is what refuses them. Coordinate ``units``
-    attrs are kept as attrs.
+    ``temp`` and ``precip`` (``units_required``) must have a non-empty
+    ``units`` attr. Other variables, including precip amounts, may omit units.
+    ``rate_to_total`` is what refuses amounts. Coordinate ``units`` attrs are
+    kept as attrs (not quantified).
     """
     for name, da in ds.data_vars.items():
         units = da.attrs.get("units")
@@ -544,14 +569,16 @@ def convert_dataarray(da, dst_units: str):
 
 
 def to_standard_units(ds, variables=None):
-    """Convert recognized temp/precip data vars to standard display units.
+    """Convert recognized air-temp / precip data vars to standard display units.
 
     Classification is by CF ``standard_name`` or named variable hints (with
-    precip amount-vs-rate from units when needed). On a match, stamps the
-    kind's CF ``standard_name`` (when set) and converts units; the variable
-    **name** is left untouched. Unrecognized or unitless variables are left
-    unchanged. Raises ``UsageError`` if a classified variable cannot be
-    converted.
+    precip amount-vs-rate from units when needed). Air temperature →
+    ``degree_Celsius``; precip rates → ``mm day-1``; precip amounts → ``mm``.
+    SST, dewpoint, skin, soil, and pressure-level temperature are not the
+    ``temp`` kind — convert those with ``convert_dataarray``. On a match,
+    stamps the kind's CF ``standard_name`` (when set); the variable **name**
+    is left untouched. Unrecognized or unitless variables are unchanged.
+    Raises ``UsageError`` if a classified variable cannot be converted.
     """
     names = list(variables) if variables is not None else list(ds.data_vars)
     out = ds

@@ -25,24 +25,18 @@ def _parser_dests(fn):
     return {a.dest for a in fn.parser._actions if a.dest != "help"}
 
 
-class TestStandardParameters:
-    def test_io_and_canonicals_present(self):
-        dests = _parser_dests(_full)
-        assert {"input", "output", "start_time", "end_time", "bbox", "variable"} <= dests
+def test_standard_parameters_io_and_canonicals_present():
+    dests = _parser_dests(_full)
+    assert {"input", "output", "start_time", "end_time", "bbox", "variable"} <= dests
 
-    def test_single_date(self):
-        assert "date" in _parser_dests(_date_only)
-        assert "start_time" not in _parser_dests(_date_only)
 
-    def test_catalog_covers_canonical_flags(self):
-        flags = {f for p in standard_parameters() for f in p.flags}
-        assert {
-            "--start-time",
-            "--end-time",
-            "--date",
-            "--bbox",
-            "--variable",
-            "-v",
-        } <= flags
-        assert "--input" not in flags
-        assert "--output" not in flags
+def test_standard_parameters_single_date():
+    assert "date" in _parser_dests(_date_only)
+    assert "start_time" not in _parser_dests(_date_only)
+
+
+def test_standard_parameters_catalog_covers_canonical_flags():
+    flags = {f for p in standard_parameters() for f in p.flags}
+    assert {"--start-time", "--end-time", "--date", "--bbox", "--variable", "-v"} <= flags
+    assert "--input" not in flags
+    assert "--output" not in flags

@@ -139,7 +139,7 @@ def run_lint(
         )
         scores.append(score)
 
-    # Surface each target script's extraction notes (a dynamic extra_args, a
+    # Surface each target script's extraction notes (a dynamic argument, a
     # skipped second decorated function, a duplicate PEP 723 block) into the
     # report, where render prints them; without this they stay in the buried
     # per-declaration notes field and never reach the reader.

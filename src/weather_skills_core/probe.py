@@ -1,8 +1,9 @@
 """Fetcher ``--probe-latest`` helpers.
 
-A probe prints one line on stdout: ``YYYY-MM-DD`` or ``none`` (no realtime
-cap, e.g. CMIP6). It must not download fields. Agents call it on the
-fetcher; resolve-time does calendar math only.
+A probe is a standalone call: it prints one line on stdout (``YYYY-MM-DD``
+or ``none``, e.g. CMIP6) and must not download fields. ``PROBE_LATEST_KWARGS``
+sets ``standalone=True`` so the decorator drops required flags and skips
+writing. Agents call it on the fetcher; resolve-time does calendar math only.
 """
 
 from __future__ import annotations
@@ -16,17 +17,13 @@ PROBE_LATEST_KWARGS = {
     "const": "",
     "default": None,
     "metavar": "IDENT",
+    "standalone": True,
     "help": (
         "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
         "Does not download fields. Optional IDENT selects a product "
         "(dataset id, IMERG late/final, …)."
     ),
 }
-
-
-def argv_has_probe_latest(argv: list[str]) -> bool:
-    """True when ``--probe-latest`` is present (with or without an ident)."""
-    return any(arg == "--probe-latest" or arg.startswith("--probe-latest=") for arg in argv)
 
 
 def parse_probe_stdout(text: str) -> date | None:

@@ -44,7 +44,9 @@ class Rule:
 
 RULES = {
     "WSK001": Rule("WSK001", "error", "skill script could not be analyzed"),
-    "WSK101": Rule("WSK101", "warning", "argument uses a non-canonical spelling of a standard parameter"),
+    "WSK101": Rule(
+        "WSK101", "warning", "argument uses a non-canonical spelling of a standard parameter"
+    ),
     "WSK201": Rule(
         "WSK201", "warning", "one-off flag declared by multiple skills", default_enabled=False
     ),
@@ -109,7 +111,9 @@ def _standard_lookup() -> dict[str, StandardParameter]:
 
 
 def _shadow_remedy(param: StandardParameter) -> str:
-    return f"use the canonical @weather_skill.argument({'/'.join(repr(f) for f in param.flags)}) form"
+    return (
+        f"use the canonical @weather_skill.argument({'/'.join(repr(f) for f in param.flags)}) form"
+    )
 
 
 def _rule_shadow(decl: SkillDeclaration) -> list[Finding]:
@@ -252,7 +256,7 @@ def _rule_skill_md(decl: SkillDeclaration, siblings: list[SkillDeclaration]) -> 
     multi-script skill's arguments do not read as undeclared just because they
     live in another of its scripts; it is emitted once, on the lexically first
     sibling, so the finding is not duplicated across scripts. It is suppressed
-    entirely when any sibling's ``extra_args`` is dynamic (its declared-flag
+    entirely when any sibling's ``arguments`` set is dynamic (its declared-flag
     set is unknown), since the reverse check would then flag documented
     arguments as undeclared; the extraction note surfaces that suppression.
     """
@@ -291,7 +295,7 @@ def _rule_skill_md(decl: SkillDeclaration, siblings: list[SkillDeclaration]) -> 
                 )
             )
     reverse_holder = decl.key == min(sibling.key for sibling in siblings)
-    reverse_reliable = not any(sibling.extra_args_dynamic for sibling in siblings)
+    reverse_reliable = not any(sibling.arguments_dynamic for sibling in siblings)
     if reverse_holder and reverse_reliable:
         union_spellings: set[str] = set()
         for sibling in siblings:
@@ -339,7 +343,7 @@ def _rule_cross_skill(corpus: list[CorpusSkill]) -> list[Finding]:
     lookup = _standard_lookup()
     by_identity: dict[str, list[tuple[CorpusSkill, ArgShape]]] = {}
     for cs in corpus:
-        for shape in cs.decl.extra_args.values():
+        for shape in cs.decl.arguments.values():
             if shape.dest in lookup or any(flag in lookup for flag in shape.flags):
                 continue  # shadows of the standard surface are WSK101 territory
             by_identity.setdefault(shape.identity, []).append((cs, shape))

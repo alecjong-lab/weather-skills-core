@@ -15,7 +15,6 @@ from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
 from weather_skills_core.dataset_type import Dataset, help_label
 from weather_skills_core.errors import SkillError, UsageError
-from weather_skills_core.probe import argv_has_probe_latest
 from weather_skills_core.standard_utils import (
     fill_missing_data_var_attrs,
     normalize_step_coord,
@@ -30,15 +29,35 @@ from weather_skills_core.units import (
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
 
+STANDALONE_HELP = (
+    "Standalone call: other required flags and --output are not required; "
+    "the decorator does not write."
+)
+
+
+def argv_has_option(argv: list[str], option_strings) -> bool:
+    """True when one of ``option_strings`` is present (bare, space, or ``--flag=``)."""
+    for flag in option_strings:
+        for arg in argv:
+            if arg == flag or (flag.startswith("--") and arg.startswith(f"{flag}=")):
+                return True
+    return False
+
 
 class Argument:
-    """One stacked CLI flag (same kwargs as ``argparse.add_argument``)."""
+    """One stacked CLI flag (same kwargs as ``argparse.add_argument``).
+
+    ``standalone=True`` is reserved: when that flag is on argv, the decorator
+    drops every ``required=True`` flag (including ``-o``) and skips writing.
+    """
 
     def __init__(self, *option_strings, **kwargs):
         if not option_strings:
             raise ValueError("Argument requires at least one option string or positional name")
+        kwargs = dict(kwargs)
+        self.standalone = bool(kwargs.pop("standalone", False))
         self.option_strings = option_strings
-        self.kwargs = dict(kwargs)
+        self.kwargs = kwargs
         self.dataset_type: Dataset | None = None
         type_kw = self.kwargs.get("type")
         if isinstance(type_kw, Dataset):
@@ -185,7 +204,11 @@ def pass_dataset_input_as_ds(params, arguments):
 
 
 def argument(*option_strings, **kwargs):
-    """Declare a CLI flag under ``@weather_skill`` (argparse-style)."""
+    """Declare a CLI flag under ``@weather_skill`` (argparse-style).
+
+    Pass ``standalone=True`` for a probe or dummy call. That keyword is not
+    forwarded to argparse.
+    """
     arg = Argument(*option_strings, **kwargs)
 
     def decorate(fn):
@@ -216,9 +239,10 @@ def weather_skill(
     artifact per ``--output``. The number of returned values must match the
     number of ``--output`` paths. Returning ``None`` skips decorator write
     (skill already wrote). Set ``output=False`` for inspect-only skills.
-    ``--probe-latest`` (declared by fetchers) drops the ``--output``
-    requirement and any other ``required=True`` flags so a probe can run
-    without a download window.
+    Mark a flag ``standalone=True`` for a probe or dummy call: when that
+    flag is present, every ``required=True`` flag (including ``-o``) is
+    dropped and the decorator does not write. Fetchers use this for
+    ``--probe-latest``.
 
     Skills open precip rates and amounts alike. The operation that cannot take
     amounts is ``rate_to_total`` (used by ``convert-to-totals``): multiplying
@@ -283,6 +307,8 @@ def weather_skill(
                 kwargs = standard_args.add_standard_help(
                     kwargs, standard_args.STANDARD_HELP[arg.dest]
                 )
+            if arg.standalone:
+                kwargs = standard_args.add_standard_help(kwargs, STANDALONE_HELP)
             parser.add_argument(*arg.option_strings, **kwargs)
 
         strip_dests = {arg.dest for arg in arguments if arg.dataset_type is not None} | {"output"}
@@ -294,10 +320,13 @@ def weather_skill(
                 argv = standard_args.rewrite_bbox_argv(argv)
 
             try:
-                probing = argv_has_probe_latest(argv)
+                standalone = any(
+                    arg.standalone and argv_has_option(argv, arg.option_strings)
+                    for arg in arguments
+                )
                 saved_required = [(action, action.required) for action in parser._actions]
                 try:
-                    if probing:
+                    if standalone:
                         for action in parser._actions:
                             action.required = False
                     args = parser.parse_args(argv)
@@ -321,7 +350,7 @@ def weather_skill(
                         )
 
                 result = fn(**params)
-                if not output or result is None:
+                if not output or standalone or result is None:
                     return result
 
                 results = list(result) if isinstance(result, (list, tuple)) else [result]

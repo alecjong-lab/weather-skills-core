@@ -1,16 +1,14 @@
-"""Resolve named regions (CLI string → bbox + GeoJSON feature / GeoDataFrame).
+"""Resolve a place name to a bbox and a GeoJSON Feature.
 
-Country lookups use the bundled Natural Earth 1:110m admin-0 dataset
-(rebuild with ``tools/build_countries.py``). Sub-national lookups
-(admin-1 states/provinces/counties, admin-2 counties/districts) use
-geoBoundaries ``gbOpen`` (https://www.geoboundaries.org): the API is queried for
-the country/level, then the simplified GeoJSON it returns is matched on
-``shapeName``. Queries are cleaned ``country-admin1`` / ``country-admin1-admin2``
-keys (or an ISO3 prefix, e.g. ``KEN-nairobi``). Multi-country names
-(``East Africa``, ``Western Africa``, ``Sub-Saharan Africa``) dissolve the
-bundled countries by Natural Earth continent / UN subregion / World Bank region
-before any geocoder. Leftover free-text queries (landmarks, cities that are not
-admin keys) use OSM Nominatim.
+Lookup order (no network until a later step):
+
+1. Bundled Natural Earth countries — ISO3 or country name.
+2. Bundled Natural Earth groupings — continent / UN / World Bank labels
+   (``East Africa``, ``Sub-Saharan Africa``, …).
+3. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
+4. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
+
+Rebuild the country file with ``tools/build_countries.py``.
 """
 
 from __future__ import annotations
@@ -31,8 +29,16 @@ _HTTP_TIMEOUT = 60
 _USER_AGENT = (
     "weather-skills-core/resolve-region (https://github.com/rhiza-research/weather-skills)"
 )
+_REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
+_DIRECTIONAL_PREFIXES = (
+    ("eastern_", "east_"),
+    ("western_", "west_"),
+    ("northern_", "north_"),
+    ("southern_", "south_"),
+    ("middle_", "central_"),
+)
 
-# Country-name aliases (keys and values are already cleaned).
+# Keys and values are already cleaned (see :func:`clean_region_name`).
 _COUNTRY_ALIASES = {
     "ch-in": "china",
     "people's_republic_of_china": "china",
@@ -64,20 +70,12 @@ _COUNTRY_ALIASES = {
     "west_bank": "palestine",
 }
 
-# Extra lookup keys for Natural Earth labels (Eastern Africa → East Africa).
-# Applied only when the short form is not already a primary region name.
-_DIRECTIONAL_PREFIXES = (
-    ("eastern_", "east_"),
-    ("western_", "west_"),
-    ("northern_", "north_"),
-    ("southern_", "south_"),
-    ("middle_", "central_"),
-)
-_REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
-
 
 class _AdminMissing(Exception):
     """geoBoundaries has no ADM layer for this country/level."""
+
+
+# --- names -----------------------------------------------------------------
 
 
 def clean_region_name(name) -> str:
@@ -88,6 +86,13 @@ def clean_region_name(name) -> str:
     text = text.replace("&", "and")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     return _COUNTRY_ALIASES.get(text, text)
+
+
+def _is_iso3_token(cleaned: str) -> bool:
+    return len(cleaned) == 3 and cleaned.isalpha()
+
+
+# --- bbox -----------------------------------------------------------------
 
 
 def _iter_coords(coords):
@@ -105,16 +110,7 @@ def _iter_coords(coords):
 
 
 def _lon_bounds(lons):
-    """Compute the (W, E) longitude interval on the circle.
-
-    A naive min/max would return a full-width box for any geometry crossing the
-    180th meridian. Find the largest gap between consecutive sorted longitudes
-    (including the wrap-around gap). The occupied interval is the complement:
-
-    - Circumpolar (covers essentially the whole circle): ``-180, 180``.
-    - Largest gap is the wrap gap: ordinary ``W < E``.
-    - Largest gap is interior: antimeridian-crossing ``W > E`` (RFC 7946 §5.2).
-    """
+    """``(W, E)`` on the circle. Antimeridian crossings return ``W > E`` (RFC 7946)."""
     values = sorted(set(lons))
     n = len(values)
     if n == 1:
@@ -125,15 +121,12 @@ def _lon_bounds(lons):
     for i in range(n - 1):
         gap = values[i + 1] - values[i]
         if gap > max_gap:
-            max_gap = gap
-            gap_index = i
+            max_gap, gap_index = gap, i
     wrap_gap = (values[0] + 360.0) - values[n - 1]
     wrap_is_largest = wrap_gap > max_gap
     if wrap_is_largest:
         max_gap = wrap_gap
-
-    covered = 360.0 - max_gap
-    if covered >= 350.0:
+    if 360.0 - max_gap >= 350.0:
         return -180.0, 180.0
     if wrap_is_largest:
         return values[0], values[n - 1]
@@ -154,12 +147,7 @@ def bbox_from_geometry(geometry) -> tuple[float, float, float, float]:
 
 
 def bbox_from_feature(feature: dict) -> tuple[float, float, float, float]:
-    """Return ``(N, W, S, E)`` from a slim Feature.
-
-    Nominatim hits and named multi-country regions store ``[N, W, S, E]`` on
-    ``properties.bbox`` so a Point geometry is never used as a zero-area clip
-    box. Admin features fall through to ``bbox_from_geometry``.
-    """
+    """Return ``(N, W, S, E)``. ``properties.bbox`` wins when present (Nominatim / regions)."""
     props = feature.get("properties") or {}
     bbox = props.get("bbox")
     if bbox is not None:
@@ -177,45 +165,80 @@ def _bbox_rectangle(north: float, west: float, south: float, east: float) -> dic
     return {
         "type": "Polygon",
         "coordinates": [
-            [
-                [west, south],
-                [east, south],
-                [east, north],
-                [west, north],
-                [west, south],
-            ]
+            [[west, south], [east, south], [east, north], [west, north], [west, south]]
         ],
     }
 
 
-def _parse_nominatim_bbox(raw) -> tuple[float, float, float, float]:
-    """Nominatim ``boundingbox`` is ``[south, north, west, east]`` strings."""
-    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
-        raise DataError("Nominatim result is missing a 4-value boundingbox.")
+# --- GeoJSON features -------------------------------------------------------
+
+
+def _feature(geometry, *, iso3, name, region_name, level, country, **extra) -> dict:
+    return {
+        "type": "Feature",
+        "properties": {
+            "iso3": iso3,
+            "name": name,
+            "region_name": region_name,
+            "level": level,
+            "country": country,
+            **extra,
+        },
+        "geometry": geometry,
+    }
+
+
+def _polygon_parts(geometry: dict) -> list:
+    kind, coords = geometry.get("type"), geometry.get("coordinates")
+    if kind == "Polygon" and coords:
+        return [coords]
+    if kind == "MultiPolygon" and coords:
+        return list(coords)
+    return []
+
+
+# --- HTTP -------------------------------------------------------------------
+
+
+def _http_json(url: str, *, what: str, missing=None):
+    """GET ``url`` and parse JSON. ``missing`` is raised on HTTP 404 when given."""
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        south, north, west, east = (float(v) for v in raw)
-    except (TypeError, ValueError) as exc:
-        raise DataError(f"Nominatim boundingbox {raw!r} is not numeric.") from exc
-    return north, west, south, east
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and missing is not None:
+            raise missing from None
+        raise DataError(f"{what} failed: HTTP {exc.code} {exc.reason}") from None
+    except urllib.error.URLError as exc:
+        raise DataError(f"{what} failed: {exc.reason}") from None
+    if raw.startswith(b"version https://git-lfs.github.com"):
+        raise DataError(
+            f"{what} returned a Git LFS pointer instead of JSON; cannot download {url}."
+        )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DataError(f"{what} returned invalid JSON from {url}: {exc}") from None
 
 
-@lru_cache(maxsize=1)
-def _countries() -> dict:
-    path = files("weather_skills_core.data").joinpath("countries.geojson")
-    return json.loads(path.read_text(encoding="utf-8"))
+# --- bundled countries ------------------------------------------------------
 
 
 @lru_cache(maxsize=1)
 def _country_indexes() -> tuple[dict[str, dict], dict[str, dict]]:
-    """Return ``(by_iso3, by_clean_name)`` maps onto bundled country features."""
+    """``(by_iso3, by_clean_name)`` onto bundled country features."""
+    path = files("weather_skills_core.data").joinpath("countries.geojson")
+    payload = json.loads(path.read_text(encoding="utf-8"))
     by_iso3: dict[str, dict] = {}
     by_clean: dict[str, dict] = {}
-    for feature in _countries()["features"]:
+    for feature in payload["features"]:
         iso3 = feature["properties"]["iso3"]
         by_iso3[iso3] = feature
         cleaned = clean_region_name(feature["properties"].get("name", ""))
         if cleaned != "no_region":
             by_clean[cleaned] = feature
+    # Alias keys so ``united_states-california`` splits on the short name.
     for alias, canonical in _COUNTRY_ALIASES.items():
         if canonical in by_clean:
             by_clean[alias] = by_clean[canonical]
@@ -232,16 +255,6 @@ def _directional_alias_keys(cleaned: str) -> list[str]:
     return extra
 
 
-def _polygon_parts(geometry: dict) -> list:
-    kind = geometry.get("type")
-    coords = geometry.get("coordinates")
-    if kind == "Polygon" and coords:
-        return [coords]
-    if kind == "MultiPolygon" and coords:
-        return list(coords)
-    return []
-
-
 @lru_cache(maxsize=1)
 def _region_indexes() -> dict[str, dict]:
     """Cleaned query → multi-country grouping from bundled region fields."""
@@ -251,18 +264,28 @@ def _region_indexes() -> dict[str, dict]:
         buckets: dict[str, list] = {}
         for feature in by_iso3.values():
             label = feature["properties"].get(field)
-            if not label:
-                continue
-            buckets.setdefault(label, []).append(feature)
+            if label:
+                buckets.setdefault(label, []).append(feature)
         for label, members in buckets.items():
             key = clean_region_name(label)
-            if key in by_key or key == "no_region":
-                continue
-            by_key[key] = {"name": label, "members": members}
+            if key not in by_key and key != "no_region":
+                by_key[key] = {"name": label, "members": members}
     for key, spec in list(by_key.items()):
         for alias in _directional_alias_keys(key):
             by_key.setdefault(alias, spec)
     return by_key
+
+
+def _slim_country(feature: dict) -> dict:
+    props = feature["properties"]
+    return _feature(
+        feature["geometry"],
+        iso3=props["iso3"],
+        name=props["name"],
+        region_name=clean_region_name(props["name"]),
+        level="country",
+        country=props["name"],
+    )
 
 
 def _slim_region(spec: dict) -> dict:
@@ -277,73 +300,34 @@ def _slim_region(spec: dict) -> dict:
         else {"type": "MultiPolygon", "coordinates": parts}
     )
     north, west, south, east = bbox_from_geometry(geometry)
-    return {
-        "type": "Feature",
-        "properties": {
-            "iso3": None,
-            "name": spec["name"],
-            "region_name": clean_region_name(spec["name"]),
-            "level": "region",
-            "country": None,
-            "bbox": [north, west, south, east],
-        },
-        "geometry": geometry,
-    }
+    return _feature(
+        geometry,
+        iso3=None,
+        name=spec["name"],
+        region_name=clean_region_name(spec["name"]),
+        level="region",
+        country=None,
+        bbox=[north, west, south, east],
+    )
 
 
-def _slim_country(feature: dict) -> dict:
-    props = feature["properties"]
-    name = props["name"]
-    return {
-        "type": "Feature",
-        "properties": {
-            "iso3": props["iso3"],
-            "name": name,
-            "region_name": clean_region_name(name),
-            "level": "country",
-            "country": name,
-        },
-        "geometry": feature["geometry"],
-    }
+def _match_bundled(cleaned: str) -> dict | None:
+    """ISO3, country name, or Natural Earth grouping. Country names win (South Africa)."""
+    by_iso3, by_clean = _country_indexes()
+    if _is_iso3_token(cleaned):
+        match = by_iso3.get(cleaned.upper())
+        if match is not None:
+            return _slim_country(match)
+    match = by_clean.get(cleaned)
+    if match is not None:
+        return _slim_country(match)
+    named = _region_indexes().get(cleaned)
+    if named is not None:
+        return _slim_region(named)
+    return None
 
 
-def _slim_admin(country: dict, feature: dict, level: int, region_name: str) -> dict:
-    props = feature.get("properties") or {}
-    display = props.get("shapeName") or region_name
-    country_name = country["properties"]["name"]
-    return {
-        "type": "Feature",
-        "properties": {
-            "iso3": country["properties"]["iso3"],
-            "name": display,
-            "region_name": region_name,
-            "level": f"admin_{level}",
-            "country": country_name,
-        },
-        "geometry": feature["geometry"],
-    }
-
-
-def _http_json(url: str, *, what: str):
-    """GET ``url`` and parse JSON. Follows redirects (incl. Git LFS media URLs)."""
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            raise _AdminMissing(f"{what} not found at {url}") from None
-        raise DataError(f"{what} failed: HTTP {exc.code} {exc.reason}") from None
-    except urllib.error.URLError as exc:
-        raise DataError(f"{what} failed: {exc.reason}") from None
-    if raw.startswith(b"version https://git-lfs.github.com"):
-        raise DataError(
-            f"{what} returned a Git LFS pointer instead of JSON; cannot download {url}."
-        )
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise DataError(f"{what} returned invalid JSON from {url}: {exc}") from None
+# --- geoBoundaries admin ----------------------------------------------------
 
 
 def _gb_download_url(meta) -> str | None:
@@ -357,16 +341,18 @@ def _gb_download_url(meta) -> str | None:
 def _load_admin_geojson(iso3: str, level: int) -> dict:
     """Fetch one country's geoBoundaries ``gbOpen`` FeatureCollection. Overridable in tests."""
     api_url = _GB_API.format(iso3=iso3, level=level)
-    try:
-        meta = _http_json(api_url, what=f"geoBoundaries ADM{level} metadata for {iso3}")
-    except _AdminMissing as exc:
-        raise _AdminMissing(
-            f"no geoBoundaries gbOpen ADM{level} layer for {iso3} ({api_url})"
-        ) from exc
+    missing = _AdminMissing(f"no geoBoundaries gbOpen ADM{level} layer for {iso3} ({api_url})")
+    meta = _http_json(
+        api_url, what=f"geoBoundaries ADM{level} metadata for {iso3}", missing=missing
+    )
     download = _gb_download_url(meta)
     if not download:
         raise _AdminMissing(f"geoBoundaries ADM{level} metadata for {iso3} has no GeoJSON URL")
-    payload = _http_json(download, what=f"geoBoundaries ADM{level} GeoJSON for {iso3}")
+    payload = _http_json(
+        download,
+        what=f"geoBoundaries ADM{level} GeoJSON for {iso3}",
+        missing=_AdminMissing(f"geoBoundaries ADM{level} GeoJSON for {iso3} not found"),
+    )
     if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
         raise DataError(f"geoBoundaries ADM{level} for {iso3} is not a GeoJSON FeatureCollection")
     return payload
@@ -379,88 +365,92 @@ def _admin_collection(iso3: str, level: int) -> dict:
 
 def _features_by_clean_name(collection: dict | None) -> dict[str, list[dict]]:
     grouped: dict[str, list[dict]] = {}
-    if not collection:
-        return grouped
-    for feature in collection.get("features") or []:
-        props = feature.get("properties") or {}
-        name = clean_region_name(props.get("shapeName", ""))
-        if name == "no_region":
-            continue
-        grouped.setdefault(name, []).append(feature)
+    for feature in (collection or {}).get("features") or []:
+        name = clean_region_name((feature.get("properties") or {}).get("shapeName", ""))
+        if name != "no_region":
+            grouped.setdefault(name, []).append(feature)
     return grouped
 
 
-def _unique(hits: list[dict]) -> dict | None:
-    if len(hits) == 1:
-        return hits[0]
-    return None
+def _one(hits: list[dict] | None) -> dict | None:
+    return hits[0] if hits is not None and len(hits) == 1 else None
+
+
+def _admin_indexes(iso3: str) -> tuple[dict, dict]:
+    grouped = []
+    for level in (1, 2):
+        try:
+            grouped.append(_features_by_clean_name(_admin_collection(iso3, level)))
+        except _AdminMissing:
+            grouped.append({})
+    return grouped[0], grouped[1]
+
+
+def _slim_admin(country: dict, feature: dict, level: int, region_name: str) -> dict:
+    props = feature.get("properties") or {}
+    country_name = country["properties"]["name"]
+    return _feature(
+        feature["geometry"],
+        iso3=country["properties"]["iso3"],
+        name=props.get("shapeName") or region_name,
+        region_name=region_name,
+        level=f"admin_{level}",
+        country=country_name,
+    )
 
 
 def _find_admin(country: dict, remainder: str) -> dict | None:
     iso3 = country["properties"]["iso3"]
-    country_clean = clean_region_name(country["properties"]["name"])
-    keyed = f"{country_clean}-{remainder}"
+    keyed = f"{clean_region_name(country['properties']['name'])}-{remainder}"
+    by1, by2 = _admin_indexes(iso3)
 
-    collections: dict[int, dict] = {}
-    for level in (1, 2):
-        try:
-            collections[level] = _admin_collection(iso3, level)
-        except _AdminMissing:
-            continue
-    by1 = _features_by_clean_name(collections.get(1))
-    by2 = _features_by_clean_name(collections.get(2))
-
-    hit = _unique(by1.get(remainder, []))
+    hit = _one(by1.get(remainder))
     if hit is not None:
         return _slim_admin(country, hit, 1, keyed)
-    hit = _unique(by2.get(remainder, []))
+    hit = _one(by2.get(remainder))
     if hit is not None:
         return _slim_admin(country, hit, 2, keyed)
 
     for name in sorted(by1, key=len, reverse=True):
         prefix = f"{name}-"
         if remainder.startswith(prefix):
-            rest = remainder[len(prefix) :]
-            hit = _unique(by2.get(rest, []))
+            hit = _one(by2.get(remainder[len(prefix) :]))
             if hit is not None:
                 return _slim_admin(country, hit, 2, keyed)
     return None
 
 
 def _split_subnational(cleaned: str) -> tuple[dict, str] | None:
-    """Return ``(country_feature, remainder)`` for a hierarchical region name."""
-    by_iso3, by_clean = _country_indexes()
+    """``(country_feature, remainder)`` for ``kenya-nairobi`` / ``KEN-nairobi``."""
     if "-" not in cleaned:
         return None
-
+    by_iso3, by_clean = _country_indexes()
     head, rest = cleaned.split("-", 1)
-    if len(head) == 3 and head.isalpha():
+    if _is_iso3_token(head) and rest:
         country = by_iso3.get(head.upper())
-        if country is not None and rest:
+        if country is not None:
             return country, rest
-
     for name in sorted(by_clean, key=len, reverse=True):
         prefix = f"{name}-"
-        if cleaned.startswith(prefix):
-            remainder = cleaned[len(prefix) :]
-            if remainder:
-                return by_clean[name], remainder
+        if cleaned.startswith(prefix) and cleaned[len(prefix) :]:
+            return by_clean[name], cleaned[len(prefix) :]
     return None
 
 
-def should_geocode(query: str) -> bool:
-    """True when a failed admin lookup may fall through to Nominatim.
+# --- Nominatim --------------------------------------------------------------
 
-    ISO3-shaped tokens, hierarchical admin keys (``kenya-nairbi``), and
-    Natural Earth multi-country regions (``East Africa``) stay off Nominatim.
+
+def should_geocode(query: str) -> bool:
+    """True when a failed :func:`lookup_region` may fall through to Nominatim.
+
+    ISO3-shaped tokens, hierarchical admin keys, and Natural Earth regions
+    stay off Nominatim even when the lookup itself failed (typo in the unit).
     """
     text = query.strip()
     if not text:
         return False
     cleaned = clean_region_name(text)
-    if len(cleaned) == 3 and cleaned.isalpha():
-        return False
-    if cleaned in _region_indexes():
+    if _is_iso3_token(cleaned) or cleaned in _region_indexes():
         return False
     return _split_subnational(cleaned) is None
 
@@ -468,18 +458,9 @@ def should_geocode(query: str) -> bool:
 def _load_nominatim(query: str) -> list:
     """GET Nominatim search. Overridable in tests."""
     params = urllib.parse.urlencode(
-        {
-            "q": query,
-            "format": "jsonv2",
-            "limit": "1",
-            "polygon_geojson": "1",
-        }
+        {"q": query, "format": "jsonv2", "limit": "1", "polygon_geojson": "1"}
     )
-    url = f"{_NOMINATIM_SEARCH}?{params}"
-    try:
-        payload = _http_json(url, what=f"Nominatim search for {query!r}")
-    except _AdminMissing:
-        raise DataError(f"Nominatim found no place matching {query!r}.") from None
+    payload = _http_json(f"{_NOMINATIM_SEARCH}?{params}", what=f"Nominatim search for {query!r}")
     if not isinstance(payload, list):
         raise DataError(f"Nominatim search for {query!r} did not return a JSON list.")
     return payload
@@ -487,33 +468,34 @@ def _load_nominatim(query: str) -> list:
 
 @lru_cache(maxsize=32)
 def _nominatim_collection(query: str) -> tuple:
-    """Cached Nominatim hits as a tuple so callers do not mutate the cache."""
     return tuple(_load_nominatim(query))
 
 
-def _nominatim_geometry(hit: dict, north: float, west: float, south: float, east: float) -> dict:
+def _parse_nominatim_bbox(raw) -> tuple[float, float, float, float]:
+    """Nominatim ``boundingbox`` is ``[south, north, west, east]`` strings."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        raise DataError("Nominatim result is missing a 4-value boundingbox.")
+    try:
+        south, north, west, east = (float(v) for v in raw)
+    except (TypeError, ValueError) as exc:
+        raise DataError(f"Nominatim boundingbox {raw!r} is not numeric.") from exc
+    return north, west, south, east
+
+
+def _nominatim_geometry(hit: dict, north, west, south, east) -> dict:
     geo = hit.get("geojson")
     if isinstance(geo, dict) and geo.get("type") in {"Polygon", "MultiPolygon"}:
         return geo
     if west <= east:
         return _bbox_rectangle(north, west, south, east)
-    # Wrapped longitude: keep a degenerate-safe geometry at the centroid.
-    lat = hit.get("lat")
-    lon = hit.get("lon")
     try:
-        plat, plon = float(lat), float(lon)
-    except (TypeError, ValueError):
-        plat, plon = (south + north) / 2.0, west
-    return {"type": "Point", "coordinates": [plon, plat]}
+        return {"type": "Point", "coordinates": [float(hit["lon"]), float(hit["lat"])]}
+    except (TypeError, ValueError, KeyError):
+        return {"type": "Point", "coordinates": [west, (south + north) / 2.0]}
 
 
 def geocode_nominatim(query: str) -> dict:
-    """Resolve leftover free text through OSM Nominatim (limit=1).
-
-    Returns a slim GeoJSON Feature. ``properties.bbox`` is ``[N, W, S, E]``
-    from Nominatim's boundingbox. Geometry is the OSM polygon when present,
-    otherwise a rectangle from that bbox.
-    """
+    """Resolve leftover free text through OSM Nominatim (limit=1)."""
     text = query.strip()
     if not text:
         raise UsageError("Nominatim query must be a non-empty place name.")
@@ -530,29 +512,23 @@ def geocode_nominatim(query: str) -> dict:
         raise DataError(f"Nominatim search for {query!r} returned a malformed hit.")
     north, west, south, east = _parse_nominatim_bbox(hit.get("boundingbox"))
     display = hit.get("display_name") or hit.get("name") or text
-    name = hit.get("name") or display
-    return {
-        "type": "Feature",
-        "properties": {
-            "iso3": None,
-            "name": name,
-            "region_name": clean_region_name(text),
-            "level": "nominatim",
-            "country": None,
-            "display_name": display,
-            "bbox": [north, west, south, east],
-        },
-        "geometry": _nominatim_geometry(hit, north, west, south, east),
-    }
+    return _feature(
+        _nominatim_geometry(hit, north, west, south, east),
+        iso3=None,
+        name=hit.get("name") or display,
+        region_name=clean_region_name(text),
+        level="nominatim",
+        country=None,
+        display_name=display,
+        bbox=[north, west, south, east],
+    )
+
+
+# --- public lookup ----------------------------------------------------------
 
 
 def lookup_region(query: str) -> dict:
-    """Resolve a country or sub-national query to a slim GeoJSON Feature.
-
-    Accepts an ISO3 code (``KEN``), a country name (``Kenya``), a Natural Earth
-    multi-country region (``East Africa``), an ISO3-prefixed hierarchy
-    (``KEN-nairobi``), or a cleaned hierarchical name (``kenya-nairobi``).
-    """
+    """Resolve ISO3, country, Natural Earth region, or ``country-admin`` to a Feature."""
     text = query.strip()
     if not text:
         raise UsageError(
@@ -561,21 +537,10 @@ def lookup_region(query: str) -> dict:
             "(e.g. kenya-nairobi)."
         )
 
-    by_iso3, by_clean = _country_indexes()
     cleaned = clean_region_name(text)
-
-    if len(cleaned) == 3 and cleaned.isalpha():
-        match = by_iso3.get(cleaned.upper())
-        if match is not None:
-            return _slim_country(match)
-
-    match = by_clean.get(cleaned)
+    match = _match_bundled(cleaned)
     if match is not None:
-        return _slim_country(match)
-
-    named = _region_indexes().get(cleaned)
-    if named is not None:
-        return _slim_region(named)
+        return match
 
     split = _split_subnational(cleaned)
     if split is not None:
@@ -600,10 +565,7 @@ def lookup_region(query: str) -> dict:
 
 
 def resolve_region(query: str):
-    """Resolve a country name, ISO3 code, named region, or sub-national region.
-
-    Returns ``((N, W, S, E), GeoDataFrame)``. Requires ``weather-skills-core[geo]``.
-    """
+    """Resolve a query to ``((N, W, S, E), GeoDataFrame)``. Needs ``[geo]`` extra."""
     import geopandas as gpd
 
     match = lookup_region(query)
@@ -611,4 +573,4 @@ def resolve_region(query: str):
         {"type": "FeatureCollection", "features": [match]},
         crs="EPSG:4326",
     )
-    return bbox_from_geometry(match["geometry"]), gdf
+    return bbox_from_feature(match), gdf
