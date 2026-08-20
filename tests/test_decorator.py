@@ -391,7 +391,7 @@ class TestRunLoop:
         ds = ds.assign_coords(step=ds["step"].values.astype("timedelta64[us]"))
         ds.to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill(name="strip", version="0.1.0", allow_precip_totals=True)
+        @weather_skill(name="strip", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("forecast"), required=True)
         def strip(input, output, **kwargs):
             out_ds = input.copy(deep=True)
@@ -412,7 +412,7 @@ class TestRunLoop:
         ds["tp"].attrs["standard_name"] = "lwe_precipitation_rate"
         ds.to_zarr(src, mode="w", consolidated=True)
 
-        @weather_skill(name="copy", version="0.1.0", allow_precip_totals=True)
+        @weather_skill(name="copy", version="0.1.0")
         @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
         def copy(input, output, **kwargs):
             return input

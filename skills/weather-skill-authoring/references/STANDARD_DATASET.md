@@ -80,9 +80,10 @@ HTML figures get metadata only.
 
 Give data variables a udunits-parseable `units` attr when they are a **known
 standard kind** (skills treat those explicitly). Other variables may include
-units optionally. Most skills are built for **rates** on accumulated variables
-(canonical precip `mm day-1`). Period amounts (`mm`) are available via the
-totals utilities after aggregation stamps `aggregation_period`.
+units optionally. Fetch writes accumulated variables as **rates** (canonical
+precip `mm day-1`). Period amounts (`mm`) come from `convert-to-totals` after
+aggregation stamps `aggregation_period`; that conversion refuses inputs that
+are already amounts.
 
 | Kind | Standard units |
 | --- | --- |

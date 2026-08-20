@@ -23,10 +23,11 @@ A few known variable kinds have a standard unit skills expect:
 Mass precip flux (`kg m-2 s-1`) converts to depth rate using liquid-water
 density (1000 kg m⁻³).
 
-For accumulated variables like precip, skills work in **rates** by default;
-period **totals** are available when you want them via the conversion helpers
-(`convert-to-totals` / `rate_to_total`) rather than carrying amounts through
-rate-oriented skills.
+For accumulated variables like precip, fetch writes **rates**; period
+**totals** come from `convert-to-totals` / `rate_to_total` (rate × period).
+Skills otherwise open rates and amounts alike. `rate_to_total` is the
+operation that refuses precip amounts — multiplying an amount by a period
+would double-count.
 
 ## What the decorator does
 
@@ -35,9 +36,10 @@ rate-oriented skills.
 2. **Known standard kinds** with ``units_required`` in ``STANDARD`` (today:
    temp, precip) must have parseable units so skills can treat them
    explicitly. Other variables may include units optionally.
-3. By default, skills expect rates: opening a precip **total** (amount units,
-   or `cell_methods` with `sum`) raises unless the skill opts in with
-   `allow_precip_totals=True` (e.g. plotters / `deaccumulate`).
+3. Skills open precip rates and amounts alike. ``rate_to_total`` (used by
+   `convert-to-totals`) refuses precip **totals** (amount units, or
+   `cell_methods` with `sum`) because multiplying an amount by a period would
+   double-count.
 4. Before writing Zarr, **`dequantify_dataset`** strips pint so stored attrs
    stay plain unit strings. The write path also normalizes GRIB unit strings,
    stamps precip-amount CF names when units are amounts, casts `step` to
@@ -92,6 +94,8 @@ durations (`21 day`) are also valid `--period` values.
 - coverage at or above `--min-coverage` (default 1.0; incomplete bins fail
   unless you pass a lower threshold)
 - non-overlapping intervals (sample spacing ≥ `aggregation_period`)
+- rate inputs — precip totals (amount units or `cell_methods` with `sum`)
+  are refused, because multiplying an amount by the period would double-count
 
 Overlapping series (rolling `--window`, or 21-day bins whose labels are 10
 days apart) are refused — run **`select`** on `time` or `step` to keep a
@@ -109,7 +113,7 @@ invent a period from the native spacing.
 | `to_standard_units` | Temp / precip → standard display units |
 | `stamp_data_interval` | Stamp native sample spacing on fetch |
 | `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate on `step`, else ÷ interval) |
-| `rate_to_total` | Rate × period → amount |
+| `rate_to_total` | Rate × period → amount (refuses precip totals) |
 | `parse_aggregation_period` | Parse an `aggregation_period` / duration string |
 | `filter_min_coverage` | Drop aggregated intervals below a coverage threshold |
 
@@ -117,8 +121,9 @@ invent a period from the native spacing.
 
 - Known standard kinds (temp, precip, …) need a udunits-parseable `units`
   attr; other variables may include units optionally.
-- Keep accumulated variables as rates (`mm day-1`) through most skills; convert
-  to totals when you need amounts.
+- Fetch writes accumulated variables as rates (`mm day-1`). Convert to totals
+  with `convert-to-totals` when you need amounts; that step (and
+  `rate_to_total`) refuse inputs that are already amounts.
 - After fetch, expect `data_interval` (no `aggregation_period`).
 - After `aggregate-temporal`, expect `aggregation_period` + `aggregation_coverage` + `cell_methods`.
 - For full dim/type contract, see

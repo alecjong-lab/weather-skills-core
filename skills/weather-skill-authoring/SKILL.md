@@ -125,9 +125,9 @@ resolve-time skill and pass the printed `--start-time`/`--end-time` or
 
 ## Units
 
-Most skills expect **rates** for accumulated variables (precipitation as
-`mm day-1`). Opening a precip total raises unless `allow_precip_totals=True`
-(plotters / `deaccumulate`). See `references/UNITS.md`.
+Most skills accept precip **rates** (`mm day-1`) and **amounts** (`mm`). The
+exception is `convert-to-totals` / `rate_to_total`, which multiply a rate by
+`aggregation_period` and therefore refuse amounts. See `references/UNITS.md`.
 
 ## Provenance
 

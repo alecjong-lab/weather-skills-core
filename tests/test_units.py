@@ -159,21 +159,32 @@ def test_quantify_dataset_requires_units_for_temp_precip():
         quantify_dataset(ds)
 
 
-def test_quantify_dataset_refuses_amount_totals():
+def test_quantify_dataset_accepts_amount_totals():
     ds = make_gridded(name="precip", units="mm")
-    with pytest.raises(UsageError, match="precip total"):
-        quantify_dataset(ds)
-    q = quantify_dataset(ds, allow_precip_totals=True)
+    q = quantify_dataset(ds)
     assert q["precip"].pint.units is not None
 
 
-def test_quantify_dataset_refuses_cell_methods_sum():
+def test_quantify_dataset_accepts_cell_methods_sum():
     ds = make_gridded(name="precip", units="mm day-1")
     ds["precip"].attrs["cell_methods"] = "time: sum"
-    with pytest.raises(UsageError, match="precip total"):
-        quantify_dataset(ds)
-    q = quantify_dataset(ds, allow_precip_totals=True)
+    q = quantify_dataset(ds)
     assert q["precip"].pint.units is not None
+
+
+def test_rate_to_total_refuses_amount_totals():
+    ds = make_gridded(name="precip", units="mm")
+    q = quantify_dataset(ds)
+    with pytest.raises(UsageError, match="precip total"):
+        rate_to_total(q["precip"], "1 day")
+
+
+def test_rate_to_total_refuses_cell_methods_sum():
+    ds = make_gridded(name="precip", units="mm day-1")
+    ds["precip"].attrs["cell_methods"] = "time: sum"
+    q = quantify_dataset(ds)
+    with pytest.raises(UsageError, match="precip total"):
+        rate_to_total(q["precip"], "1 day")
 
 
 def test_quantify_dataset_passes_unitless_other_vars():

@@ -132,7 +132,7 @@ def write_output(value, out_path, history, first_ds):
     print(f"Wrote: {out_path}", file=sys.stderr)
 
 
-def open_dataset_params(params, arguments, *, allow_precip_totals: bool):
+def open_dataset_params(params, arguments):
     """Replace Dataset-typed Path values with opened/validated/quantified datasets."""
     input_paths: list[Path] = []
     path_specs: list[std.IoSpec] = []
@@ -156,7 +156,7 @@ def open_dataset_params(params, arguments, *, allow_precip_totals: bool):
             std.validate_input(ds, arg.dataset_type.io_spec, str(path))
             ds = normalize_unit_strings(ds)
             ds = normalize_step_coord(ds)
-            ds = quantify_dataset(ds, allow_precip_totals=allow_precip_totals)
+            ds = quantify_dataset(ds)
             opened.append(ds)
             input_paths.append(path)
             path_specs.append(arg.dataset_type.io_spec)
@@ -186,7 +186,6 @@ def weather_skill(
     name,
     version,
     output: bool = True,
-    allow_precip_totals=False,
 ):
     """Turn a function into a weather skill CLI with validated I/O and provenance.
 
@@ -201,10 +200,9 @@ def weather_skill(
     number of ``--output`` paths. Returning ``None`` skips decorator write
     (skill already wrote). Set ``output=False`` for inspect-only skills.
 
-    Most skills expect rates for accumulated variables. Opening a precip total
-    (amount units or ``cell_methods`` with ``sum``) raises unless
-    ``allow_precip_totals=True`` (plotters / ``deaccumulate``). Use the totals
-    utilities when you want amounts.
+    Skills open precip rates and amounts alike. The operation that cannot take
+    amounts is ``rate_to_total`` (used by ``convert-to-totals``): multiplying
+    an amount by ``aggregation_period`` would double-count.
 
     On every Dataset write the decorator also normalizes GRIB unit strings,
     stamps precip-amount CF names when units are amounts, casts ``step`` to
@@ -279,7 +277,7 @@ def weather_skill(
                 args = parser.parse_args(argv)
                 params = standard_args.convert_standard_args(args, arguments)
                 params, input_paths, path_specs, upstream, first_ds = open_dataset_params(
-                    params, arguments, allow_precip_totals=allow_precip_totals
+                    params, arguments
                 )
 
                 output_paths: list[Path] = []

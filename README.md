@@ -118,11 +118,13 @@ Full details:
 
 ## Units
 
-Most skills expect **rates** for accumulated variables (sensible default):
-temp → `degree_Celsius`, precip → `mm day-1`. Known standard kinds must carry
-`units` for explicit skill treatment; other variables may include units
-optionally. When you need period amounts (`mm`), convert with the totals
-utilities after aggregation stamps `aggregation_period`. The decorator
+Most skills accept precip **rates** and **amounts**. Fetch writes accumulated
+variables as rates: temp → `degree_Celsius`, precip → `mm day-1`. Known
+standard kinds must carry `units` for explicit skill treatment; other
+variables may include units optionally. When you need period amounts (`mm`),
+convert with the totals utilities after aggregation stamps
+`aggregation_period`. `convert-to-totals` / `rate_to_total` refuse inputs that
+are already amounts (multiplying again would double-count). The decorator
 quantifies on input and dequantifies before writing Zarr. Fetch stamps
 `data_interval`; aggregation adds `aggregation_period` and
 `aggregation_coverage`. Convert-to-totals requires those stamps, 100%

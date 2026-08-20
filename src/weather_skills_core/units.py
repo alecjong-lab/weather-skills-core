@@ -8,7 +8,8 @@ the CF ``units`` attr on disk and become pint quantities in memory
 A few known standard kinds (``STANDARD`` below) get explicit treatment: they
 must carry parseable units and have a standard display unit skills convert to.
 Everything else may include units optionally and is passed through untouched.
-(Accumulated variables default to rates; see UNITS.md for that detail.)
+Fetch writes accumulated variables as rates; ``rate_to_total`` refuses precip
+amounts (see UNITS.md).
 
 See ``skills/weather-skill-authoring/references/UNITS.md`` for the full policy.
 Built on pint-xarray with CF/UDUNITS strings via ``cf_xarray.units``.
@@ -326,8 +327,34 @@ def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
         )
 
 
+def looks_like_precip_total(da) -> bool:
+    """True if ``da`` is a precip amount (amount units or ``cell_methods`` sum)."""
+    name = da.name if isinstance(da.name, str) else ""
+    units = variable_units(da)
+    has_units = isinstance(units, str) and bool(units.strip())
+    kind = classify_variable(
+        name, units=units, standard_name=da.attrs.get("standard_name")
+    )
+    if kind not in ("precip", "precip_amount"):
+        return False
+    return (
+        kind == "precip_amount"
+        or (has_units and kind_from_units(units) == "precip_amount")
+        or cell_methods_has_sum(da.attrs.get("cell_methods"))
+    )
+
+
 def rate_to_total(da, period: str):
-    """Multiply a rate DataArray by ``aggregation_period`` → amount (quantified)."""
+    """Multiply a rate DataArray by ``aggregation_period`` → amount (quantified).
+
+    Refuses precip totals: multiplying an amount by a period would double-count.
+    """
+    if looks_like_precip_total(da):
+        raise UsageError(
+            f"variable {da.name!r} looks like a precip total "
+            "(amount units or cell_methods sum); rate_to_total converts "
+            "rates × period and cannot take amounts"
+        )
     base = parse_aggregation_period(period)
     quantified_in = da.pint.units is not None
     qda = da if quantified_in else da.pint.quantify()
@@ -342,35 +369,19 @@ def rate_to_total(da, period: str):
     return total
 
 
-def quantify_dataset(ds, *, allow_precip_totals: bool = False):
+def quantify_dataset(ds):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
     Variables whose kind has ``units_required`` in ``STANDARD`` (known kinds
     skills treat explicitly) must have a non-empty ``units`` attr. Other
-    variables may omit units. By default, precip totals (amount units or
-    ``cell_methods`` with ``sum``) raise — most skills expect rates; set
-    ``allow_precip_totals=True`` when the skill handles amounts. Coordinate
-    ``units`` attrs are kept as attrs.
+    variables may omit units. Precip amounts are quantified like any other
+    variable; ``rate_to_total`` is what refuses them. Coordinate ``units``
+    attrs are kept as attrs.
     """
     for name, da in ds.data_vars.items():
         units = da.attrs.get("units")
         has_units = isinstance(units, str) and bool(units.strip())
         kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
-        if (
-            not allow_precip_totals
-            and kind in ("precip", "precip_amount")
-            and (
-                kind == "precip_amount"
-                or (has_units and kind_from_units(units) == "precip_amount")
-                or cell_methods_has_sum(da.attrs.get("cell_methods"))
-            )
-        ):
-            raise UsageError(
-                f"variable {name!r} looks like a precip total "
-                "(amount units or cell_methods sum); most skills expect rates — "
-                "convert with convert-to-totals / rate_to_total, or set "
-                "allow_precip_totals=True if this skill handles amounts"
-            )
         if kind is not None and STANDARD[kind]["units_required"] and not has_units:
             raise UsageError(
                 f"variable {name!r} is a standard kind ({kind}) and requires "
