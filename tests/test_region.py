@@ -99,6 +99,7 @@ def _fake_admin(iso3, level):
 
 
 def test_clean_region_name():
+    """Aliases, ASCII folding, and spaces-to-underscores land on the lookup key."""
     assert clean_region_name("United States") == "united_states_of_america"
     assert clean_region_name("South Korea") == "south_korea"
     assert clean_region_name("São Tomé") == "sao_tome"
@@ -106,6 +107,7 @@ def test_clean_region_name():
 
 
 def test_resolve_kenya_iso3():
+    """ISO3 KEN returns Kenya's bbox and a one-row GeoDataFrame."""
     bbox, gdf = resolve_region("KEN")
     n, w, s, e = bbox
     assert n > s and w < e
@@ -118,6 +120,7 @@ def test_resolve_kenya_iso3():
 
 
 def test_resolve_by_name_case_insensitive():
+    """Country name and ISO3 resolve to the same bbox."""
     bbox_code, _ = resolve_region("KEN")
     bbox_name, gdf = resolve_region("Kenya")
     assert bbox_code == bbox_name
@@ -125,16 +128,19 @@ def test_resolve_by_name_case_insensitive():
 
 
 def test_resolve_unknown():
+    """An unknown ISO3 is a DataError, not a Nominatim fallthrough."""
     with pytest.raises(DataError, match="not a known"):
         resolve_region("ZZZ")
 
 
 def test_lookup_empty_is_usage_error():
+    """Whitespace-only queries are UsageError."""
     with pytest.raises(UsageError, match="non-empty"):
         lookup_region("  ")
 
 
 def test_bbox_wraps_antimeridian():
+    """A polygon that crosses 180° reports W > E instead of a full-width box."""
     geometry = {
         "type": "Polygon",
         "coordinates": [[[170.0, 0.0], [175.0, 0.0], [-170.0, 0.0], [170.0, 0.0]]],
@@ -146,6 +152,7 @@ def test_bbox_wraps_antimeridian():
 
 
 def test_lookup_admin1_name(monkeypatch):
+    """country-admin1 resolves Nairobi as admin_1 with its polygon bbox."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     feature = lookup_region("kenya-nairobi")
@@ -162,6 +169,7 @@ def test_lookup_admin1_name(monkeypatch):
 
 
 def test_lookup_admin1_iso3_prefix(monkeypatch):
+    """KEN-nairobi is the same admin_1 lookup as kenya-nairobi."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     feature = lookup_region("KEN-nairobi")
@@ -170,6 +178,7 @@ def test_lookup_admin1_iso3_prefix(monkeypatch):
 
 
 def test_lookup_admin2(monkeypatch):
+    """country-admin1-admin2 resolves Westlands as admin_2."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     feature = lookup_region("kenya-nairobi-westlands")
@@ -179,6 +188,7 @@ def test_lookup_admin2(monkeypatch):
 
 
 def test_lookup_admin2_without_parent(monkeypatch):
+    """An admin-2 name is found even without its parent admin-1 in the key."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     feature = lookup_region("kenya-westlands")
@@ -187,6 +197,7 @@ def test_lookup_admin2_without_parent(monkeypatch):
 
 
 def test_lookup_hyphenated_admin1(monkeypatch):
+    """A hyphen inside the admin-1 name (Elgeyo-Marakwet) is not a new hierarchy level."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     feature = lookup_region("kenya-elgeyo-marakwet")
@@ -195,6 +206,7 @@ def test_lookup_hyphenated_admin1(monkeypatch):
 
 
 def test_lookup_unknown_admin_unit(monkeypatch):
+    """A country-prefixed key that matches no admin unit is a DataError."""
     monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", _fake_admin)
 
     with pytest.raises(DataError, match="admin-1 or admin-2"):
@@ -202,6 +214,7 @@ def test_lookup_unknown_admin_unit(monkeypatch):
 
 
 def test_hyphenated_country_is_not_split_into_admin():
+    """Guinea-Bissau is a country, not country 'Guinea' plus admin 'Bissau'."""
     feature = lookup_region("Guinea-Bissau")
     assert feature["properties"]["level"] == "country"
     assert feature["properties"]["iso3"] == "GNB"
@@ -235,6 +248,7 @@ def _mount_kenya_hit(*, geojson=None):
 
 
 def test_should_geocode_landmarks_not_admin_keys():
+    """Landmarks may hit Nominatim; ISO3, admin keys, and NE regions must not."""
     assert should_geocode("Mount Kenya") is True
     assert should_geocode("Mount Kenya, Kenya") is True
     assert should_geocode("kenya-nairbi") is False
@@ -248,6 +262,8 @@ def test_should_geocode_landmarks_not_admin_keys():
 
 
 def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
+    """East Africa / Eastern Africa dissolve bundled countries, never Nominatim."""
+
     def _fail_nominatim(query):
         raise AssertionError(f"Nominatim should not run for named region; got {query!r}")
 
@@ -271,12 +287,14 @@ def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
 
 
 def test_south_africa_is_the_country_not_the_subregion():
+    """South Africa matches the country, not a Natural Earth subregion of that name."""
     feature = lookup_region("South Africa")
     assert feature["properties"]["level"] == "country"
     assert feature["properties"]["iso3"] == "ZAF"
 
 
 def test_lookup_ne_western_africa():
+    """West Africa is the UN Western Africa grouping and contains Ghana."""
     ghana = lookup_region("GHA")
     gn, gw, gs, ge = bbox_from_feature(ghana)
     west = lookup_region("West Africa")
@@ -287,6 +305,7 @@ def test_lookup_ne_western_africa():
 
 
 def test_geocode_nominatim_polygon(monkeypatch):
+    """A Nominatim polygon hit is stored as geometry with bbox on properties."""
     monkeypatch.setattr(
         "weather_skills_core.region._load_nominatim",
         lambda query: _mount_kenya_hit(geojson=_MOUNT_KENYA_POLYGON),
@@ -304,6 +323,7 @@ def test_geocode_nominatim_polygon(monkeypatch):
 
 
 def test_geocode_nominatim_point_uses_bbox_rectangle(monkeypatch):
+    """A Nominatim Point is replaced by a rectangle from the boundingbox."""
     monkeypatch.setattr(
         "weather_skills_core.region._load_nominatim",
         lambda query: _mount_kenya_hit(geojson={"type": "Point", "coordinates": [37.3, -0.15]}),
@@ -316,6 +336,7 @@ def test_geocode_nominatim_point_uses_bbox_rectangle(monkeypatch):
 
 
 def test_geocode_nominatim_empty(monkeypatch):
+    """Zero Nominatim hits is a DataError."""
     monkeypatch.setattr("weather_skills_core.region._load_nominatim", lambda query: [])
 
     with pytest.raises(DataError, match="Nominatim found no matching place"):
@@ -323,6 +344,7 @@ def test_geocode_nominatim_empty(monkeypatch):
 
 
 def test_bbox_from_feature_prefers_stored_bbox():
+    """properties.bbox wins over deriving a box from a Point geometry."""
     feature = {
         "type": "Feature",
         "properties": {"bbox": [1.0, 2.0, -1.0, 4.0]},
