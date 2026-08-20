@@ -1,7 +1,8 @@
 """Resolve named regions (CLI string → bbox + GeoJSON feature / GeoDataFrame).
 
-Country lookups use the bundled Natural Earth 1:110m admin-0 dataset. Sub-national
-lookups (admin-1 states/provinces/counties, admin-2 counties/districts) use
+Country lookups use the bundled Natural Earth 1:110m admin-0 dataset
+(rebuild with ``tools/build_countries.py``). Sub-national lookups
+(admin-1 states/provinces/counties, admin-2 counties/districts) use
 geoBoundaries ``gbOpen`` (https://www.geoboundaries.org): the API is queried for
 the country/level, then the simplified GeoJSON it returns is matched on
 ``shapeName``. Queries are cleaned ``country-admin1`` / ``country-admin1-admin2``
@@ -242,32 +243,22 @@ def _polygon_parts(geometry: dict) -> list:
 
 
 @lru_cache(maxsize=1)
-def _country_region_attrs() -> dict:
-    path = files("weather_skills_core.data").joinpath("country_regions.json")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return payload.get("countries") or {}
-
-
-@lru_cache(maxsize=1)
 def _region_indexes() -> dict[str, dict]:
-    """Cleaned query → Natural Earth multi-country grouping."""
+    """Cleaned query → multi-country grouping from bundled region fields."""
     by_iso3, _ = _country_indexes()
-    attrs = _country_region_attrs()
     by_key: dict[str, dict] = {}
     for field in _REGION_FIELDS:
-        buckets: dict[str, list[str]] = {}
-        for iso3, fields in attrs.items():
-            label = fields.get(field)
+        buckets: dict[str, list] = {}
+        for feature in by_iso3.values():
+            label = feature["properties"].get(field)
             if not label:
                 continue
-            buckets.setdefault(label, []).append(iso3)
-        for label, iso3s in buckets.items():
+            buckets.setdefault(label, []).append(feature)
+        for label, members in buckets.items():
             key = clean_region_name(label)
             if key in by_key or key == "no_region":
                 continue
-            members = [by_iso3[iso3] for iso3 in iso3s if iso3 in by_iso3]
-            if members:
-                by_key[key] = {"name": label, "members": members}
+            by_key[key] = {"name": label, "members": members}
     for key, spec in list(by_key.items()):
         for alias in _directional_alias_keys(key):
             by_key.setdefault(alias, spec)
