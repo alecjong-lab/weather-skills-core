@@ -51,6 +51,17 @@ TYPE_DIMS: dict[str, frozenset[str]] = {
     "point_obs": frozenset({POINT_ID, TIME}),
 }
 
+# Type name synonyms → primary key in TYPE_DIMS
+TYPE_ALIASES: dict[str, str] = {
+    "space": "spatial",
+    "obs": "observations",
+    "analysis": "observations",
+    "retrieval": "observations",
+    "field": "observations",
+    "data": "observations",
+    "station": "point_obs",
+}
+
 # Dataset / CF names → preferred ontology name (lat/lon preferred; x/y also ontology dims).
 ALIASES: dict[str, str] = {
     "lat": "lat",
@@ -102,14 +113,18 @@ class IoSpec:
 
 
 def required_dims_for(name: str) -> frozenset[str]:
-    """Ontology dims required by one type or dim name (``TYPE_DIMS`` or ``DIMS``)."""
-    if name in TYPE_DIMS:
-        return TYPE_DIMS[name]
+    """Ontology dims required by one type or dim name (``TYPE_ALIASES`` → ``TYPE_DIMS``, else ``DIMS``/``ALIASES``)."""
+    primary = TYPE_ALIASES.get(name, name)
+    if primary in TYPE_DIMS:
+        return TYPE_DIMS[primary]
     if name in DIMS:
         return frozenset({name})
+    dim = ALIASES.get(name, name)
+    if dim in DIMS:
+        return frozenset({dim})
     raise ValueError(
-        f"unknown type or dimension {name!r}; expected a dimension {sorted(DIMS)} "
-        f"or a type {sorted(TYPE_DIMS)}"
+        f"unknown type or dimension {name!r}; expected a dimension {sorted(DIMS)}, "
+        f"a type {sorted(TYPE_DIMS)}, or a type alias {sorted(TYPE_ALIASES)}"
     )
 
 
