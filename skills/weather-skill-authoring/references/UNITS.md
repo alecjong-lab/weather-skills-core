@@ -66,22 +66,27 @@ to the table above (rates → `mm day-1`, amounts → `mm`), stamps the kind's C
 
 ## Aggregation and totals
 
-Fetch writes native-resolution rates and stamps **`data_interval`** (how far
-apart samples are: `30 minute`, `1 day`, …). Aggregation then adds two more
-stamps; convert-to-totals reads those and does not guess.
+Fetch writes native-resolution rates and stamps **native cell geometry**: a
+scalar **`data_interval`** when spacing is uniform (`30 minute`, `1 day`), or
+CF **`{dim}_bounds`** (start and end per sample) when it is not. Those two
+are XOR — never both. Aggregation then adds `aggregation_period` and
+`aggregation_coverage`; convert-to-totals reads those and does not guess.
 
 | Name | On | When | Meaning |
 | --- | --- | --- | --- |
-| `data_interval` | data variable (pint string) | fetch; kept through aggregate | Native sample spacing |
+| `data_interval` | data variable (pint string) | fetch; kept through aggregate | Uniform native sample spacing |
+| `{dim}_bounds` | coordinate `(N, 2)` start/end | fetch / deaccumulate; irregular only | CF cell bounds; native geometry when spacing is not one width |
 | `aggregation_period` | data variable (pint string) | **aggregate-temporal only** | Length of each aggregated interval (`7 day`, `21 day`) |
-| `aggregation_coverage` | time/step coordinate, 0–1 | **aggregate-temporal only** | Completeness of that interval vs `data_interval` |
+| `aggregation_coverage` | time/step coordinate, 0–1 | **aggregate-temporal only** | Completeness of that interval vs native cells |
 
 `data_interval` is not the aggregation window. Convert-to-totals multiplies
-rates by `aggregation_period`, not by `data_interval`.
+rates by `aggregation_period`, not by `data_interval` or bound widths. CF
+`bounds` on the axis are the irregular form of native cell geometry; they
+are not a per-sample `aggregation_period`.
 
 CF `cell_methods` is orthogonal: it names the operation (`time: mean`,
-`time: sum`). A weekly-mean rate carries `time: mean`, `aggregation_period =
-"7 day"`, and the original `data_interval`.
+`time: sum`). A weekly-mean rate carries `time: mean` and `aggregation_period =
+"7 day"`, plus the original `data_interval` when the native axis was uniform.
 
 CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
 `weekly` → `7 day`, `dekadal` → `1 dekad`, `monthly` → `1 month`). Custom pint
@@ -112,7 +117,7 @@ invent a period from the native spacing.
 | `units_equal` | Spelling-independent equality (`mm/day` ≈ `mm day-1`) |
 | `convert_dataarray` / `convert_values` | Explicit unit ↔ unit |
 | `to_standard_units` | Temp / precip → standard display units |
-| `stamp_data_interval` | Stamp native sample spacing on fetch |
+| `stamp_data_interval` | Stamp uniform `data_interval` or CF `{dim}_bounds` on fetch / deaccumulate |
 | `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate amount vars on `step`, else ÷ interval) |
 | `stamp_precip_amounts` | Amount units → amount CF `standard_name`; rewrite rate `long_name` / `GRIB_name` |
 | `rate_to_total` | Rate × period → amount (refuses precip totals) |
@@ -126,7 +131,8 @@ invent a period from the native spacing.
 - Fetch writes accumulated variables as rates (`mm day-1`). Convert to totals
   with `convert-to-totals` when you need amounts; that step (and
   `rate_to_total`) refuse inputs that are already amounts.
-- After fetch, expect `data_interval` (no `aggregation_period`).
+- After fetch, expect `data_interval` (uniform) or CF `{dim}_bounds`
+  (irregular), and no `aggregation_period`.
 - After `aggregate-temporal`, expect `aggregation_period` + `aggregation_coverage` + `cell_methods`.
 - For full dim/type contract, see
   [`STANDARD_DATASET.md`](STANDARD_DATASET.md).

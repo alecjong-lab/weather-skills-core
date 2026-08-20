@@ -91,11 +91,12 @@ are already amounts.
 | precip | `mm day-1` |
 | precip amount | `mm` (via totals utilities) |
 
-Fetch stamps `data_interval` (native spacing, e.g. `30 minute`, `1 day`).
-Aggregation stamps CF `cell_methods` (e.g. `time: mean (interval: 1 day)`),
-`aggregation_period` (e.g. `7 day`), and `aggregation_coverage` (0–1 per
-interval). Totals use `cell_methods` with `sum`. Convert-to-totals refuses
-overlapping intervals — `select` a non-overlapping subset first.
+Fetch stamps `data_interval` (uniform native spacing, e.g. `1 day`) or CF
+`{dim}_bounds` (irregular start/end cells) — not both. Aggregation stamps CF
+`cell_methods` (e.g. `time: mean (interval: 1 day)`), `aggregation_period`
+(e.g. `7 day`), and `aggregation_coverage` (0–1 per interval). Totals use
+`cell_methods` with `sum`. Convert-to-totals refuses overlapping intervals —
+`select` a non-overlapping subset first.
 
 Full details: [`UNITS.md`](UNITS.md).
 

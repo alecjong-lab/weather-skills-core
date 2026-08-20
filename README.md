@@ -126,9 +126,9 @@ convert with the totals utilities after aggregation stamps
 `aggregation_period`. `convert-to-totals` / `rate_to_total` refuse inputs that
 are already amounts (multiplying again would double-count). The decorator
 quantifies on input and dequantifies before writing Zarr. Fetch stamps
-`data_interval`; aggregation adds `aggregation_period` and
-`aggregation_coverage`. Convert-to-totals requires those stamps, 100%
-coverage by default, and non-overlapping intervals.
+`data_interval` (uniform) or CF `{dim}_bounds` (irregular); aggregation adds
+`aggregation_period` and `aggregation_coverage`. Convert-to-totals requires
+those stamps, 100% coverage by default, and non-overlapping intervals.
 
 Full details:
 [`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md).

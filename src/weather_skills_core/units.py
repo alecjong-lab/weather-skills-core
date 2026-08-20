@@ -32,8 +32,12 @@ if "dekad" not in ureg:
     ureg.define("dekad = 10 * day")
 
 # Data-variable attr: native sample spacing as a pint duration string
-# (``"30 minute"``, ``"1 day"``). Stamped by fetchers; kept through aggregate.
+# (``"30 minute"``, ``"1 day"``). Uniform axes only; irregular axes use CF
+# ``{dim}_bounds`` instead (XOR). Stamped by fetchers; kept through aggregate.
 DATA_INTERVAL_ATTR = "data_interval"
+
+# Vertex dim on a CF bounds coordinate ``{dim}_bounds`` with shape (dim, 2).
+_BOUNDS_NV_DIM = "nv"
 
 # Data-variable attr: the time window each aggregated value spans, as a pint
 # duration string (``"1 day"``, ``"1 dekad"``). Complements CF ``cell_methods``
@@ -283,20 +287,22 @@ def infer_timestep(ds, dim: str):
     values = np.asarray(ds[dim].values)
     if values.size < 2:
         raise UsageError(f"need at least 2 points on {dim!r} to infer timestep")
+    diffs, unit = _axis_tick_diffs(values)
+    positive = diffs[diffs > 0]
+    if positive.size == 0:
+        raise UsageError(f"no positive spacings on {dim!r}")
+    return ureg.Quantity(float(np.median(positive)), unit).to("day")
 
-    def _from_int_diffs(diffs, unit: str):
-        positive = diffs[diffs > 0]
-        if positive.size == 0:
-            raise UsageError(f"no positive spacings on {dim!r}")
-        return ureg.Quantity(float(np.median(positive)), unit).to("day")
 
-    # Use the array's native datetime/timedelta unit. Casting timedelta64[us] to
-    # datetime64[ns] "succeeds" but treats µs counts as ns (7 day → 0.007 day).
+def _axis_tick_diffs(values):
+    """Positive consecutive spacings as (diffs, numpy datetime/timedelta unit)."""
+    values = np.asarray(values)
+    if values.size < 2:
+        raise UsageError("need at least 2 points to infer spacing")
     if np.issubdtype(values.dtype, np.timedelta64) or np.issubdtype(values.dtype, np.datetime64):
         unit, _ = np.datetime_data(values.dtype)
         diffs = np.diff(values.astype(values.dtype).astype(np.int64))
-        return _from_int_diffs(diffs, unit)
-
+        return diffs, unit
     failure = None
     for dtype in ("datetime64[ns]", "timedelta64[ns]"):
         try:
@@ -304,26 +310,35 @@ def infer_timestep(ds, dim: str):
         except (TypeError, ValueError) as exc:
             failure = exc
             continue
-        return _from_int_diffs(diffs, "nanosecond")
-    raise UsageError(f"could not infer timestep on {dim!r}: {failure}")
+        return diffs, "nanosecond"
+    raise UsageError(f"could not infer spacing: {failure}")
 
 
-def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
-    """Refuse convert-to-totals when sample spacing is finer than aggregation_period.
+def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
+    """Refuse convert-to-totals when consecutive labels are finer than ``period``.
 
     A singleton axis is allowed: spacing cannot be inferred, and one sample
     cannot be an overlapping series. Typical after aggregating a short fetch
-    to a single weekly/dekadal/monthly bin.
+    to a single weekly/dekadal/monthly bin. With CF bounds, uses the minimum
+    label spacing; otherwise the median (``infer_timestep``).
     """
     if dim not in ds.dims and dim not in ds.coords:
         raise UsageError(f"dimension/coord {dim!r} not in dataset")
     if ds.sizes.get(dim, 0) < 2:
         return
-    dt = infer_timestep(ds, dim)
     base = parse_aggregation_period(period)
+    bounds_name = ds[dim].attrs.get("bounds") if dim in ds.coords or dim in ds.dims else None
+    if isinstance(bounds_name, str) and bounds_name in ds:
+        diffs, unit = _axis_tick_diffs(ds[dim].values)
+        positive = diffs[diffs > 0]
+        if positive.size == 0:
+            raise UsageError(f"no positive spacings on {dim!r}")
+        dt = ureg.Quantity(float(np.min(positive)), unit).to("day")
+    else:
+        dt = infer_timestep(ds, dim)
     if dt < base:
         raise UsageError(
-            f"timestep on {dim!r} ({format_duration(dt)}) is smaller than "
+            f"spacing on {dim!r} ({format_duration(dt)}) is smaller than "
             f"aggregation_period {period!r}; refusing convert-to-totals "
             "(overlapping intervals would overcount). "
             f"Run select --dim {dim} to keep a non-overlapping subset, "
@@ -587,22 +602,59 @@ def data_interval_of(ds) -> str | None:
     return None
 
 
-def stamp_data_interval(ds, period=None, dim=None):
-    """Stamp ``data_interval`` on every data variable (in place).
+def stamp_data_interval(ds, period=None, dim=None, origin=None):
+    """Stamp native cell geometry: scalar ``data_interval`` or CF bounds.
 
-    ``period`` is a pint duration string (``"1 day"``, ``"30 minute"``). When
-    omitted, the spacing is inferred from ``dim`` (or ``time`` / ``step``).
+    ``period`` is a pint duration string (``"1 day"``, ``"30 minute"``) and
+    always writes the scalar attr (caller knows the axis is uniform). When
+    omitted, spacing is inferred from ``dim`` (or ``time`` / ``step``): equal
+    steps get ``data_interval``; unequal steps get ``{dim}_bounds`` (start,
+    end) and no ``data_interval``. ``origin`` is the left edge of the first
+    cell when writing bounds (timedelta ``step`` defaults to 0).
     """
-    if period is None:
-        axis = _time_or_step_dim(ds, dim)
-        if axis is None:
-            raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
-        period = format_duration(infer_timestep(ds, axis))
-    else:
+    if period is not None:
         period = format_duration(parse_aggregation_period(period))
-    for name in ds.data_vars:
-        ds[name].attrs[DATA_INTERVAL_ATTR] = period
-    return ds
+        for name in ds.data_vars:
+            ds[name].attrs[DATA_INTERVAL_ATTR] = period
+        return ds
+
+    axis = _time_or_step_dim(ds, dim)
+    if axis is None:
+        raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
+    values = np.asarray(ds[axis].values)
+    if values.size < 2:
+        raise UsageError(
+            f"cannot stamp data_interval: need at least 2 points on {axis!r} "
+            "to infer spacing (or pass period=)"
+        )
+    diffs, unit = _axis_tick_diffs(values)
+    if diffs.size == 0 or np.any(diffs <= 0):
+        raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
+    if np.all(diffs == diffs[0]):
+        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
+        for name in ds.data_vars:
+            ds[name].attrs[DATA_INTERVAL_ATTR] = period
+        return ds
+
+    if origin is None:
+        if np.issubdtype(values.dtype, np.timedelta64):
+            origin = np.asarray(0).astype(values.dtype)
+        else:
+            raise UsageError(
+                f"irregular {axis!r} axis needs an origin for CF bounds "
+                "(timedelta step defaults to 0)"
+            )
+    n = values.size
+    pairs = np.empty((n, 2), dtype=values.dtype)
+    pairs[0, 0] = np.asarray(origin).astype(values.dtype, copy=False)
+    pairs[1:, 0] = values[:-1]
+    pairs[:, 1] = values
+    bound_name = f"{axis}_bounds"
+    out = ds.assign_coords({bound_name: ((axis, _BOUNDS_NV_DIM), pairs)})
+    out[axis].attrs["bounds"] = bound_name
+    for name in out.data_vars:
+        out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
+    return out
 
 
 def expected_samples_in_period(aggregation_period: str, data_interval: str) -> int:
@@ -714,7 +766,8 @@ def deaccumulate_along_step(ds, names=None):
             diffed = sliced.copy(data=diffs)
         diffed.attrs = attrs
         out[name] = diffed
-    return out
+    origin = np.asarray(ds["step"].values)[0]
+    return stamp_data_interval(out, dim="step", origin=origin)
 
 
 def precip_amounts_to_rates(ds, *, interval=None):

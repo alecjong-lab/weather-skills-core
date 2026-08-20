@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import make_gridded
+from conftest import make_forecast, make_gridded
 
 from weather_skills_core.errors import UsageError
 from weather_skills_core.units import (
@@ -12,9 +12,10 @@ from weather_skills_core.units import (
     DATA_INTERVAL_ATTR,
     PRECIP_AMOUNT_LONG_NAME,
     STANDARD,
-    assert_timestep_ge_aggregation_period,
+    assert_nonoverlapping_intervals,
     classify_variable,
     convert_values,
+    deaccumulate_along_step,
     dequantify_dataset,
     expected_samples_in_period,
     filter_min_coverage,
@@ -227,7 +228,7 @@ def test_timestep_gate_and_rate_to_total():
         },
         coords={"time": times},
     )
-    assert_timestep_ge_aggregation_period(ds, "time", "7 day")
+    assert_nonoverlapping_intervals(ds, "time", "7 day")
     q = quantify_dataset(ds)
     total = rate_to_total(q["precip"], "7 day")
     np.testing.assert_allclose(total.pint.dequantify().values, [7.0, 14.0])
@@ -237,7 +238,7 @@ def test_timestep_gate_and_rate_to_total():
         coords={"time": np.arange("2026-01-01", "2026-01-08", dtype="datetime64[D]")},
     )
     with pytest.raises(UsageError, match="select"):
-        assert_timestep_ge_aggregation_period(daily, "time", "7 day")
+        assert_nonoverlapping_intervals(daily, "time", "7 day")
 
 
 def test_timestep_gate_allows_singleton():
@@ -252,7 +253,7 @@ def test_timestep_gate_allows_singleton():
         },
         coords={"time": np.array(["2026-01-07"], dtype="datetime64[D]")},
     )
-    assert_timestep_ge_aggregation_period(ds, "time", "7 day")
+    assert_nonoverlapping_intervals(ds, "time", "7 day")
     q = quantify_dataset(ds)
     total = rate_to_total(q["precip"], "7 day")
     np.testing.assert_allclose(total.pint.dequantify().values, [7.0])
@@ -261,7 +262,7 @@ def test_timestep_gate_allows_singleton():
         {"precip": (("step",), [2.0], {"units": "mm day-1"})},
         coords={"step": np.array([np.timedelta64(7, "D")])},
     )
-    assert_timestep_ge_aggregation_period(step_ds, "step", "7 day")
+    assert_nonoverlapping_intervals(step_ds, "step", "7 day")
 
 
 def test_infer_timestep_timedelta64_us_weekly():
@@ -273,7 +274,7 @@ def test_infer_timestep_timedelta64_us_weekly():
     )
     dt = infer_timestep(ds, "step")
     assert abs(float(dt.to("day").magnitude) - 7.0) < 1e-9
-    assert_timestep_ge_aggregation_period(ds, "step", "7 day")
+    assert_nonoverlapping_intervals(ds, "step", "7 day")
 
 
 def test_format_duration_subday():
@@ -292,6 +293,70 @@ def test_stamp_data_interval_explicit_and_inferred():
     daily = make_gridded(n_time=3)
     stamp_data_interval(daily)
     assert daily["precip"].attrs[DATA_INTERVAL_ATTR] == "1 day"
+
+
+def test_stamp_data_interval_irregular_step_writes_cf_bounds():
+    days = np.array([7, 10, 14, 21], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    ds = xr.Dataset(
+        {"tp": (("step",), np.ones(4), {"units": "mm day-1", DATA_INTERVAL_ATTR: "1 day"})},
+        coords={"step": days},
+    )
+    out = stamp_data_interval(ds)
+    assert DATA_INTERVAL_ATTR not in out["tp"].attrs
+    assert out["step"].attrs["bounds"] == "step_bounds"
+    bounds = np.asarray(out["step_bounds"].values)
+    assert bounds.shape == (4, 2)
+    np.testing.assert_array_equal(bounds[:, 1], days)
+    np.testing.assert_array_equal(
+        bounds[:, 0],
+        np.array([0, 7, 10, 14], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+    )
+
+
+def test_assert_nonoverlapping_uses_min_spacing_when_bounds_present():
+    """Median gap can hide overlap; bounds path uses the minimum label spacing."""
+    steps = np.array([7, 10, 14, 21], dtype="timedelta64[D]")
+    ds = stamp_data_interval(
+        xr.Dataset(
+            {"tp": (("step",), np.ones(4), {"units": "mm day-1"})},
+            coords={"step": steps},
+        )
+    )
+    with pytest.raises(UsageError, match="overlapping"):
+        assert_nonoverlapping_intervals(ds, "step", "7 day")
+
+
+def test_deaccumulate_stamps_scalar_on_daily_step():
+    ds = make_forecast(n_number=None, n_step=4)
+    ds["tp"].attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    out = deaccumulate_along_step(ds)
+    assert out["tp"].attrs[DATA_INTERVAL_ATTR] == "1 day"
+    assert "step_bounds" not in out.variables
+
+
+def test_deaccumulate_stamps_bounds_on_irregular_step():
+    days = [0, 7, 10, 14, 20, 21, 28]
+    steps = np.array(days, dtype="timedelta64[D]")
+    accum = np.cumsum(np.arange(len(days), dtype=float))
+    ds = xr.Dataset(
+        {
+            "tp": (
+                ("step",),
+                accum,
+                {"units": "mm", "standard_name": "lwe_thickness_of_precipitation_amount"},
+            )
+        },
+        coords={"step": steps},
+    )
+    out = deaccumulate_along_step(ds)
+    assert DATA_INTERVAL_ATTR not in out["tp"].attrs
+    assert out["step"].attrs["bounds"] == "step_bounds"
+    bounds = np.asarray(out["step_bounds"].values)
+    # First kept step is 7d; origin is the dropped 0d sample.
+    assert bounds[0, 0] == np.timedelta64(0, "D")
+    assert bounds[0, 1] == np.timedelta64(7, "D")
+    assert bounds[1, 0] == np.timedelta64(7, "D")
+    assert bounds[1, 1] == np.timedelta64(10, "D")
 
 
 def test_expected_samples_and_filter_min_coverage():
