@@ -88,7 +88,5 @@ def convert_standard_args(args, arguments) -> dict:
     start = params.get("start_time")
     end = params.get("end_time")
     if start is not None and end is not None and start > end:
-        raise UsageError(
-            f"--start-time {start.isoformat()} is after --end-time {end.isoformat()}."
-        )
+        raise UsageError(f"--start-time {start.isoformat()} is after --end-time {end.isoformat()}.")
     return params

@@ -34,6 +34,7 @@ Zarr inputs, calls your function, and writes or stamps outputs.
 ```python
 from weather_skills_core import Dataset, weather_skill
 
+
 @weather_skill(name="clip-region", version="0.1.0")
 @weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True)
 @weather_skill.argument("--bbox", required=True)

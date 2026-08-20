@@ -248,9 +248,7 @@ def test_stamp_cf_dsg_var_attrs_without_standard_name():
     # stamped without one (units + long_name alone is CF-valid).
     """A var without standard_name is still stamped with coordinates."""
     ds = _stamped_dsg(
-        var_attrs={
-            "precip": {"units": "mm", "long_name": "precip", "cell_methods": "time: mean"}
-        }
+        var_attrs={"precip": {"units": "mm", "long_name": "precip", "cell_methods": "time: mean"}}
     )
     assert "standard_name" not in ds["precip"].attrs
     assert ds["precip"].attrs["coordinates"] == "latitude longitude time"

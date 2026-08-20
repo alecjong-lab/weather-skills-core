@@ -84,6 +84,7 @@ called `step` still satisfies `Dataset("forecast")`.
 ```python
 from weather_skills_core import Dataset, weather_skill
 
+
 @weather_skill(name="clip-region", version=_SKILL_VERSION)
 @weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True)
 def clip_region(ds, output, **kwargs):

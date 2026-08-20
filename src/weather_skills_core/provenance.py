@@ -251,9 +251,7 @@ def _render_circular_stamp(diameter: int):
 
     # Slightly larger type relative to diameter so arc text stays legible when small.
     font = _load_mark_font(max(8 * scale, int(size * 0.125)))
-    _draw_arc_text(
-        stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.87, font, ink, top=True, scale=scale
-    )
+    _draw_arc_text(stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.87, font, ink, top=True, scale=scale)
     _draw_arc_text(
         stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.87, font, ink, top=False, scale=scale
     )

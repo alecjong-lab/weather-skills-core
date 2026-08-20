@@ -15,7 +15,7 @@ from weather_skills_core import Dataset, weather_skill
     name="no-constant",
     version="0.1.0",
 )
-@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest="ds")
 def no_constant(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds

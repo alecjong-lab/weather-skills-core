@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     name="missing-core",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='input')
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest="input")
 def missing_core(ds):
     return ds
 

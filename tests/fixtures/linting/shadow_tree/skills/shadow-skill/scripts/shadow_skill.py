@@ -12,6 +12,7 @@ from weather_skills_core import Dataset, weather_skill
 
 _SKILL_VERSION = "0.1.0"
 
+
 @weather_skill(
     name="shadow-skill",
     version=_SKILL_VERSION,
@@ -23,6 +24,7 @@ _SKILL_VERSION = "0.1.0"
 def shadow_skill(ds, output, bbox=None, date=None, period=None, **kwargs):
     """Lint fixture; never executed."""
     return ds
+
 
 if __name__ == "__main__":
     shadow_skill()

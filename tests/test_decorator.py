@@ -43,9 +43,7 @@ def test_argv_has_option():
 def test_parser_probe_latest_skips_required_output_and_flags(capsys):
     @weather_skill(name="s", version="1.0.0")
     @weather_skill.argument("--start-time", required=True)
-    @weather_skill.argument(
-        "--probe-latest", nargs="?", const="", default=None, probe=True
-    )
+    @weather_skill.argument("--probe-latest", nargs="?", const="", default=None, probe=True)
     def skill(output, start_time, probe_latest, **kwargs):
         print("none")
 

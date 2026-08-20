@@ -136,7 +136,7 @@ def and_group(spec) -> frozenset[str]:
         out: set[str] = set()
         for part in spec:
             if not isinstance(part, str):
-                raise ValueError(f"invalid AND-group entry {part!r}")
+                raise TypeError(f"invalid AND-group entry {part!r}")
             out |= required_dims_for(part)
         return frozenset(out)
     raise ValueError(f"expected str or tuple for AND-group, got {type(spec).__name__}")
@@ -154,7 +154,7 @@ def parse_alternatives(spec) -> tuple[frozenset[str], ...]:
         alts: list[frozenset[str]] = []
         for item in spec:
             if isinstance(item, list):
-                raise ValueError(f"nested OR lists are not allowed; got {item!r}")
+                raise TypeError(f"nested OR lists are not allowed; got {item!r}")
             alts.extend(parse_alternatives(item))
         return tuple(alts)
     raise ValueError(f"invalid IO entry {spec!r}; expected str, list (OR), or tuple (AND)")
@@ -297,7 +297,7 @@ def validate_input(
     elif isinstance(allowed, (str, list, tuple)):
         spec = normalize_io_spec(allowed)
     else:
-        raise ValueError(f"invalid validate_input allowed={allowed!r}")
+        raise TypeError(f"invalid validate_input allowed={allowed!r}")
     validate_dims(ds, spec.alternatives, name, dims=dims, time_dim=time_dim)
     return detect_type(ds)
 

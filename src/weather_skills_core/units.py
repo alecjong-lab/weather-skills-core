@@ -377,9 +377,7 @@ def looks_like_precip_total(da) -> bool:
     name = da.name if isinstance(da.name, str) else ""
     units = variable_units(da)
     has_units = isinstance(units, str) and bool(units.strip())
-    kind = classify_variable(
-        name, units=units, standard_name=da.attrs.get("standard_name")
-    )
+    kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
     if kind not in ("precip", "precip_amount"):
         return False
     return (
@@ -426,9 +424,7 @@ def precip_for_display(ds, name: str):
         return ds
     da = ds[name]
     units = variable_units(da) or da.attrs.get("units")
-    kind = classify_variable(
-        name, units=units, standard_name=da.attrs.get("standard_name")
-    )
+    kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
     if kind != "precip":
         return ds
     period = da.attrs.get(AGGREGATION_PERIOD_ATTR)
@@ -640,9 +636,9 @@ def stamp_precip_amounts(ds):
         if kind_from_units(units) == "precip_amount":
             ds[name].attrs["standard_name"] = amount_sn
             long_name = ds[name].attrs.get("long_name")
-            if not (isinstance(long_name, str) and long_name.strip()) or looks_like_rate_display_name(
-                long_name
-            ):
+            if not (
+                isinstance(long_name, str) and long_name.strip()
+            ) or looks_like_rate_display_name(long_name):
                 ds[name].attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
             if looks_like_rate_display_name(ds[name].attrs.get("GRIB_name")):
                 ds[name].attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
@@ -774,9 +770,7 @@ def filter_min_coverage(ds, dim: str, min_coverage: float):
     if dim not in ds.dims:
         raise UsageError(f"dimension {dim!r} not in dataset (have {list(ds.dims)})")
     if ds.sizes[dim] == 0:
-        raise UsageError(
-            f"no {dim} intervals to convert (empty {dim} axis)."
-        )
+        raise UsageError(f"no {dim} intervals to convert (empty {dim} axis).")
     cov = coverage_values(ds, dim)
     if cov.size != ds.sizes[dim]:
         raise UsageError(

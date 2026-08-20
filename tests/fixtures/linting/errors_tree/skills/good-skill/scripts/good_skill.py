@@ -17,7 +17,7 @@ _SKILL_VERSION = "0.1.0"
     name="good-skill",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest='ds')
+@weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True, dest="ds")
 def good_skill(ds, **kwargs):
     """Lint fixture; never executed."""
     return ds
