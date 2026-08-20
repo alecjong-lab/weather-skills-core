@@ -300,7 +300,9 @@ def assert_timestep_ge_aggregation_period(ds, dim: str, period: str) -> None:
         raise UsageError(
             f"timestep on {dim!r} ({format_duration(dt)}) is smaller than "
             f"aggregation_period {period!r}; refusing convert-to-totals "
-            "(overlapping/rolling windows would overcount)"
+            "(overlapping/rolling windows would overcount). "
+            f"Run aggregate-temporal --period {period!r} onto non-overlapping "
+            "bins first, then convert-to-totals."
         )
 
 

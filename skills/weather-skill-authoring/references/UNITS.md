@@ -83,7 +83,9 @@ CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
 (`mm`). When the time/step axis has ≥ 2 points, it requires sample spacing ≥
 `aggregation_period` (so overlapping rolling windows are not silently turned
 into period totals). A singleton axis (one aggregated bin) skips that check.
-Use that when you want amounts for plotting or reporting; keep rates in the
+If the series is still native resolution (e.g. half-hourly IMERG vs a 21-day
+period), run `aggregate-temporal --period '21 day'` first. Use that when you
+want amounts for plotting or reporting; keep rates in the
 middle of the pipeline.
 
 ## Helpers skills use

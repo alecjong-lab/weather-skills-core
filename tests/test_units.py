@@ -216,7 +216,7 @@ def test_timestep_gate_and_rate_to_total():
         {"precip": (("time",), np.ones(7), {"units": "mm day-1"})},
         coords={"time": np.arange("2026-01-01", "2026-01-08", dtype="datetime64[D]")},
     )
-    with pytest.raises(UsageError, match="smaller than aggregation_period"):
+    with pytest.raises(UsageError, match="aggregate-temporal"):
         assert_timestep_ge_aggregation_period(daily, "time", "7 day")
 
 
