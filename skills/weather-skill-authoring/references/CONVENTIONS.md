@@ -47,6 +47,33 @@ not decorator flags. The resolve-time skill turns a query token plus an optional
 current UTC date and that product's embargo / publication lag. Mutual exclusion
 of `--date` vs the range flags is skill-owned when needed.
 
+Fetcher skills declare that lag on SKILL.md as `metadata.availability` (next to
+`catalog-group`). Core owns only the calendar math
+(`weather_skills_core.availability`); skill names stay out of core. Schema:
+
+```yaml
+metadata:
+  catalog-group: fetchers
+  availability:
+    shape: range          # date | range | either
+    policy: lag           # lag | embargo | none
+    lag_days: 4           # omit when schedule is set, or when policy is none with no cap
+    schedule: pentad      # optional: pentad | ecmwf-s2s
+    earliest: 2000-06-01  # optional YYYY-MM-DD coverage start
+    note: IMERG late ~4 days behind realtime
+    variants:             # optional; flatten to name:variant in the catalog
+      final:
+        lag_days: 110
+```
+
+`shape` is the fetcher's time flag (`date` → `--date`, `range` →
+`--start-time`/`--end-time`, `either` follows the query). `policy: none` with
+no `lag_days`/`schedule` means no realtime cap (future dates stay). Named
+schedules: `pentad` (close on 5/10/15/20/25/last of month, files 2 days later)
+and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
+`catalog-group: fetchers` skill must declare this block. resolve-time consumes
+a generated snapshot of it (`--list-products`).
+
 ### Variable
 
 | Concept | Flag | Notes |
