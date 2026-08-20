@@ -42,10 +42,10 @@ would double-count.
    double-count.
 4. Before writing Zarr, **`dequantify_dataset`** strips pint so stored attrs
    stay plain unit strings. The write path also normalizes GRIB unit strings,
-   stamps precip-amount CF names when units are amounts, casts `step` to
-   `timedelta64[ns]`, and fills data-var attrs stripped by the skill from the
-   first input (same variable names). Value conversion (`to_standard_units`)
-   stays skill-owned.
+   stamps precip-amount CF names when units are amounts (including overwriting
+   rate-like `long_name` / `GRIB_name`), casts `step` to `timedelta64[ns]`, and
+   fills data-var attrs stripped by the skill from the first input (same
+   variable names). Value conversion (`to_standard_units`) stays skill-owned.
 
 ## Classification and `--to-standard`
 
@@ -88,7 +88,8 @@ CLI period labels map to the `aggregation_period` value (`daily` → `1 day`,
 durations (`21 day`) are also valid `--period` values.
 
 **`convert-to-totals`** multiplies rates by `aggregation_period` → amounts
-(`mm`). It requires:
+(`mm`). It also rewrites leftover rate display names (`long_name` /
+`GRIB_name` containing `rate` or `flux`) to `Total precipitation`. It requires:
 
 - a stamped `aggregation_period` (run `aggregate-temporal` first)
 - coverage at or above `--min-coverage` (default 1.0; incomplete bins fail
@@ -112,7 +113,8 @@ invent a period from the native spacing.
 | `convert_dataarray` / `convert_values` | Explicit unit ↔ unit |
 | `to_standard_units` | Temp / precip → standard display units |
 | `stamp_data_interval` | Stamp native sample spacing on fetch |
-| `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate on `step`, else ÷ interval) |
+| `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate amount vars on `step`, else ÷ interval) |
+| `stamp_precip_amounts` | Amount units → amount CF `standard_name`; rewrite rate `long_name` / `GRIB_name` |
 | `rate_to_total` | Rate × period → amount (refuses precip totals) |
 | `parse_aggregation_period` | Parse an `aggregation_period` / duration string |
 | `filter_min_coverage` | Drop aggregated intervals below a coverage threshold |

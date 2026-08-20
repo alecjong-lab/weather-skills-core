@@ -78,9 +78,10 @@ and `ecmwf-s2s` (2-day embargo; Mon/Thu inits only before 2023-06-27). Every
 a generated snapshot of it (`--list-products`).
 
 `variables` is a non-empty list of exact `--variable` / `-v` tokens for that
-fetcher. Names are catalog-specific (`precipitation_surface` on dynamical,
-`total_precipitation` on ARCO, `tp` on ECMWF S2S). Open catalogs (ARCO, CMIP6,
-dynamical) list the usual first choices, not every field the source can serve.
+fetcher, **most-used first**. Names are catalog-specific (`precipitation_surface`
+on dynamical, `total_precipitation` on ARCO, `tp` on ECMWF S2S). Open catalogs
+(ARCO, CMIP6, dynamical) and closed ones with many fields (ECMWF S2S) list the
+usual first choices, not every field the source can serve.
 The conformance check (`tools/build_availability.py --check`) requires this
 list on every fetcher.
 

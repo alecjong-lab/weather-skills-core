@@ -79,7 +79,7 @@ STANDARD = {
         "standard_name_contains": (),
         "unit_candidates": ("degree_Celsius", "kelvin", "degree_Fahrenheit"),
         "depth_candidates": (),
-        "name_hints": ("t2m", "2m_temperature", "temp", "tmax", "tmin", "tavg"),
+        "name_hints": ("t2m", "2m_temperature", "temp", "tmax", "tmin", "tavg", "tas"),
     },
     # Listed before precip_amount so CF rate names win over amount names.
     "precip": {
@@ -115,6 +115,10 @@ STANDARD = {
         "name_hints": (),
     },
 }
+
+# Colorbar / CF long_name for precip amounts (rate × period). Overwrites leftover
+# rate display names; fetchers may still set a more specific long_name.
+PRECIP_AMOUNT_LONG_NAME = "Total precipitation"
 
 
 def water_density():
@@ -533,6 +537,14 @@ def normalize_unit_strings(ds):
     return ds
 
 
+def looks_like_rate_display_name(value) -> bool:
+    """True if a CF/GRIB display name describes a rate or flux, not an amount."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    lowered = value.casefold()
+    return "rate" in lowered or "flux" in lowered
+
+
 def stamp_precip_amounts(ds):
     """Stamp amount CF metadata when units are precip depth/mass (overwrite rate names)."""
     amount_sn = STANDARD["precip_amount"]["standard_name"]
@@ -542,7 +554,13 @@ def stamp_precip_amounts(ds):
             continue
         if kind_from_units(units) == "precip_amount":
             ds[name].attrs["standard_name"] = amount_sn
-            ds[name].attrs.setdefault("long_name", "Total precipitation")
+            long_name = ds[name].attrs.get("long_name")
+            if not (isinstance(long_name, str) and long_name.strip()) or looks_like_rate_display_name(
+                long_name
+            ):
+                ds[name].attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
+            if looks_like_rate_display_name(ds[name].attrs.get("GRIB_name")):
+                ds[name].attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
     return ds
 
 
@@ -702,9 +720,10 @@ def deaccumulate_along_step(ds, names=None):
 def precip_amounts_to_rates(ds, *, interval=None):
     """Convert precip-amount data vars to ``mm day-1`` rates.
 
-    Cumulative-since-init forecast amounts (every data var is an amount on
-    ``step``) are deaccumulated. Otherwise amounts are divided by ``interval``
-    or stamped/inferred ``data_interval``. Already-rate precip is unchanged.
+    Cumulative-since-init forecast amounts on ``step`` are deaccumulated
+    (companion non-amount vars keep their values but share the shortened
+    step axis). Otherwise amounts are divided by ``interval`` or
+    stamped/inferred ``data_interval``. Already-rate precip is unchanged.
     """
     amount_names = []
     for name in ds.data_vars:
@@ -716,7 +735,7 @@ def precip_amounts_to_rates(ds, *, interval=None):
     if not amount_names:
         return ds
 
-    if "step" in ds.dims and ds.sizes["step"] >= 2 and set(amount_names) == set(ds.data_vars):
+    if "step" in ds.dims and ds.sizes["step"] >= 2:
         return deaccumulate_along_step(ds, names=amount_names)
 
     period = interval or data_interval_of(ds)

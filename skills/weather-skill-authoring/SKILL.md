@@ -5,9 +5,14 @@ description: Playbook for writing a weather skill on the @weather_skill decorato
 
 # weather-skill-authoring
 
-A skill is `skills/<name>/` with a **SKILL.md** and `scripts/<name>.py`. The
-`@weather_skill` decorator owns the CLI, Dataset input opening, standard-dataset
-validation, provenance, and output writing. The script body is domain logic only.
+A skill is `skills/<name>/` with a **SKILL.md** and `scripts/<name>.py`
+(hyphens → underscores). Do not name the script after a stdlib module
+(`inspect.py`, `json.py`): `uv run` puts that directory on `sys.path` and
+shadows the real module.
+
+The `@weather_skill` decorator owns the CLI, Dataset input opening,
+standard-dataset validation, provenance, and output writing. The script body
+is domain logic only.
 
 ## References
 

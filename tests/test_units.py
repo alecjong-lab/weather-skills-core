@@ -10,6 +10,7 @@ from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
     DATA_INTERVAL_ATTR,
+    PRECIP_AMOUNT_LONG_NAME,
     STANDARD,
     assert_timestep_ge_aggregation_period,
     classify_variable,
@@ -20,11 +21,13 @@ from weather_skills_core.units import (
     format_cell_methods,
     format_duration,
     infer_timestep,
+    looks_like_rate_display_name,
     parse_aggregation_period,
     precip_amounts_to_rates,
     quantify_dataset,
     rate_to_total,
     stamp_data_interval,
+    stamp_precip_amounts,
     to_standard_units,
     units_convertible,
     units_equal,
@@ -62,6 +65,7 @@ def test_convert_values_temp_and_precip_density():
 def test_classify_variable():
     assert classify_variable("t2m", units="K", standard_name="air_temperature") == "temp"
     assert classify_variable("2m_temperature", units="K") == "temp"
+    assert classify_variable("tas", units="K") == "temp"
     assert classify_variable("tp", units="kg m-2", standard_name="precipitation_amount") == (
         "precip_amount"
     )
@@ -321,6 +325,35 @@ def test_expected_samples_and_filter_min_coverage():
     assert float(one["precip"].values[0]) == pytest.approx(2.0)
 
 
+def test_looks_like_rate_display_name():
+    assert looks_like_rate_display_name("precipitation rate")
+    assert looks_like_rate_display_name("Precipitation rate")
+    assert looks_like_rate_display_name("daily precipitation rate")
+    assert looks_like_rate_display_name("precipitation_flux")
+    assert not looks_like_rate_display_name("Total precipitation")
+    assert not looks_like_rate_display_name("CHIRPS daily precipitation")
+    assert not looks_like_rate_display_name("")
+    assert not looks_like_rate_display_name(None)
+
+
+def test_stamp_precip_amounts_overwrites_rate_display_names():
+    ds = make_gridded(n_time=1, fill=1.0, units="mm")
+    ds["precip"].attrs.update(
+        standard_name="lwe_precipitation_rate",
+        long_name="precipitation rate",
+        GRIB_name="Precipitation rate",
+    )
+    out = stamp_precip_amounts(ds)
+    assert out["precip"].attrs["standard_name"] == STANDARD["precip_amount"]["standard_name"]
+    assert out["precip"].attrs["long_name"] == PRECIP_AMOUNT_LONG_NAME
+    assert out["precip"].attrs["GRIB_name"] == PRECIP_AMOUNT_LONG_NAME
+
+    kept = make_gridded(n_time=1, fill=1.0, units="mm")
+    kept["precip"].attrs["long_name"] = "CHIRPS daily precipitation"
+    stamped = stamp_precip_amounts(kept)
+    assert stamped["precip"].attrs["long_name"] == "CHIRPS daily precipitation"
+
+
 def test_precip_amounts_to_rates_daily_and_step():
     daily = make_gridded(n_time=2, fill=4.0, units="mm")
     daily["precip"].attrs["standard_name"] = "precipitation_amount"
@@ -343,6 +376,13 @@ def test_precip_amounts_to_rates_daily_and_step():
     assert rates.sizes["step"] == 2
     np.testing.assert_allclose(rates["tp"].values, [2.0, 3.0])
     assert rates["tp"].attrs["units"] == STANDARD["precip"]["units"]
+
+    mixed = tp.assign(t2m=("step", [280.0, 281.0, 282.0]))
+    mixed["t2m"].attrs.update(units="K", standard_name="air_temperature")
+    mixed_out = precip_amounts_to_rates(mixed)
+    assert mixed_out.sizes["step"] == 2
+    np.testing.assert_allclose(mixed_out["tp"].values, [2.0, 3.0])
+    np.testing.assert_allclose(mixed_out["t2m"].values, [281.0, 282.0])
 
 
 def test_precip_convertible_names_skips_temp_with_leftover_precip_standard_name():
