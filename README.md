@@ -17,9 +17,9 @@ uv run plot-compare.py -i kenya.zarr -i forecast.zarr -o compare.png
 
 ## Writing a skill
 
-Declare the CLI with stacked `@weather_skill.argument(...)` decorators (same
-kwargs as `argparse.add_argument`). The decorator parses argv, opens Zarr
-inputs, calls your function, and writes or stamps outputs.
+Stack `@weather_skill.argument(...)` decorators to declare the CLI; they take
+the same kwargs as `argparse.add_argument`. The decorator parses argv, opens
+Zarr inputs, calls your function, and writes or stamps outputs.
 
 ```python
 from weather_skills_core import Dataset, weather_skill
@@ -28,8 +28,17 @@ from weather_skills_core import Dataset, weather_skill
 @weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
 @weather_skill.argument("--bbox", required=True)
 def clip_region(ds, output, bbox, **kwargs):
-    return ds  # or a Path you already wrote
+    north, west, south, east = bbox  # already (N, W, S, E) floats
+    clipped = ds.sel(
+        lat=slice(south, north),
+        lon=slice(west, east),
+    )
+    return clipped  # decorator stamps provenance and writes -o/--output
 ```
+
+`ds` is the opened Zarr, `bbox` is already parsed, and `output` is injected
+(do not declare `-o` yourself). The body is ordinary xarray: subset the grid
+and return the result.
 
 ### Function parameters
 
@@ -39,12 +48,13 @@ only. Each CLI flag becomes one of those names:
 | Where it comes from | Parameter name |
 | --- | --- |
 | `--start-time` | `start_time` (hyphens become underscores) |
-| `dest="ds"` on an argument | `ds` (overrides the default from the flag) |
+| `--input` with `dest="ds"` | `ds` (without dest it would be `input`) |
 | `-o/--output` | `output` — injected; do not declare this flag yourself |
 
-Always accept `**kwargs`. The decorator may pass keys you did not list as
-named parameters; without `**kwargs` the skill refuses to load. Bind the
-values you use as named parameters and let `**kwargs` absorb the rest.
+The skill function must accept `**kwargs`. The decorator may pass keys you
+did not list as named parameters, and without `**kwargs` the skill refuses to
+load. Bind the values you use as named parameters and let `**kwargs` absorb
+the rest.
 
 ### Zarr inputs
 
@@ -71,9 +81,10 @@ artifacts must match the number of `--output` paths.
 | a sequence | one write per `--output` |
 | `None` | skip write — the skill already wrote the file |
 
-Inspect-only skills (stdout, no file): `@weather_skill(..., output=False)`.
+For skills that only print to stdout and write no file, pass `output=False`:
+`@weather_skill(..., output=False)`.
 
-A skill with standard flags plus a custom one:
+The next example adds a custom flag alongside the standard ones:
 
 ```python
 @weather_skill(name="my-fancy-skill", version="0.1.0")
@@ -105,7 +116,8 @@ declares what an input must have: either those dimension names, or a **type**
 that before your function runs.
 
 On disk, common aliases are accepted (`step` counts as `prediction_timedelta`,
-`number` as `member`). Declare the ontology name or type, not every alias.
+`number` as `member`). Declare the ontology name or type rather than listing
+every alias.
 
 ## Dataset inputs
 
@@ -117,8 +129,8 @@ On disk, common aliases are accepted (`step` counts as `prediction_timedelta`,
 | List | Any one of these (OR) | `Dataset(["forecast", "ensemble_forecast"])` |
 | `"any"` | Any Zarr (no dim check) | `Dataset("any")` |
 
-Several Zarrs: `nargs=2` / `nargs="+"` on one Dataset argument, or separate
-Dataset flags.
+Pass several Zarrs with `nargs=2` or `nargs="+"` on one Dataset argument, or
+with separate Dataset flags.
 
 ### Dimensions
 
@@ -147,8 +159,9 @@ Dataset flags.
 | `point_obs`, `station` | `point_id` + `time` |
 | `any` | any Zarr (no dimension check) |
 
-Full details:
-[`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md).
+See
+[`skills/weather-skill-authoring/references/STANDARD_DATASET.md`](skills/weather-skill-authoring/references/STANDARD_DATASET.md)
+for the full contract.
 
 ## Standard flags
 
@@ -171,7 +184,7 @@ here — compose with resolve-time and pass the printed flags.
 | `end_time` | `--end-time` | Range end as `datetime.date` |
 | `variable` | `--variable` / `-v` | Variable name(s); `action="append"` for several |
 
-Canonical spellings (`--bbox`, dates, `--variable`) are linted. Dataset input
+Canonical spellings (`--bbox`, dates, `--variable`) are linted; Dataset input
 flag names are free-form (`-i/--input`, `--forecast`, …).
 
 ## Units
@@ -186,8 +199,9 @@ The decorator quantifies units when it opens a Zarr and dequantifies before
 it writes. Known kinds (temp, precip) must carry parseable `units`; other
 variables may include units optionally.
 
-Full details:
-[`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md).
+See
+[`skills/weather-skill-authoring/references/UNITS.md`](skills/weather-skill-authoring/references/UNITS.md)
+for the full units contract.
 
 ## Install
 
