@@ -1,10 +1,18 @@
 # weather-skills-core
 
+**Note.** This repository is intended for weather-skills developers. If you
+are a weather-skills user, call the skills directly in your favorite AI
+interface — start at [weather-skills.org](https://weather-skills.org).
+
 Weather skills turn scientific weather-data pipelines into fixed, reviewable
-tools. You write the work in ordinary Python — fetch a forecast, clip a region,
-convert units, make a plot — and `@weather_skill` makes that function callable
-from the CLI or an agent, with provenance on every output. The skill is the
-code you checked in; nothing is generated at runtime.
+tools that are meant for agentic AI. You write each step in ordinary Python:
+fetch a forecast or satellite rainfall field, clip it to a country, convert
+units, make a map. Wrapping the function with `@weather_skill` gives it a
+command line, shared flags such as `--bbox` and `--start-time`, and a common
+Zarr layout so one step's output is the next step's input. Each output file
+carries provenance: a record of which skill, version, and arguments produced
+it, so someone else can rerun or check the chain. The skill is the script you
+checked in; nothing is generated at runtime unless you want it to be.
 
 ```bash
 # Fetch an ensemble forecast over Kenya
@@ -25,7 +33,7 @@ Zarr inputs, calls your function, and writes or stamps outputs.
 from weather_skills_core import Dataset, weather_skill
 
 @weather_skill(name="clip-region", version="0.1.0")
-@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True, dest="ds")
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), required=True)
 @weather_skill.argument("--bbox", required=True)
 def clip_region(ds, output, bbox, **kwargs):
     north, west, south, east = bbox  # already (N, W, S, E) floats
@@ -36,9 +44,11 @@ def clip_region(ds, output, bbox, **kwargs):
     return clipped  # decorator stamps provenance and writes -o/--output
 ```
 
-`ds` is the opened Zarr, `bbox` is already parsed, and `output` is injected
-(do not declare `-o` yourself). The body is ordinary xarray: subset the grid
-and return the result.
+`ds` is the opened Zarr and `bbox` is already parsed. Every skill gets
+`-o/--output` automatically — do not declare it. The user passes
+`-o kenya.zarr`; the function receives that destination as `output`.
+Returning `clipped` is enough: the decorator writes the Zarr there and
+stamps provenance.
 
 ### Function parameters
 
@@ -48,8 +58,8 @@ only. Each CLI flag becomes one of those names:
 | Where it comes from | Parameter name |
 | --- | --- |
 | `--start-time` | `start_time` (hyphens become underscores) |
-| `--input` with `dest="ds"` | `ds` (without dest it would be `input`) |
-| `-o/--output` | `output` — injected; do not declare this flag yourself |
+| `--input` | `ds` (opened Dataset; a list if you passed several) |
+| `-o/--output` | `output` (always added; do not declare this flag) |
 
 The skill function must accept `**kwargs`. The decorator may pass keys you
 did not list as named parameters, and without `**kwargs` the skill refuses to
@@ -59,19 +69,26 @@ the rest.
 ### Zarr inputs
 
 `type=Dataset(...)` means the CLI takes a path string, and your function
-receives an opened `xarray.Dataset` that already passed the dimension check
-and has pint units attached. Use it for weather-skills Zarr stores.
+receives an opened `xarray.Dataset` as `ds` that already passed the dimension
+check and has pint units attached. Use it for weather-skills Zarr stores.
 
 Opaque files (GeoJSON, `.eml`, a PNG you read) use `type=Path`. Those stay
 paths; the decorator does not open them.
 
 ### Outputs
 
-The decorator owns `-o/--output` (repeatable, required). Do not add that
-argument yourself. `output` is a `Path` when the user passed one path, or a
-`list[Path]` when they repeated `-o`.
+The decorator always adds `-o/--output`. Do not declare that flag. It is
+required (unless you pass `output=False`) and repeatable. A single
+`-o kenya.zarr` arrives as `output: Path`; repeating the flag
+(`-o a.zarr -o b.zarr`) arrives as `output: list[Path]`.
 
-What you return decides how that path is filled. The number of returned
+That path is where the user wants the result. For a Dataset return, leave
+the writing to the decorator: return the xarray object and it will
+`to_zarr` to `--output` after stamping provenance. For a figure, write the
+PNG to `output` yourself and return that same Path so provenance can be
+stamped on the file you created.
+
+What you return decides how the path is filled. The number of returned
 artifacts must match the number of `--output` paths.
 
 | Return | What the decorator does |
@@ -88,7 +105,7 @@ The next example adds a custom flag alongside the standard ones:
 
 ```python
 @weather_skill(name="my-fancy-skill", version="0.1.0")
-@weather_skill.argument("-i", "--input", type=Dataset("any"), required=True, dest="ds")
+@weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
