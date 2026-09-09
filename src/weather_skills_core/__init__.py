@@ -1,23 +1,13 @@
-"""Core library for weather skills: CLI, envelope, provenance, and caching."""
+"""Core library for weather skills: CLI, standard-dataset validation, and provenance."""
 
-from weather_skills_core.decorator import (
-    EntryOverride,
-    RunContext,
-    StandardParameter,
-    WroteSummary,
-    standard_parameters,
-    weather_skill,
-)
+from weather_skills_core.dataset_type import Dataset
+from weather_skills_core.decorator import weather_skill
 from weather_skills_core.errors import DataError, SkillError, UsageError
 
 __all__ = [
     "DataError",
-    "EntryOverride",
-    "RunContext",
+    "Dataset",
     "SkillError",
-    "StandardParameter",
     "UsageError",
-    "WroteSummary",
-    "standard_parameters",
     "weather_skill",
 ]

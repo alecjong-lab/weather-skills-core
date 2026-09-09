@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 248" width="800" height="248" role="img" aria-labelledby="title desc">
+  <title id="title">Composable weather skills</title>
+  <desc id="desc">Fetchers write a standard Zarr. Transforms take Zarr in and Zarr out. Figure skills read those stores and write a PNG. Mix any combination — the file contract stays the same.</desc>
+  <style>
+    .bg { fill: #f7f4ec; }
+    .grid { stroke: #ddd7c7; stroke-width: 1; }
+    .shadow { fill: #e4ece6; }
+    .box { fill: #efeadd; stroke: #c9c2b0; stroke-width: 1; }
+    .bar { fill: #11606a; }
+    .ink { fill: #1d211f; }
+    .soft { fill: #4c544f; }
+    .accent { fill: #11606a; }
+    .line { fill: none; stroke: #11606a; stroke-width: 1.5; }
+    .png { fill: #11606a; }
+    .png-text { fill: #f7f4ec; }
+    .rule { stroke: #c9c2b0; stroke-width: 1; }
+    text {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .stage {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+    }
+    .hint { font-size: 11px; font-weight: 500; }
+    .chip { font-size: 10px; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #20262a; }
+      .grid { stroke: #2c3438; }
+      .shadow { fill: #1a2c2e; }
+      .box { fill: #2a3136; stroke: #3d474c; }
+      .bar { fill: #5eb3bc; }
+      .ink { fill: #d8e0d9; }
+      .soft { fill: #9aa89c; }
+      .accent { fill: #5eb3bc; }
+      .line { stroke: #5eb3bc; }
+      .png { fill: #5eb3bc; }
+      .png-text { fill: #20262a; }
+      .rule { stroke: #3d474c; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 z" class="accent"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="800" height="248" rx="4"/>
+  <g class="grid" aria-hidden="true">
+    <path d="M36 0 V248 M72 0 V248 M108 0 V248 M144 0 V248 M180 0 V248 M216 0 V248 M252 0 V248 M288 0 V248 M324 0 V248 M360 0 V248 M396 0 V248 M432 0 V248 M468 0 V248 M504 0 V248 M540 0 V248 M576 0 V248 M612 0 V248 M648 0 V248 M684 0 V248 M720 0 V248 M756 0 V248"/>
+    <path d="M0 36 H800 M0 72 H800 M0 108 H800 M0 144 H800 M0 180 H800 M0 216 H800"/>
+  </g>
+
+  <text class="accent stage" x="111" y="28" text-anchor="middle">FETCH</text>
+  <text class="accent stage" x="325" y="28" text-anchor="middle">TRANSFORM</text>
+  <text class="accent stage" x="618" y="28" text-anchor="middle">FIGURE</text>
+
+  <!-- imerg-fetch -->
+  <g>
+    <rect class="shadow" x="39" y="65" width="150" height="36" rx="2"/>
+    <rect class="box" x="36" y="62" width="150" height="36" rx="2"/>
+    <rect class="bar" x="36" y="62" width="3" height="36" rx="1"/>
+    <text class="ink" x="111" y="84" text-anchor="middle">imerg-fetch</text>
+  </g>
+
+  <!-- clip-region -->
+  <g>
+    <rect class="shadow" x="253" y="65" width="150" height="36" rx="2"/>
+    <rect class="box" x="250" y="62" width="150" height="36" rx="2"/>
+    <rect class="bar" x="250" y="62" width="3" height="36" rx="1"/>
+    <text class="ink" x="325" y="84" text-anchor="middle">clip-region</text>
+  </g>
+
+  <!-- ecmwf-fetch -->
+  <g>
+    <rect class="shadow" x="39" y="153" width="150" height="36" rx="2"/>
+    <rect class="box" x="36" y="150" width="150" height="36" rx="2"/>
+    <rect class="bar" x="36" y="150" width="3" height="36" rx="1"/>
+    <text class="ink" x="111" y="172" text-anchor="middle">ecmwf-fetch</text>
+  </g>
+
+  <!-- plot-compare -->
+  <g>
+    <rect class="shadow" x="483" y="109" width="150" height="36" rx="2"/>
+    <rect class="box" x="480" y="106" width="150" height="36" rx="2"/>
+    <rect class="bar" x="480" y="106" width="3" height="36" rx="1"/>
+    <text class="ink" x="555" y="128" text-anchor="middle">plot-compare</text>
+  </g>
+
+  <!-- PNG terminal -->
+  <g>
+    <rect class="shadow" x="665" y="109" width="108" height="36" rx="2"/>
+    <rect class="png" x="662" y="106" width="108" height="36" rx="2"/>
+    <text class="png-text" x="716" y="128" text-anchor="middle">compare.png</text>
+  </g>
+
+  <!-- imerg → clip -->
+  <text class="accent chip" x="218" y="58" text-anchor="middle">zarr</text>
+  <path class="line" marker-end="url(#arrow)" d="M186 80 H242"/>
+
+  <!-- clip → join → plot, and ecmwf → join -->
+  <text class="accent chip" x="438" y="58" text-anchor="middle">zarr</text>
+  <path class="line" d="M400 80 H438 V124"/>
+  <text class="accent chip" x="325" y="196" text-anchor="middle">zarr</text>
+  <path class="line" marker-end="url(#arrow)" d="M186 168 H438 V124 H472"/>
+
+  <!-- plot → png -->
+  <path class="line" marker-end="url(#arrow)" d="M630 124 H654"/>
+
+  <line class="rule" x1="36" y1="216" x2="764" y2="216"/>
+  <text class="soft hint" x="400" y="236" text-anchor="middle">swap any skill — one CF Zarr contract, provenance on every file</text>
+</svg>
