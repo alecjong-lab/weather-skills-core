@@ -198,56 +198,18 @@ def has_dim(ds, dim: str) -> bool:
     return False
 
 
-def missing_dims(
-    ds,
-    required: frozenset[str],
-    *,
-    dims: str | None = None,
-    time_dim: str | None = None,
-) -> list[str]:
-    missing = []
-    for d in sorted(required):
-        if d in ("lat", "lon") and dims is not None:
-            try:
-                lat_dim, lon_dim = detect_spatial_dims(ds, dims)
-                if d == "lat" and lat_dim in ds.dims:
-                    continue
-                if d == "lon" and lon_dim in ds.dims:
-                    continue
-                missing.append(d)
-            except UsageError:
-                missing.append(d)
-            continue
-        if d == "time" and time_dim is not None:
-            try:
-                detect_time_dim(ds, time_dim)
-                continue
-            except UsageError:
-                missing.append(d)
-                continue
-        if not has_dim(ds, d):
-            missing.append(d)
-    return missing
-
-
-def validate_dims(
-    ds,
-    alternatives: tuple[frozenset[str], ...] | None,
-    name: str,
-    *,
-    dims: str | None = None,
-    time_dim: str | None = None,
-) -> frozenset[str]:
+def validate_dims(ds, alternatives: tuple[frozenset[str], ...] | None, name: str) -> frozenset[str]:
     """Return the first matching dim-set, or raise; ``alternatives is None`` = unconstrained."""
     if alternatives is None:
         return frozenset()
-    for alt in alternatives:
-        if not missing_dims(ds, alt, dims=dims, time_dim=time_dim):
+    missing = [[d for d in sorted(alt) if not has_dim(ds, d)] for alt in alternatives]
+    for alt, miss in zip(alternatives, missing, strict=True):
+        if not miss:
             return alt
-    parts = []
-    for alt in alternatives:
-        miss = missing_dims(ds, alt, dims=dims, time_dim=time_dim)
-        parts.append(f"{{{', '.join(sorted(alt))}}} missing {miss}")
+    parts = [
+        f"{{{', '.join(sorted(alt))}}} missing {miss}"
+        for alt, miss in zip(alternatives, missing, strict=True)
+    ]
     raise UsageError(
         f"{name} does not satisfy required dimensions ({' OR '.join(parts)}); dims={list(ds.dims)}"
     )
@@ -266,9 +228,7 @@ def detect_type(ds) -> str:
     return "observations"
 
 
-def validate_input(
-    ds, allowed, name: str, *, dims: str | None = None, time_dim: str | None = None
-) -> str:
+def validate_input(ds, allowed, name: str) -> str:
     """Check ``ds`` against an IoSpec or Dataset declaration; return ``detect_type``."""
     if isinstance(allowed, IoSpec):
         spec = allowed
@@ -276,20 +236,12 @@ def validate_input(
         spec = normalize_io_spec(allowed)
     else:
         raise TypeError(f"invalid validate_input allowed={allowed!r}")
-    validate_dims(ds, spec.alternatives, name, dims=dims, time_dim=time_dim)
+    validate_dims(ds, spec.alternatives, name)
     return detect_type(ds)
 
 
-def detect_spatial_dims(ds, override: str | None = None) -> tuple:
-    """Find lat/lon dim names: optional ``LAT,LON`` override, then CF, then ALIASES."""
-    if override:
-        parts = [s.strip() for s in override.split(",")]
-        if len(parts) != 2:
-            raise UsageError("--dims must be two comma-separated names: LAT,LON.")
-        lat_dim, lon_dim = parts
-        if lat_dim not in ds.dims or lon_dim not in ds.dims:
-            raise UsageError(f"--dims names not in dataset dims {list(ds.dims)}")
-        return lat_dim, lon_dim
+def detect_spatial_dims(ds) -> tuple:
+    """Find lat/lon dim names: CF metadata, then ALIASES."""
     try:
         import cf_xarray  # noqa: F401 -- registers the .cf accessor
 
@@ -301,7 +253,7 @@ def detect_spatial_dims(ds, override: str | None = None) -> tuple:
     if lat_dim is None or lon_dim is None:
         raise UsageError(
             f"could not identify lat/lon coords via CF metadata or name "
-            f"heuristics in {list(ds.coords)}. Pass --dims to override."
+            f"heuristics in {list(ds.coords)}. Rename them to lat/lon or add CF attrs."
         )
     return lat_dim, lon_dim
 
