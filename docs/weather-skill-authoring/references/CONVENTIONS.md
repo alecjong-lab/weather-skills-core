@@ -16,9 +16,7 @@ This file is the naming contract. Dims and Zarr shapes live in
 | Canonical special | You declare it with the exact flags below. The decorator parses the string. | `--bbox`, `--date`, `--start-time`, `--end-time`, `--variable` / `-v` |
 | Everything else | Ordinary `argparse`. Reuse an existing name when the meaning matches. | `--input` / `-i`, `--geojson`, `--title` |
 
-The linter treats the specials as a closed set (WSK101). Input and
-output *paths* are free-form: `-i/--input` is the usual single-Zarr
-name, but `--forecast` vs `--obs` is better when the roles differ.
+The linter treats the specials as a closed set (WSK101).
 
 ## Canonical specials
 
@@ -65,11 +63,12 @@ Consumer skills take `--bbox`. Polygon clipping is skill-specific
 
 ## Inputs and outputs
 
-| Concept | Usual flag | Notes |
-| --- | --- | --- |
-| Zarr input | `-i` / `--input` | `type=Dataset(...)`. Arrives as `ds` (a list if `action="append"`). Repeat `-i` once per Zarr. Name the flag by role when inputs differ (`--forecast`, `--obs`). |
-| Opaque file | whatever fits | GeoJSON, PNG, … — `type=Path`, not `Dataset`. |
-| Output path | `-o` / `--output`, repeatable | Owned by the decorator (`output=True` default). Count must match returned artifacts. |
+- One Zarr input: `-i` / `--input`. Inputs with different roles get a flag
+  each, named by role (`--forecast`, `--obs`).
+- Output: `-o` / `--output`, added by the decorator.
+
+How inputs are opened and outputs written is in
+[the authoring guide](../SKILL.md#inputs).
 
 ## Fetchers
 
@@ -91,8 +90,7 @@ Optional IDENT selects a product:
 ```
 
 Agents call the fetcher directly. To end a rolling window on that day,
-pass the printed date as resolve-time `--as-of`. Latest-available is
-not a YAML field and not a decorator date flag.
+pass the printed date to resolve-time as `--as-of`.
 
 ### `metadata.variables`
 
@@ -123,7 +121,6 @@ does not treat them as canonical specials.
 | `--align-on` | `date` or `year` |
 | `--workers` | Parallelism |
 | `--title` | Plot title |
-| `--probe-latest` | Fetchers only (see above) |
 
 ## How the linter checks this
 
