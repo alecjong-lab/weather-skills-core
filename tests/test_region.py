@@ -276,21 +276,16 @@ def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
     kn, kw, ks, ke = bbox_from_feature(kenya)
     east = lookup_region("East Africa")
     eastern = lookup_region("Eastern Africa")
-    assert east["properties"]["name"] == "East Africa"
+    # "East Africa" is the directional alias of the UN Eastern Africa grouping.
+    assert east == eastern
+    assert east["properties"]["name"] == "Eastern Africa"
     assert east["properties"]["level"] == "region"
-    assert east["properties"]["region_name"] == "east_africa"
     assert east["geometry"]["type"] == "MultiPolygon"
     n, w, s, e = bbox_from_feature(east)
-    assert s == pytest.approx(-15.0)
     assert s <= ks <= kn <= n
     assert w <= kw <= ke <= e
     assert n > 10
-    # UN-style Eastern Africa keeps Madagascar; East Africa stops at 15°S.
-    assert eastern["properties"]["name"] == "Eastern Africa"
-    en, _ew, es, _ee = bbox_from_feature(eastern)
-    assert es < -20
-    assert es < s
-    assert en == pytest.approx(n)
+    assert s < -20  # keeps Madagascar
 
 
 def test_lookup_indian_ocean_basin_not_nominatim(monkeypatch):

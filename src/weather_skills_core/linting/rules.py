@@ -59,7 +59,8 @@ RULES = {
 #: Rules that need a corpus beyond the skill itself; skipped (and excluded
 #: from the score denominator) when none is available.
 CROSS_SKILL_RULES = ("WSK201", "WSK202")
-PER_SKILL_RULES = ("WSK101", "WSK301", "WSK401", "WSK402")
+# WSK001 zeroes the score outright, so it is not averaged with the rest.
+PER_SKILL_RULES = tuple(r for r in RULES if r != "WSK001" and r not in CROSS_SKILL_RULES)
 
 
 def default_rule_set() -> set[str]:

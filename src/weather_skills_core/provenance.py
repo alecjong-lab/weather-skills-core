@@ -18,8 +18,6 @@ from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
-DEFAULT_SOFTWARE = "forecasting-skills"
-OFFICIAL_MARK_TEXT = "weather-skills provenance verified"
 # Classic crimson rubber-stamp ink (RGBA) — opaque enough to read on maps.
 _MARK_INK = (139, 15, 32, 250)
 
@@ -366,7 +364,7 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
     zarr.consolidate_metadata(str(zarr_path))
 
 
-def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
+def stamp_figure(path: Path, history: list) -> None:
     """Embed ``weather_skills_history`` into a PNG, JPEG, or HTML file.
 
     When the chain is intact (non-empty and schema-valid), also draw a circular
@@ -391,7 +389,7 @@ def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE)
                 if isinstance(value, str) and key not in (HISTORY_ATTR, "Software"):
                     info.add_text(key, value)
             info.add_text(HISTORY_ATTR, payload)
-            info.add_text("Software", software)
+            info.add_text("Software", "weather-skills")
             out.save(path, pnginfo=info)
         return
 

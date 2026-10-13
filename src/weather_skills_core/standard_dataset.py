@@ -10,45 +10,31 @@ from dataclasses import dataclass
 
 from weather_skills_core.errors import UsageError
 
-# --- dimension vocabulary -------------------------------------------------
-
-LAT = "lat"
-LON = "lon"
-TIME = "time"
-INIT_TIME = "init_time"
-PREDICTION_TIMEDELTA = "prediction_timedelta"
-MEMBER = "member"
-VERTICAL = "vertical"
-DAY_OF_YEAR = "day_of_year"
-POINT_ID = "point_id"
-X = "x"
-Y = "y"
-
 # Ontology dims skills declare on Dataset(...)
 DIMS = frozenset(
     {
-        LAT,
-        LON,
-        TIME,
-        INIT_TIME,
-        PREDICTION_TIMEDELTA,
-        MEMBER,
-        VERTICAL,
-        DAY_OF_YEAR,
-        POINT_ID,
-        X,
-        Y,
+        "lat",
+        "lon",
+        "time",
+        "init_time",
+        "prediction_timedelta",
+        "member",
+        "vertical",
+        "day_of_year",
+        "point_id",
+        "x",
+        "y",
     }
 )
 
 # Types → required ontology dims (AND)
 TYPE_DIMS: dict[str, frozenset[str]] = {
-    "spatial": frozenset({LAT, LON}),
-    "observations": frozenset({LAT, LON, TIME}),
-    "forecast": frozenset({LAT, LON, INIT_TIME, PREDICTION_TIMEDELTA}),
-    "vertical_forecast": frozenset({LAT, LON, INIT_TIME, PREDICTION_TIMEDELTA, VERTICAL}),
-    "ensemble_forecast": frozenset({LAT, LON, INIT_TIME, PREDICTION_TIMEDELTA, MEMBER}),
-    "point_obs": frozenset({POINT_ID, TIME}),
+    "spatial": frozenset({"lat", "lon"}),
+    "observations": frozenset({"lat", "lon", "time"}),
+    "forecast": frozenset({"lat", "lon", "init_time", "prediction_timedelta"}),
+    "vertical_forecast": frozenset({"lat", "lon", "init_time", "prediction_timedelta", "vertical"}),
+    "ensemble_forecast": frozenset({"lat", "lon", "init_time", "prediction_timedelta", "member"}),
+    "point_obs": frozenset({"point_id", "time"}),
 }
 
 # Type name synonyms → primary key in TYPE_DIMS
@@ -169,41 +155,35 @@ def normalize_io_spec(raw) -> IoSpec:
 
 def has_dim(ds, dim: str) -> bool:
     """True if ``ds`` has the ontology dim (ALIASES / CF / special lat-lon rules)."""
-    if dim == LAT:
+    if dim == "lat":
         try:
             lat_dim, _ = detect_spatial_dims(ds)
             return lat_dim in ds.dims
         except UsageError:
             return False
-    if dim == LON:
+    if dim == "lon":
         try:
             _, lon_dim = detect_spatial_dims(ds)
             return lon_dim in ds.dims
         except UsageError:
             return False
-    if dim == TIME:
+    if dim == "time":
         try:
             name = detect_time_dim(ds)
             return name in ds.dims
         except UsageError:
             return False
-    if dim == INIT_TIME:
+    if dim == "init_time":
         if "init_time" in ds.dims or "init_time" in ds.coords:
             return True
         # Classic forecast: scalar time coord + lead-time dim
         if "time" in ds.coords and "time" not in ds.dims and ds["time"].ndim == 0:
-            return any(ALIASES.get(n) == PREDICTION_TIMEDELTA for n in ds.dims)
+            return any(ALIASES.get(n) == "prediction_timedelta" for n in ds.dims)
         return False
-    if dim == PREDICTION_TIMEDELTA:
-        return any(ALIASES.get(n) == PREDICTION_TIMEDELTA for n in ds.dims)
-    if dim == MEMBER:
-        return any(ALIASES.get(n) == MEMBER for n in ds.dims)
-    if dim == VERTICAL:
-        return any(ALIASES.get(n) == VERTICAL for n in ds.dims)
-    if dim == DAY_OF_YEAR:
-        return any(ALIASES.get(n) == DAY_OF_YEAR for n in ds.dims)
-    if dim == POINT_ID:
-        point = next((n for n in names_for(POINT_ID) if n in ds.dims), None)
+    if dim in ("prediction_timedelta", "member", "vertical", "day_of_year"):
+        return any(ALIASES.get(n) == dim for n in ds.dims)
+    if dim == "point_id":
+        point = next((n for n in names_for("point_id") if n in ds.dims), None)
         if point is None:
             return False
         lat = next(
@@ -213,10 +193,8 @@ def has_dim(ds, dim: str) -> bool:
             (n for n in names_for("lon") if n in ds.coords and tuple(ds[n].dims) == (point,)), None
         )
         return lat is not None and lon is not None
-    if dim == X:
-        return "x" in ds.dims
-    if dim == Y:
-        return "y" in ds.dims
+    if dim in ("x", "y"):
+        return dim in ds.dims
     return False
 
 
@@ -229,18 +207,18 @@ def missing_dims(
 ) -> list[str]:
     missing = []
     for d in sorted(required):
-        if d in (LAT, LON) and dims is not None:
+        if d in ("lat", "lon") and dims is not None:
             try:
                 lat_dim, lon_dim = detect_spatial_dims(ds, dims)
-                if d == LAT and lat_dim in ds.dims:
+                if d == "lat" and lat_dim in ds.dims:
                     continue
-                if d == LON and lon_dim in ds.dims:
+                if d == "lon" and lon_dim in ds.dims:
                     continue
                 missing.append(d)
             except UsageError:
                 missing.append(d)
             continue
-        if d == TIME and time_dim is not None:
+        if d == "time" and time_dim is not None:
             try:
                 detect_time_dim(ds, time_dim)
                 continue
@@ -277,12 +255,12 @@ def validate_dims(
 
 def detect_type(ds) -> str:
     """Classify ``ds`` as a primary key in ``TYPE_DIMS`` (or ``ensemble_forecast``)."""
-    if has_dim(ds, POINT_ID):
+    if has_dim(ds, "point_id"):
         return "point_obs"
-    if has_dim(ds, PREDICTION_TIMEDELTA) and has_dim(ds, INIT_TIME):
-        if has_dim(ds, MEMBER):
+    if has_dim(ds, "prediction_timedelta") and has_dim(ds, "init_time"):
+        if has_dim(ds, "member"):
             return "ensemble_forecast"
-        if has_dim(ds, VERTICAL):
+        if has_dim(ds, "vertical"):
             return "vertical_forecast"
         return "forecast"
     return "observations"

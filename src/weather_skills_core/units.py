@@ -78,14 +78,6 @@ _RATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# CLI period label → the aggregation_period string stamped for that window.
-PERIOD_TO_AGGREGATION = {
-    "daily": "1 day",
-    "weekly": "7 day",
-    "dekadal": "1 dekad",
-    "monthly": "1 month",
-}
-
 # The vocabulary for every standard kind, in classification precedence order.
 #   units_required         must carry a units attr for explicit skill treatment
 #   units / standard_name  what to_standard_units stamps (None keeps existing)

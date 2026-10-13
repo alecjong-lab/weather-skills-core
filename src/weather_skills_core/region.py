@@ -4,8 +4,7 @@ Lookup order (no network until a later step):
 
 1. Bundled Natural Earth countries — ISO3 or country name.
 2. Bundled Natural Earth groupings — continent / UN / World Bank labels
-   (``Eastern Africa``, ``Sub-Saharan Africa``, …). ``East Africa`` is the
-   Eastern Africa grouping clipped at 15°S.
+   (``Eastern Africa``, ``Sub-Saharan Africa``, …).
 3. Bundled custom boxes — ``Indian Ocean basin``.
 4. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
 5. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
@@ -69,10 +68,6 @@ _COUNTRY_ALIASES = {
     "gaza_strip": "palestine",
     "west_bank": "palestine",
 }
-
-# ``East Africa`` is the NE Eastern Africa grouping clipped at this latitude
-# (Greater Horn / ICPAC-style view). ``Eastern Africa`` stays the full UN box.
-_EAST_AFRICA_SOUTH = -15.0
 
 # Boxes that are not Natural Earth groupings or admin units.
 # ``bbox`` is (N, W, S, E). Aliases are passed through :func:`clean_region_name`.
@@ -333,24 +328,6 @@ def _slim_country(feature: dict) -> dict:
     )
 
 
-def _clip_feature_south(feature: dict, south: float) -> dict:
-    """Keep land at or north of ``south``; bbox south is exactly that latitude."""
-    from shapely.geometry import box, mapping, shape
-
-    clipped = shape(feature["geometry"]).intersection(box(-180.0, south, 180.0, 90.0))
-    if clipped.is_empty:
-        raise DataError(f"{feature['properties'].get('name')!r} has no land north of {south}°.")
-    geometry = mapping(clipped)
-    north, west, _south, east = bbox_from_geometry(geometry)
-    props = {
-        **feature["properties"],
-        "name": "East Africa",
-        "region_name": "east_africa",
-        "bbox": [north, west, float(south), east],
-    }
-    return {**feature, "geometry": geometry, "properties": props}
-
-
 def _slim_region(spec: dict) -> dict:
     parts = []
     for feature in spec["members"]:
@@ -386,10 +363,7 @@ def _match_bundled(cleaned: str) -> dict | None:
         return _slim_country(match)
     named = _region_indexes().get(cleaned)
     if named is not None:
-        feature = _slim_region(named)
-        if cleaned == "east_africa":
-            return _clip_feature_south(feature, _EAST_AFRICA_SOUTH)
-        return feature
+        return _slim_region(named)
     custom = _custom_indexes().get(cleaned)
     if custom is not None:
         return _slim_custom(custom)
