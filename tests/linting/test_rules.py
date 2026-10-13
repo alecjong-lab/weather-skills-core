@@ -138,6 +138,12 @@ def test_cross_skill_rules_divergent_shape_fires_wsk202_naming_the_difference():
     assert "beta" not in alpha_method.message
 
 
+def test_cross_skill_rules_skip_input_flags():
+    """-i is one Zarr in alpha, several in gamma, and a plain path in beta: all fine."""
+    report = run_lint(FIXTURES / "multi_tree", [], extend_select=["WSK201"])
+    assert not [f for f in report.findings if f.flag in ("-i", "--input")]
+
+
 def test_cross_skill_rules_type_divergence_detected():
     report = run_lint(FIXTURES / "multi_tree", [])
     window = [f for f in report.findings if f.rule == "WSK202" and f.flag == "--window"]

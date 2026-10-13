@@ -130,4 +130,4 @@ does not treat them as canonical specials.
 | --- | --- |
 | WSK101 | A non-canonical spelling of a special (`-b` for bbox). Use `--bbox`. |
 | WSK201 | The same one-off flag on several skills (survey; off by default). Promote it or rename it. |
-| WSK202 | The same flag name with a different shape across skills (error). |
+| WSK202 | The same flag name with a different shape across skills (error). Input flags (`-i` / `--input`, `type=Dataset(...)`) are exempt: one skill takes one Zarr, another several. |

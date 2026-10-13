@@ -342,6 +342,8 @@ def _rule_cross_skill(corpus: list[CorpusSkill]) -> list[Finding]:
         for shape in cs.decl.arguments.values():
             if shape.dest in lookup or any(flag in lookup for flag in shape.flags):
                 continue  # shadows of the standard surface are WSK101 territory
+            if shape.type_name == "Dataset" or {"-i", "--input"} & set(shape.flags):
+                continue  # inputs: one Zarr or several (append), by convention
             by_identity.setdefault(shape.identity, []).append((cs, shape))
 
     findings = []
