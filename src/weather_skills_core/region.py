@@ -27,6 +27,9 @@ from weather_skills_core.errors import DataError, UsageError
 _GB_API = "https://www.geoboundaries.org/api/current/gbOpen/{iso3}/ADM{level}/"
 _NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 _HTTP_TIMEOUT = 60
+# Sent on every geoBoundaries / Nominatim request. Nominatim's usage policy requires
+# a User-Agent that identifies the app (the default Python-urllib one gets blocked);
+# the URL tells the service operators who to contact.
 _USER_AGENT = "weather-skills-core (https://github.com/rhiza-research/weather-skills-core)"
 _REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
 _DIRECTIONAL_PREFIXES = (
