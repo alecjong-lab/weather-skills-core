@@ -236,7 +236,23 @@ def test_quantify_dataset_quantifies_and_preserves_coord_attrs():
     assert q["latitude"].pint.units is None
     assert q["latitude"].attrs["units"] == "degrees_north"
     plain = dequantify_dataset(q)
-    assert "units" in plain["precip"].attrs
+    assert plain["precip"].attrs["units"] == "mm day-1"
+
+
+def test_dequantify_dataset_spells_units_standard_or_cf():
+    """Converted units keep STANDARD spellings, else CF; never pint long form."""
+    ds = make_gridded(name="precip", units="mm hr-1")
+    ds["temp"] = ds["precip"].copy()
+    ds["temp"].attrs = {"units": "K"}
+    ds["wind"] = ds["precip"].copy()
+    ds["wind"].attrs = {"units": "m s-1"}
+    q = quantify_dataset(ds)
+    q["precip"] = q["precip"].pint.to("mm day-1")
+    q["temp"] = q["temp"].pint.to("degree_Celsius")
+    plain = dequantify_dataset(q)
+    assert plain["precip"].attrs["units"] == "mm day-1"
+    assert plain["temp"].attrs["units"] == "degree_Celsius"
+    assert plain["wind"].attrs["units"] == "m s-1"
 
 
 def test_format_cell_methods():

@@ -446,8 +446,21 @@ def quantify_dataset(ds):
 
 
 def dequantify_dataset(ds):
-    """Strip pint quantities back to plain arrays with ``units`` attrs."""
-    return ds.pint.dequantify()
+    """Strip pint quantities back to plain arrays with ``units`` attrs.
+
+    Units equal to a ``STANDARD`` unit keep its spelling (``mm day-1``, not
+    pint's ``millimeter / day``); any other unit is written in CF form.
+    """
+    standard = {ureg.Unit(spec["units"]): spec["units"] for spec in STANDARD.values()}
+    names = {
+        name: standard.get(da.pint.units, format(da.pint.units, "cf"))
+        for name, da in ds.data_vars.items()
+        if da.pint.units is not None
+    }
+    out = ds.pint.dequantify()
+    for name, units in names.items():
+        out[name].attrs["units"] = units
+    return out
 
 
 def convert_values(values, src_units: str, dst_units: str):
