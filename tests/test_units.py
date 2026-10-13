@@ -329,7 +329,7 @@ def test_timestep_gate_and_rate_to_total():
         {"precip": (("time",), np.ones(7), {"units": "mm day-1"})},
         coords={"time": np.arange("2026-01-01", "2026-01-08", dtype="datetime64[D]")},
     )
-    with pytest.raises(UsageError, match="select"):
+    with pytest.raises(UsageError, match="non-overlapping subset"):
         assert_nonoverlapping_intervals(daily, "time", "7 day")
 
 

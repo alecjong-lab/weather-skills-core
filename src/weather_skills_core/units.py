@@ -368,7 +368,7 @@ def _axis_tick_diffs(values):
 
 
 def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
-    """Refuse convert-to-totals when consecutive labels are finer than ``period``.
+    """Refuse rate → total when consecutive labels are finer than ``period``.
 
     A singleton axis is allowed: spacing cannot be inferred, and one sample
     cannot be an overlapping series. Typical after aggregating a short fetch
@@ -392,10 +392,9 @@ def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
     if dt < base:
         raise UsageError(
             f"spacing on {dim!r} ({format_duration(dt)}) is smaller than "
-            f"aggregation_period {period!r}; refusing convert-to-totals "
+            f"aggregation_period {period!r}; refusing to convert to totals "
             "(overlapping intervals would overcount). "
-            f"Run select --dim {dim} to keep a non-overlapping subset, "
-            "then convert-to-totals."
+            f"Keep a non-overlapping subset of {dim!r} first."
         )
 
 

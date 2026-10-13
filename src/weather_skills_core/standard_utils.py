@@ -63,7 +63,7 @@ _LATLON_DECIMALS = 5
 def normalize_latlon_coords(ds):
     """Round lat/lon coords to 5 decimals and store them as float32.
 
-    Snaps float64 noise (Kenya ``5.9749991`` vs CHIRPS ``5.975``) so grids
+    Snaps float64 noise (``5.9749991`` vs ``5.975``) so grids
     that are the same at ~1 m join. A real half-cell offset (0.025°) is kept.
     """
     import numpy as np
@@ -111,7 +111,7 @@ def fill_missing_data_var_attrs(src, dst):
 
     Heals stripped metadata (regrid, etc.) without overwriting attrs a skill set.
     Does not restore ``aggregation_period`` onto vars whose ``cell_methods``
-    already record a sum (convert-to-totals amounts).
+    already record a sum (period totals).
     """
     from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, cell_methods_has_sum
 

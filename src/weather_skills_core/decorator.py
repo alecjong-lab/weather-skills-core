@@ -20,7 +20,7 @@ from weather_skills_core.errors import SkillError, UsageError
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
 
-# In-memory only: source Zarr path for plot-spec dump. Stripped before any write.
+# In-memory only: the path each input Dataset was opened from. Stripped before any write.
 INPUT_PATH_ATTR = "weather_skills_input_path"
 
 
@@ -64,7 +64,7 @@ class Argument:
 
 
 def _history_json_default(obj):
-    """Keep a plot spec's keys in provenance instead of stringifying the object."""
+    """Record objects with ``to_dict()`` (e.g. a parsed spec) as dicts, not their ``str``."""
     to_dict = getattr(obj, "to_dict", None)
     if callable(to_dict):
         return to_dict()
@@ -194,7 +194,7 @@ def _open_zarr(path, io_spec=None):
 
 
 def _iter_zarr_path_holders(value):
-    """Yield objects that expose ``zarr_paths()`` (e.g. plot ``LayerSpec``)."""
+    """Yield argument values that expose ``zarr_paths()``."""
     if value is None:
         return
     items = value if isinstance(value, (list, tuple)) else (value,)
