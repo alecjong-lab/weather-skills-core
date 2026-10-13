@@ -21,12 +21,10 @@ from weather_skills_core.units import (
     filter_min_coverage,
     format_cell_methods,
     format_duration,
-    format_units_for_display,
     infer_timestep,
     looks_like_rate_display_name,
     parse_aggregation_period,
     precip_amounts_to_rates,
-    precip_for_display,
     quantify_dataset,
     rate_to_total,
     stamp_data_interval,
@@ -35,7 +33,6 @@ from weather_skills_core.units import (
     units_convertible,
     units_equal,
     ureg,
-    variable_label_for_display,
 )
 
 
@@ -44,46 +41,6 @@ def test_units_equal_spelling():
     assert units_equal("mm/day", "mm day-1")
     assert units_equal("degC", "degree_Celsius")
     assert not units_equal("mm", "mm day-1")
-
-
-def test_format_units_for_display():
-    """Figure labels use mm/day and °C, not CF or pint pretty-print."""
-    assert format_units_for_display("mm day-1") == "mm/day"
-    assert format_units_for_display("millimeter / day") == "mm/day"
-    assert format_units_for_display("mm") == "mm"
-    assert format_units_for_display("degree_Celsius") == "°C"
-    assert format_units_for_display("") == ""
-    assert format_units_for_display(None) == ""
-
-
-def test_variable_label_for_display_prefers_long_name():
-    """Colorbars use long_name even when a leftover GRIB rate name is present."""
-    da = make_forecast()["tp"]
-    da.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        long_name="Total precipitation",
-        GRIB_name="Precipitation rate",
-    )
-    assert variable_label_for_display(da) == "Total precipitation [mm]"
-    assert variable_label_for_display(da, include_units=False) == "Total precipitation"
-
-    product = make_gridded()["precip"]
-    product.attrs["long_name"] = "IMERG daily precipitation"
-    assert variable_label_for_display(product) == "IMERG daily precipitation [mm/day]"
-
-    amount = make_forecast()["tp"]
-    amount.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        long_name="precipitation rate",
-        GRIB_name="Precipitation rate",
-    )
-    assert variable_label_for_display(amount) == "Total precipitation [mm]"
-
-    bare = make_gridded()["precip"]
-    assert variable_label_for_display(bare) == "precip [mm/day]"
-    assert variable_label_for_display(bare, fallback="rainfall") == "rainfall [mm/day]"
 
 
 def test_pentad_dekad_registry():
@@ -259,25 +216,6 @@ def test_rate_to_total_refuses_cell_methods_sum():
     q = quantify_dataset(ds)
     with pytest.raises(UsageError, match="precip total"):
         rate_to_total(q["precip"], "1 day")
-
-
-def test_precip_for_display_converts_aggregated_rate():
-    """A rate with aggregation_period becomes an amount for display."""
-    ds = make_gridded(name="precip", fill=2.0, units="mm day-1")
-    ds["precip"].attrs["aggregation_period"] = "1 day"
-    ds["precip"].attrs["standard_name"] = "lwe_precipitation_rate"
-    out = precip_for_display(ds, "precip")
-    assert out["precip"].attrs["units"] == STANDARD["precip_amount"]["units"]
-    assert out["precip"].attrs["long_name"] == PRECIP_AMOUNT_LONG_NAME
-    assert out["precip"].attrs["aggregation_period"] == "1 day"
-    np.testing.assert_allclose(out["precip"].values, 2.0)
-
-
-def test_precip_for_display_noop_without_period():
-    """Without aggregation_period the rate is left as a rate."""
-    ds = make_gridded(name="precip", units="mm day-1")
-    out = precip_for_display(ds, "precip")
-    assert out["precip"].attrs["units"] == "mm day-1"
 
 
 def test_quantify_dataset_passes_unitless_other_vars():

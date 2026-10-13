@@ -28,7 +28,7 @@ Fetch writes accumulated variables as **rates**. Use ``precip_amounts_to_rates``
 (lead 0 = first native period). Period **totals** come from ``rate_to_total``
 after ``aggregate-temporal`` stamps ``aggregation_period``. That helper refuses
 amounts (and ``cell_methods`` ``sum``) so multiplying by the period cannot
-double-count. Plotters may convert in memory via ``precip_for_display``.
+double-count.
 
 Native cell geometry is XOR: uniform axes get scalar ``data_interval``;
 irregular axes get CF ``{dim}_bounds``. Aggregation adds
@@ -203,24 +203,6 @@ def units_equal(a, b) -> bool:
         return ureg.Unit(a) == ureg.Unit(b)
     except Exception:  # noqa: BLE001
         return False
-
-
-def format_units_for_display(units: str | None) -> str:
-    """Short figure-label spelling. On-disk attrs stay CF; colorbars do not.
-
-    ``mm day-1`` / ``millimeter / day`` → ``mm/day``; ``degree_Celsius`` →
-    ``°C``; other pint-parseable strings use CF compact form.
-    """
-    if not isinstance(units, str) or not units.strip():
-        return ""
-    raw = units.strip()
-    for kind, nice in (("precip", "mm/day"), ("precip_amount", "mm"), ("temp", "°C")):
-        if units_equal(raw, STANDARD[kind]["units"]):
-            return nice
-    try:
-        return format(ureg.Unit(raw), "cf").replace(" d-1", "/day")
-    except Exception:  # noqa: BLE001 — leave unparseable strings alone
-        return raw
 
 
 def variable_units(da) -> str | None:
@@ -430,48 +412,6 @@ def rate_to_total(da, period: str):
     return total
 
 
-def precip_for_display(ds, name: str):
-    """In-memory precip rate → period total for plotting.
-
-    Uses stamped ``aggregation_period`` (from ``aggregate-temporal``). No-op
-    when the variable is not a precip rate, has no period, or the time axis
-    would overlap (same gates as convert-to-totals). Plotters call this so
-    precip defaults to ``mm`` totals without a separate Zarr. The period attr
-    is kept so colormap selection can stay period-aware.
-    """
-    if name not in ds.data_vars:
-        return ds
-    da = ds[name]
-    units = variable_units(da) or da.attrs.get("units")
-    kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
-    if kind != "precip":
-        return ds
-    period = da.attrs.get(AGGREGATION_PERIOD_ATTR)
-    if not (isinstance(period, str) and period.strip()):
-        return ds
-    dim = "step" if "step" in da.dims else "time" if "time" in da.dims else None
-    if dim is None:
-        return ds
-    try:
-        assert_nonoverlapping_intervals(ds, dim, period)
-        total = rate_to_total(da, period)
-    except UsageError:
-        return ds
-    plain = total.pint.dequantify() if total.pint.units is not None else total
-    attrs = {**da.attrs, **plain.attrs}
-    attrs["units"] = STANDARD["precip_amount"]["units"]
-    attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
-    attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
-    if looks_like_rate_display_name(attrs.get("GRIB_name")):
-        attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
-    attrs["cell_methods"] = format_cell_methods(dim, "sum")
-    # Keep aggregation_period so plotters can crop the nested precip palette.
-    out = ds.copy(deep=False)
-    out[name] = plain
-    out[name].attrs = attrs
-    return out
-
-
 def quantify_dataset(ds):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
@@ -646,38 +586,6 @@ def looks_like_rate_display_name(value) -> bool:
         return False
     lowered = value.casefold()
     return "rate" in lowered or "flux" in lowered
-
-
-def variable_label_for_display(
-    da, *, fallback: str | None = None, include_units: bool = True
-) -> str:
-    """Colorbar / axis label: ``long_name``, then ``GRIB_name``, then the name.
-
-    Leftover rate-like names on precip amounts become ``Total precipitation``.
-    Units are appended in display form (``mm/day``, ``°C``) when present.
-    """
-    label = None
-    for key in ("long_name", "GRIB_name"):
-        val = da.attrs.get(key)
-        if isinstance(val, str) and val.strip():
-            label = val.strip()
-            break
-    if label is None:
-        name = da.name if isinstance(da.name, str) and da.name.strip() else None
-        label = fallback or name or "value"
-    kind = classify_variable(
-        da.name or "",
-        units=variable_units(da),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind == "precip_amount" and looks_like_rate_display_name(label):
-        label = PRECIP_AMOUNT_LONG_NAME
-    if not include_units:
-        return label
-    units = format_units_for_display(variable_units(da))
-    if units:
-        return f"{label} [{units}]"
-    return label
 
 
 def stamp_precip_amounts(ds):

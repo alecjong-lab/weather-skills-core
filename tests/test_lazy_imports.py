@@ -10,7 +10,6 @@ LIGHT_MODULES = (
     "weather_skills_core.cf",
     "weather_skills_core.dataset_type",
     "weather_skills_core.decorator",
-    "weather_skills_core.display_labels",
     "weather_skills_core.errors",
     "weather_skills_core.provenance",
     "weather_skills_core.region",
