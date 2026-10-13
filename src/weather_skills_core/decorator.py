@@ -8,24 +8,14 @@ import shutil
 import sys
 from pathlib import Path
 
-import xarray as xr
-
 from weather_skills_core import provenance as provenance_mod
 from weather_skills_core import standard_args
 from weather_skills_core import standard_dataset as std
 from weather_skills_core.dataset_type import Dataset
 from weather_skills_core.errors import SkillError, UsageError
-from weather_skills_core.standard_utils import (
-    fill_missing_data_var_attrs,
-    normalize_latlon_coords,
-    normalize_step_coord,
-)
-from weather_skills_core.units import (
-    dequantify_dataset,
-    normalize_unit_strings,
-    quantify_dataset,
-    stamp_precip_amounts,
-)
+
+# xarray, numpy, and pint load inside the functions that use them, so importing
+# a skill (and ``--help`` / usage errors) stays fast.
 
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
@@ -123,6 +113,17 @@ def prepare_dataset_output(ds, *, first_ds=None):
     - lat/lon coords → 5 decimal places, ``float32``
     - fill attrs stripped by geometry ops from the first input (same var names)
     """
+    from weather_skills_core.standard_utils import (
+        fill_missing_data_var_attrs,
+        normalize_latlon_coords,
+        normalize_step_coord,
+    )
+    from weather_skills_core.units import (
+        dequantify_dataset,
+        normalize_unit_strings,
+        stamp_precip_amounts,
+    )
+
     if first_ds is not None:
         ref = first_ds
         if any(getattr(first_ds[v].pint, "units", None) is not None for v in first_ds.data_vars):
@@ -153,6 +154,8 @@ def write_output(value, out_path, history, first_ds):
         raise SkillError(f"skill returned {type(value).__name__}; expected xr.Dataset or Path")
 
     if hasattr(value, "pint"):
+        from weather_skills_core.units import dequantify_dataset
+
         value = dequantify_dataset(value)
     value = prepare_dataset_output(value, first_ds=first_ds)
     if first_ds is not None:
@@ -174,11 +177,19 @@ def _open_zarr(path, io_spec=None):
     """Open, validate, and quantify one Zarr store."""
     if not path.exists():
         raise UsageError(f"input not found: {path}")
+    import xarray as xr
+
+    from weather_skills_core.standard_utils import normalize_latlon_coords, normalize_step_coord
+    from weather_skills_core.units import normalize_unit_strings, quantify_dataset
+
     ds = xr.open_zarr(path, consolidated=True)
     if io_spec is not None:
         std.validate_input(ds, io_spec, str(path))
     ds = normalize_unit_strings(ds)
     ds = normalize_step_coord(ds)
+    # Same lat/lon snap as on write, so a Zarr written before float32 coords
+    # still joins cell-for-cell with a new one.
+    ds = normalize_latlon_coords(ds)
     return quantify_dataset(ds)
 
 
@@ -203,7 +214,7 @@ def open_dataset_params(params, arguments):
     input_paths: list[Path] = []
     upstream: list = []
     first_ds = None
-    cache: dict[Path, xr.Dataset] = {}
+    cache: dict = {}
 
     def remember(path, ds):
         nonlocal first_ds

@@ -651,3 +651,30 @@ def test_zarr_paths_dedupes_identical_paths(tmp_path):
     history = load_history(out)
     inp = history[-1]["input"]
     assert inp["basename"] == "in.zarr"
+
+
+def test_float64_input_joins_float32_output(tmp_path):
+    """A pre-float32 Zarr still aligns cell-for-cell with a new float32 one."""
+    lats = tuple(np.round(np.arange(-4.975, 5.0, 0.05), 3))
+    old = tmp_path / "old.zarr"
+    new = tmp_path / "new.zarr"
+    out = tmp_path / "out.zarr"
+    make_gridded(lats=lats).to_zarr(old, mode="w", consolidated=True)
+    seen = {}
+
+    @weather_skill(name="passthrough", version="0.1.0")
+    @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
+    def passthrough(ds, output, **kwargs):
+        return ds
+
+    @weather_skill(name="pair", version="0.1.0")
+    @weather_skill.argument(
+        "-i", "--input", action="append", type=Dataset("observations"), required=True
+    )
+    def pair(ds, output, **kwargs):
+        seen["joined"] = xr.align(ds[0], ds[1], join="inner")[0]
+        return ds[0]
+
+    passthrough(["-i", str(old), "-o", str(new)])
+    pair(["-i", str(new), "-i", str(old), "-o", str(out)])
+    assert seen["joined"].sizes["latitude"] == len(lats)
