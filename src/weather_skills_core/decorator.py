@@ -20,7 +20,10 @@ from weather_skills_core.errors import SkillError, UsageError
 # Accumulated by ``@weather_skill.argument`` (bottom-up); weather_skill reads it.
 ARGS_ATTR = "__weather_skill_arguments__"
 
-# In-memory only: the path each input Dataset was opened from. Stripped before any write.
+# The decorator opens each Dataset argument and hands the skill an xr.Dataset, so
+# the skill no longer sees the path. This attr records it (ds.attrs[INPUT_PATH_ATTR]
+# = the path as given on the command line) so a skill can match a dataset back to a
+# file its own arguments name. In-memory only: stripped before any output is written.
 INPUT_PATH_ATTR = "weather_skills_input_path"
 
 
