@@ -239,6 +239,8 @@ def _mount_kenya_hit(*, geojson=None):
         {
             "display_name": "Mount Kenya, Kenya",
             "name": "Mount Kenya",
+            "category": "natural",
+            "type": "volcano",
             "boundingbox": ["-0.25", "-0.05", "37.2", "37.4"],
             "lat": "-0.15",
             "lon": "37.3",
@@ -346,6 +348,7 @@ def test_geocode_nominatim_polygon(monkeypatch):
     assert props["level"] == "nominatim"
     assert props["name"] == "Mount Kenya"
     assert props["display_name"] == "Mount Kenya, Kenya"
+    assert (props["osm_category"], props["osm_type"]) == ("natural", "volcano")
     assert props["bbox"] == pytest.approx([-0.05, 37.2, -0.25, 37.4])
     n, w, s, e = bbox_from_feature(feature)
     assert (n, w, s, e) == pytest.approx((-0.05, 37.2, -0.25, 37.4))

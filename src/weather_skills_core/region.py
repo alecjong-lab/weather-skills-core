@@ -568,6 +568,8 @@ def geocode_nominatim(query: str) -> dict:
         level="nominatim",
         country=None,
         display_name=display,
+        osm_category=hit.get("category"),
+        osm_type=hit.get("type"),
         bbox=[north, west, south, east],
     )
 
