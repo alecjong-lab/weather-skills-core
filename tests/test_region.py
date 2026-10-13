@@ -259,9 +259,6 @@ def test_should_geocode_landmarks_not_admin_keys():
     assert should_geocode("Eastern Africa") is False
     assert should_geocode("Western Africa") is False
     assert should_geocode("Sub-Saharan Africa") is False
-    assert should_geocode("Kenya OND region") is False
-    assert should_geocode("Kenya OND") is False
-    assert should_geocode("CE Kenya") is False
     assert should_geocode("Indian Ocean") is False
     assert should_geocode("Indian Ocean basin") is False
     assert should_geocode("IOB") is False
@@ -294,35 +291,6 @@ def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
     assert es < -20
     assert es < s
     assert en == pytest.approx(n)
-
-
-def test_lookup_kenya_ond_region_not_nominatim(monkeypatch):
-    """Kenya OND is the 36.5–42°E, 5°S–5°N analog box, never Nominatim."""
-
-    def _fail_nominatim(query):
-        raise AssertionError(f"Nominatim should not run for named region; got {query!r}")
-
-    monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
-
-    feature = lookup_region("Kenya OND region")
-    props = feature["properties"]
-    assert props["name"] == "Kenya OND region"
-    assert props["level"] == "custom"
-    assert props["iso3"] == "KEN"
-    assert props["country"] == "Kenya"
-    n, w, s, e = bbox_from_feature(feature)
-    assert (n, w, s, e) == (5.0, 36.5, -5.0, 42.0)
-    assert feature["geometry"]["type"] == "Polygon"
-
-    aliases = (
-        lookup_region("Kenya OND"),
-        lookup_region("OND Kenya"),
-        lookup_region("Central-Eastern Kenya"),
-        lookup_region("CE Kenya"),
-    )
-    for other in aliases:
-        assert bbox_from_feature(other) == (n, w, s, e)
-        assert other["properties"]["name"] == "Kenya OND region"
 
 
 def test_lookup_indian_ocean_basin_not_nominatim(monkeypatch):

@@ -6,7 +6,7 @@ Lookup order (no network until a later step):
 2. Bundled Natural Earth groupings — continent / UN / World Bank labels
    (``Eastern Africa``, ``Sub-Saharan Africa``, …). ``East Africa`` is the
    Eastern Africa grouping clipped at 15°S.
-3. Bundled custom forecast boxes — ``Kenya OND region``, ``Indian Ocean basin``, ….
+3. Bundled custom boxes — ``Indian Ocean basin``.
 4. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
 5. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
 
@@ -76,26 +76,9 @@ _COUNTRY_ALIASES = {
 # (Greater Horn / ICPAC-style view). ``Eastern Africa`` stays the full UN box.
 _EAST_AFRICA_SOUTH = -15.0
 
-# ``Kenya OND region`` analog box (N, W, S, E): 36.5–42°E, 5°S–5°N.
-_KENYA_OND_BBOX = (5.0, 36.5, -5.0, 42.0)
-
-# Forecast / briefing boxes that are not Natural Earth groupings or admin units.
+# Boxes that are not Natural Earth groupings or admin units.
 # ``bbox`` is (N, W, S, E). Aliases are passed through :func:`clean_region_name`.
 _CUSTOM_REGIONS = {
-    "kenya_ond_region": {
-        "name": "Kenya OND region",
-        "bbox": _KENYA_OND_BBOX,
-        "iso3": "KEN",
-        "country": "Kenya",
-        "aliases": (
-            "Kenya OND",
-            "OND Kenya",
-            "Central-Eastern Kenya",
-            "Central Eastern Kenya",
-            "Central and Eastern Kenya",
-            "CE Kenya",
-        ),
-    },
     "indian_ocean_basin": {
         "name": "Indian Ocean basin",
         "bbox": (30.0, 20.0, -40.0, 120.0),
@@ -613,7 +596,7 @@ def geocode_nominatim(query: str) -> dict:
             f"{query!r} is not a known ISO3 code, country name, named region, "
             "or sub-national region, and Nominatim found no matching place. "
             "Pass an ISO3 code, country-admin1, a named region "
-            "(e.g. East Africa, Kenya OND region), "
+            "(e.g. East Africa, Indian Ocean), "
             "or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
         )
     hit = hits[0]
@@ -642,7 +625,7 @@ def lookup_region(query: str) -> dict:
     if not text:
         raise UsageError(
             "region query must be a non-empty ISO3 code, country name, "
-            "named region (e.g. East Africa, Kenya OND region), or sub-national region "
+            "named region (e.g. East Africa, Indian Ocean), or sub-national region "
             "(e.g. kenya-nairobi)."
         )
 
@@ -668,7 +651,7 @@ def lookup_region(query: str) -> dict:
 
     raise DataError(
         f"{query!r} is not a known ISO3 code, country name, named region "
-        "(e.g. East Africa, Kenya OND region), or sub-national region "
+        "(e.g. East Africa, Indian Ocean), or sub-national region "
         "(country-admin1 / country-admin1-admin2)."
     )
 

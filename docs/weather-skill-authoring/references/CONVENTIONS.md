@@ -53,7 +53,7 @@ and relative dates are not decorator flags.
 ```
 
 - **resolve-region** turns an ISO3 code, a Natural Earth multi-country
-  region (`East Africa`), a custom forecast box (`Kenya OND region`),
+  region (`East Africa`), a custom box (`Indian Ocean`),
   or a `country-admin…` key into a bbox (and
   optional GeoJSON). Anything else falls through to OSM Nominatim
   (`limit=1`) for landmarks.
