@@ -713,3 +713,13 @@ def test_assert_nonoverlapping_accepts_months_and_catches_one_overlapping_pair()
 def test_classify_era5_total_precipitation():
     assert classify_variable("total_precipitation", units="m") == "precip_amount"
     assert classify_variable("total_precipitation", units="mm day-1") == "precip"
+
+
+def test_to_standard_units_keeps_temperature_differences_as_differences():
+    """A 2 K warm anomaly is 2 delta_degC, never 2 - 273.15."""
+    ds = make_gridded(name="t2m", units="delta_degF")
+    ds["t2m"].attrs["standard_name"] = "air_temperature"
+    ds["t2m"].values[:] = 3.6
+    out = to_standard_units(quantify_dataset(ds), variables=["t2m"]).pint.dequantify()
+    assert float(out["t2m"].mean()) == pytest.approx(2.0)
+    assert units_equal(out["t2m"].attrs["units"], "delta_degC")

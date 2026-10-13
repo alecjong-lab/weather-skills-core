@@ -584,6 +584,10 @@ def to_standard_units(ds, variables=None):
         if units is None or kind not in STANDARD:
             continue
         dst_units = STANDARD[kind]["units"]
+        if kind == "temp" and "delta_" in str(ureg.Unit(units)):
+            # A temperature difference (an anomaly from `difference`) stays a
+            # difference; absolute degree_Celsius would refuse or add offsets.
+            dst_units = "delta_degC"
         dst_standard_name = STANDARD[kind]["standard_name"]
         if units_equal(units, dst_units) and da.pint.units is None:
             # Already standard; only the spelling and standard_name change.
