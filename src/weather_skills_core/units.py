@@ -644,24 +644,30 @@ def _apply_scalar_interval(ds, period, axis=None):
     return ds
 
 
-def stamp_data_interval(ds, period=None, dim=None, origin=None):
+def _apply_bounds(ds, axis, pairs):
+    """Write CF ``{axis}_bounds`` (start, end per cell); drop ``data_interval`` so XOR holds."""
+    old = _cf_bounds_name(ds, axis)
+    if old is not None:
+        ds = ds.drop_vars(old)
+    bound_name = f"{axis}_bounds"
+    out = ds.assign_coords({bound_name: ((axis, _BOUNDS_NV_DIM), pairs)})
+    out[axis].attrs["bounds"] = bound_name
+    for name in out.data_vars:
+        out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
+    return out
+
+
+def stamp_data_interval(ds, period=None, dim=None):
     """Stamp native cell geometry: scalar ``data_interval`` or CF bounds.
 
-    ``period`` is a pint duration string (``"1 day"``, ``"30 minute"``) and
-    always writes the scalar attr. When omitted, an existing
-    ``data_interval`` or CF bounds is kept.
-
-    If geometry is missing, spacing is inferred from ``dim`` (or ``time`` /
-    ``step``): equal steps get ``data_interval``; unequal steps get
-    ``{dim}_bounds``. ``origin`` (deaccumulate) forces a restamp from the
-    dropped lead even when an interval was already present: a value **before**
-    the first tick is the left edge of a right-labeled cell; a value **after**
-    the last tick is the right edge of a left-labeled cell. A singleton axis
-    with ``origin`` stamps that one cell; without ``origin`` it is a no-op.
+    ``period`` (a pint duration such as ``"1 day"``) always writes the scalar
+    attr. Without it, an existing ``data_interval`` or CF bounds is kept;
+    otherwise the spacing of ``dim`` (or ``time`` / ``step``) is inferred:
+    even spacing gets ``data_interval``, uneven spacing gets ``{dim}_bounds``
+    with each label at the end of its cell. A one-sample axis is left alone.
     """
     if period is not None:
         period = format_duration(parse_aggregation_period(period))
-        axis = None
         try:
             axis = _time_or_step_dim(ds, dim)
         except UsageError:
@@ -671,53 +677,25 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
     axis = _time_or_step_dim(ds, dim)
     if axis is None:
         raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
-    if origin is None and (data_interval_of(ds) is not None or _cf_bounds_name(ds, axis)):
+    if data_interval_of(ds) is not None or _cf_bounds_name(ds, axis):
         return ds
-    values = np.asarray(ds[axis].values)
-    if values.size == 0:
+    ticks = np.asarray(ds[axis].values)
+    if ticks.size == 0:
         raise UsageError(f"cannot stamp data_interval: empty {axis!r} axis")
-    if values.size == 1:
-        if origin is None:
-            return ds
-        try:
-            other = np.asarray(origin).reshape(()).astype(values.dtype, copy=False)
-        except (TypeError, ValueError):
-            return ds
-        if other == values[0]:
-            return ds
-        values = np.sort(np.stack([other, values[0]]))
-    diffs, unit = _axis_tick_diffs(values)
-    if diffs.size == 0 or np.any(diffs <= 0):
+    if ticks.size == 1:
+        return ds
+    diffs, unit = _axis_tick_diffs(ticks)
+    if np.any(diffs <= 0):
         raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
     if np.all(diffs == diffs[0]):
         period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
         return _apply_scalar_interval(ds, period, axis=axis)
 
-    ticks = np.asarray(ds[axis].values)
-    if origin is None:
-        origin = _default_bounds_origin(ticks)
-        if origin is None:
-            raise UsageError(
-                f"irregular {axis!r} axis needs an origin for CF bounds "
-                "(timedelta step defaults to 0; datetime defaults to t0 minus the first gap)"
-            )
-    n = ticks.size
-    pairs = np.empty((n, 2), dtype=ticks.dtype)
-    origin_arr = np.asarray(origin).astype(ticks.dtype, copy=False)
-    if origin_arr > ticks[-1]:  # left-labeled cells: origin closes the last one
-        pairs[:, 0] = ticks
-        pairs[:-1, 1] = ticks[1:]
-        pairs[-1, 1] = origin_arr
-    else:
-        pairs[0, 0] = origin_arr
-        pairs[1:, 0] = ticks[:-1]
-        pairs[:, 1] = ticks
-    bound_name = f"{axis}_bounds"
-    out = ds.assign_coords({bound_name: ((axis, _BOUNDS_NV_DIM), pairs)})
-    out[axis].attrs["bounds"] = bound_name
-    for name in out.data_vars:
-        out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
-    return out
+    first_start = _default_bounds_origin(ticks)
+    if first_start is None:
+        raise UsageError(f"irregular {axis!r} axis: cannot infer where the first cell starts")
+    starts = np.concatenate([[first_start], ticks[:-1]]).astype(ticks.dtype)
+    return _apply_bounds(ds, axis, np.stack([starts, ticks], axis=1))
 
 
 def _default_bounds_origin(values):
@@ -859,8 +837,14 @@ def deaccumulate_along_step(ds, names=None):
                 )
             except (TypeError, ValueError):
                 pass
-    origin = np.asarray(ds["step"].values)[-1]
-    return stamp_data_interval(out, dim="step", origin=origin)
+    # Each output step is the cell [step, next input step): restamp from the
+    # input steps, since the dropped last step closes the final cell.
+    steps = np.asarray(ds["step"].values)
+    diffs, unit = _axis_tick_diffs(steps)
+    if np.all(diffs == diffs[0]):
+        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
+        return _apply_scalar_interval(out, period, axis="step")
+    return _apply_bounds(out, "step", np.stack([steps[:-1], steps[1:]], axis=1))
 
 
 def precip_amounts_to_rates(ds, *, interval=None, deaccumulate=True):

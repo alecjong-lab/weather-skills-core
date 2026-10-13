@@ -70,8 +70,7 @@ is `2025-01-01`. Instantaneous fields (analysis winds at 00Z) keep
 
 Once stamped, later skills keep that geometry: `stamp_data_interval`
 infers it from the axis only when nothing is stamped yet. A skill that
-changes cell width must pass `period=` (deaccumulate passes `origin=`),
-which overwrites the old stamp.
+changes cell width must pass `period=`, which overwrites the old stamp.
 
 **Aggregation** is a later window. Only `aggregate-temporal` stamps:
 

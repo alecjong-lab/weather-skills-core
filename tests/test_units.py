@@ -327,26 +327,29 @@ def test_stamp_data_interval_explicit_and_inferred():
     assert daily["precip"].attrs[DATA_INTERVAL_ATTR] == "1 day"
 
 
-def test_stamp_data_interval_singleton_step_with_origin():
-    """One remaining forecast step stamps from the dropped previous lead."""
-    step = np.array([np.timedelta64(7, "D")], dtype="timedelta64[ns]")
+def test_deaccumulate_two_steps_stamps_the_one_remaining_cell():
+    """Two cumulative steps leave one cell, [0, 7 day), stamped from the dropped lead."""
+    steps = np.array([0, 7], dtype="timedelta64[D]").astype("timedelta64[ns]")
     ds = xr.Dataset(
-        {"tp": (("step",), np.ones(1), {"units": "mm day-1"})},
-        coords={"step": step, "time": np.datetime64("2026-01-01", "ns")},
+        {"tp": (("step",), np.array([0.0, 14.0]), {"units": "mm"})},
+        coords={"step": steps, "time": np.datetime64("2026-01-01", "ns")},
     )
-    out = stamp_data_interval(ds, dim="step", origin=np.timedelta64(0, "D"))
+    out = deaccumulate_along_step(quantify_dataset(ds))
+    assert out.sizes["step"] == 1
     assert out["tp"].attrs[DATA_INTERVAL_ATTR] == "7 day"
 
 
-def test_stamp_data_interval_singleton_left_labeled_origin():
-    """Origin after the tick is the right edge of a left-labeled cell."""
-    step = np.array([np.timedelta64(0, "D")], dtype="timedelta64[ns]")
+def test_deaccumulate_irregular_steps_write_left_labeled_bounds():
+    """Uneven leads get CF bounds: each cell runs from its step to the next input step."""
+    hours = np.array([0, 3, 6, 12], dtype="timedelta64[h]").astype("timedelta64[ns]")
     ds = xr.Dataset(
-        {"tp": (("step",), np.ones(1), {"units": "mm day-1"})},
-        coords={"step": step, "time": np.datetime64("2026-01-01", "ns")},
+        {"tp": (("step",), np.array([0.0, 1.0, 2.0, 4.0]), {"units": "mm"})},
+        coords={"step": hours, "time": np.datetime64("2026-01-01", "ns")},
     )
-    out = stamp_data_interval(ds, dim="step", origin=np.timedelta64(7, "D"))
-    assert out["tp"].attrs[DATA_INTERVAL_ATTR] == "7 day"
+    out = deaccumulate_along_step(quantify_dataset(ds))
+    assert DATA_INTERVAL_ATTR not in out["tp"].attrs
+    np.testing.assert_array_equal(out["step_bounds"].values[:, 0], hours[:-1])
+    np.testing.assert_array_equal(out["step_bounds"].values[:, 1], hours[1:])
 
 
 def test_stamp_data_interval_singleton_step_without_origin_is_noop():
