@@ -112,7 +112,7 @@ STANDARD = {
         "standard_name_contains": (),
         "unit_candidates": ("mm day-1", "mm/day", "m s-1", "kg m-2 s-1", "kg m**-2 s**-1"),
         "depth_candidates": ("m s-1", "mm day-1"),
-        "name_hints": ("precip", "prcp", "rainfall", "rain", "tp", "pr"),
+        "name_hints": ("precip", "prcp", "rainfall", "rain", "tp", "pr", "total_precipitation"),
     },
     # Amount metadata for the totals utilities (rate × period → mm).
     "precip_amount": {
@@ -333,31 +333,51 @@ def _axis_tick_diffs(values):
     raise UsageError(f"could not infer spacing: {failure}")
 
 
-def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
-    """Refuse rate → total when consecutive labels are finer than ``period``.
+def interval_days(coord, period: str):
+    """Length in days of the interval each label of ``coord`` starts.
 
-    A singleton axis is allowed: spacing cannot be inferred, and one sample
-    cannot be an overlapping series. Typical after aggregating a short fetch
-    to a single weekly/dekadal/monthly bin. With CF bounds, uses the minimum
-    label spacing; otherwise the median (``infer_timestep``).
+    Calendar periods (``"N month"``, ``"N year"``) take each label's real
+    length from the calendar (January 31 days, February 28 or 29), so labels
+    must be month starts. Any other period is the same fixed length for every
+    label. Works for datetime64 and cftime labels; returns a float array
+    shaped like ``coord``.
+    """
+    import pandas as pd
+
+    match = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period)
+    if match is None:
+        days = float(parse_aggregation_period(period).to("day").magnitude)
+        return np.full(np.shape(coord), days)
+    months = int(match.group(1)) * (12 if match.group(2) == "year" else 1)
+    index = coord.to_index() if coord.ndim else None
+    if index is None or not hasattr(index, "shift") or not hasattr(index, "day"):
+        raise UsageError(
+            f"aggregation_period {period!r} needs datetime labels to know each "
+            "month's length; convert before collapsing the time axis"
+        )
+    if not (np.asarray(index.day) == 1).all():
+        raise UsageError(f"aggregation_period {period!r} needs month-start labels")
+    lengths = pd.to_timedelta(np.asarray(index.shift(months, "MS") - index))
+    return np.asarray(lengths / pd.Timedelta(days=1), dtype=float)
+
+
+def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
+    """Refuse rate → total when any interval runs past the next label.
+
+    Each label starts an interval of ``interval_days``; consecutive intervals
+    may touch but not overlap. A singleton axis cannot overlap.
     """
     if dim not in ds.dims and dim not in ds.coords:
         raise UsageError(f"dimension/coord {dim!r} not in dataset")
     if ds.sizes.get(dim, 0) < 2:
         return
-    base = parse_aggregation_period(period)
-    bounds_name = ds[dim].attrs.get("bounds") if dim in ds.coords or dim in ds.dims else None
-    if isinstance(bounds_name, str) and bounds_name in ds:
-        diffs, unit = _axis_tick_diffs(ds[dim].values)
-        positive = diffs[diffs > 0]
-        if positive.size == 0:
-            raise UsageError(f"no positive spacings on {dim!r}")
-        dt = ureg.Quantity(float(np.min(positive)), unit).to("day")
-    else:
-        dt = infer_timestep(ds, dim)
-    if dt < base:
+    import pandas as pd
+
+    spacing = pd.to_timedelta(np.diff(np.asarray(ds[dim].values))) / pd.Timedelta(days=1)
+    lengths = interval_days(ds[dim], period)[:-1]
+    if (np.asarray(spacing) < lengths - 1e-9).any():
         raise UsageError(
-            f"spacing on {dim!r} ({format_duration(dt)}) is smaller than "
+            f"spacing on {dim!r} (min {np.min(spacing):g} day) is shorter than "
             f"aggregation_period {period!r}; refusing to convert to totals "
             "(overlapping intervals would overcount). "
             f"Keep a non-overlapping subset of {dim!r} first."
@@ -379,10 +399,13 @@ def looks_like_precip_total(da) -> bool:
     )
 
 
-def rate_to_total(da, period: str):
+def rate_to_total(da, period: str, dim: str | None = None):
     """Multiply a rate DataArray by ``aggregation_period`` → amount (quantified).
 
-    Refuses precip totals: multiplying an amount by a period would double-count.
+    With ``dim``, each label is multiplied by its own ``interval_days`` (real
+    month lengths for calendar periods); without, by the fixed period, which
+    calendar periods refuse. Refuses precip totals: multiplying an amount by a
+    period would double-count.
     """
     if looks_like_precip_total(da):
         raise UsageError(
@@ -390,7 +413,13 @@ def rate_to_total(da, period: str):
             "(amount units or cell_methods sum); rate_to_total converts "
             "rates × period and cannot take amounts"
         )
-    base = parse_aggregation_period(period)
+    import xarray as xr
+
+    if dim is not None:
+        days = xr.DataArray(interval_days(da[dim], period), dims=da[dim].dims)
+        base = days.pint.quantify("day")
+    else:
+        base = ureg.Quantity(interval_days(xr.DataArray(0.0), period)[()], "day")
     quantified_in = da.pint.units is not None
     qda = da if quantified_in else da.pint.quantify()
     if qda.pint.units is None:

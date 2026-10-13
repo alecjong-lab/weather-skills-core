@@ -22,6 +22,7 @@ from weather_skills_core.units import (
     format_cell_methods,
     format_duration,
     infer_timestep,
+    interval_days,
     looks_like_rate_display_name,
     parse_aggregation_period,
     precip_amounts_to_rates,
@@ -646,3 +647,54 @@ def test_precip_convertible_names_skips_temp_with_leftover_precip_standard_name(
 
     rain = make_gridded(n_time=2, fill=1.0, units="mm day-1")
     assert precip_convertible_names(rain) == ["precip"]
+
+
+def _monthly(times, calendar=None):
+    values = np.full((len(times), 1, 1), 2.0)
+    if calendar is None:
+        time = np.array(times, dtype="datetime64[ns]")
+    else:
+        time = xr.date_range(times[0], periods=len(times), freq="MS", calendar=calendar)
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), values, {"units": "mm day-1"})},
+        coords={"time": time, "latitude": [0.0], "longitude": [0.0]},
+    )
+
+
+def test_interval_days_uses_calendar_month_lengths():
+    ds = _monthly(["2024-01-01", "2024-02-01", "2025-02-01"])
+    assert interval_days(ds["time"], "1 month").tolist() == [31.0, 29.0, 28.0]
+    assert interval_days(ds["time"], "3 month")[0] == 31 + 29 + 31
+    assert interval_days(ds["time"], "7 day").tolist() == [7.0, 7.0, 7.0]
+    noleap = _monthly(["2024-01-01", "2024-02-01"], calendar="noleap")
+    assert interval_days(noleap["time"], "1 month").tolist() == [31.0, 28.0]
+
+
+def test_interval_days_refuses_months_without_month_start_labels():
+    ds = _monthly(["2024-01-15", "2024-02-15"])
+    with pytest.raises(UsageError):
+        interval_days(ds["time"], "1 month")
+    with pytest.raises(UsageError):
+        interval_days(xr.DataArray(0.0), "1 month")
+
+
+def test_rate_to_total_multiplies_each_month_by_its_length():
+    ds = quantify_dataset(_monthly(["2024-01-01", "2024-02-01"]))
+    total = rate_to_total(ds["precip"], "1 month", dim="time").pint.dequantify()
+    assert total.isel(latitude=0, longitude=0).values.tolist() == pytest.approx([62.0, 58.0])
+    assert total.attrs["units"] in ("mm", "millimeter")
+
+
+def test_assert_nonoverlapping_accepts_months_and_catches_one_overlapping_pair():
+    assert_nonoverlapping_intervals(
+        _monthly(["2025-01-01", "2025-02-01", "2025-03-01"]), "time", "1 month"
+    )
+    times = ["2026-01-01", "2026-01-08", "2026-01-15", "2026-01-22", "2026-01-23"]
+    weekly = _monthly(times)
+    with pytest.raises(UsageError):
+        assert_nonoverlapping_intervals(weekly, "time", "7 day")
+
+
+def test_classify_era5_total_precipitation():
+    assert classify_variable("total_precipitation", units="m") == "precip_amount"
+    assert classify_variable("total_precipitation", units="mm day-1") == "precip"
