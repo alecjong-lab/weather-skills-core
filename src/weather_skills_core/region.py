@@ -4,9 +4,10 @@ Lookup order (no network until a later step):
 
 1. Bundled Natural Earth countries — ISO3 or country name.
 2. Bundled Natural Earth groupings — continent / UN / World Bank labels
-   (``East Africa``, ``Sub-Saharan Africa``, …).
-3. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
-4. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
+   (``Eastern Africa``, ``Sub-Saharan Africa``, …).
+3. Bundled custom boxes — ``Indian Ocean basin``.
+4. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
+5. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
 
 Rebuild the country file with ``tools/build_countries.py``.
 """
@@ -26,9 +27,10 @@ from weather_skills_core.errors import DataError, UsageError
 _GB_API = "https://www.geoboundaries.org/api/current/gbOpen/{iso3}/ADM{level}/"
 _NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 _HTTP_TIMEOUT = 60
-_USER_AGENT = (
-    "weather-skills-core/resolve-region (https://github.com/rhiza-research/weather-skills)"
-)
+# Sent on every geoBoundaries / Nominatim request. Nominatim's usage policy requires
+# a User-Agent that identifies the app (the default Python-urllib one gets blocked);
+# the URL tells the service operators who to contact.
+_USER_AGENT = "weather-skills-core (https://github.com/rhiza-research/weather-skills-core)"
 _REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
 _DIRECTIONAL_PREFIXES = (
     ("eastern_", "east_"),
@@ -68,6 +70,21 @@ _COUNTRY_ALIASES = {
     "falkland_islands_(uk)": "falkland_islands",
     "gaza_strip": "palestine",
     "west_bank": "palestine",
+}
+
+# Boxes that are not Natural Earth groupings or admin units.
+# ``bbox`` is (N, W, S, E). Aliases are passed through :func:`clean_region_name`.
+_CUSTOM_REGIONS = {
+    "indian_ocean_basin": {
+        "name": "Indian Ocean basin",
+        "bbox": (30.0, 20.0, -40.0, 120.0),
+        "aliases": (
+            "Indian Ocean",
+            "Indian Ocean Basin",
+            "Indian Ocean basin region",
+            "IOB",
+        ),
+    },
 }
 
 
@@ -276,6 +293,32 @@ def _region_indexes() -> dict[str, dict]:
     return by_key
 
 
+@lru_cache(maxsize=1)
+def _custom_indexes() -> dict[str, dict]:
+    """Cleaned query → bundled custom forecast box."""
+    by_key: dict[str, dict] = {}
+    for key, spec in _CUSTOM_REGIONS.items():
+        by_key[key] = spec
+        for alias in (spec["name"], *spec.get("aliases", ())):
+            cleaned = clean_region_name(alias)
+            if cleaned != "no_region":
+                by_key.setdefault(cleaned, spec)
+    return by_key
+
+
+def _slim_custom(spec: dict) -> dict:
+    north, west, south, east = spec["bbox"]
+    return _feature(
+        _bbox_rectangle(north, west, south, east),
+        iso3=spec.get("iso3"),
+        name=spec["name"],
+        region_name=clean_region_name(spec["name"]),
+        level="custom",
+        country=spec.get("country"),
+        bbox=[north, west, south, east],
+    )
+
+
 def _slim_country(feature: dict) -> dict:
     props = feature["properties"]
     return _feature(
@@ -312,7 +355,7 @@ def _slim_region(spec: dict) -> dict:
 
 
 def _match_bundled(cleaned: str) -> dict | None:
-    """ISO3, country name, or Natural Earth grouping. Country names win (South Africa)."""
+    """ISO3, country name, NE grouping, or custom box. Country names win (South Africa)."""
     by_iso3, by_clean = _country_indexes()
     if _is_iso3_token(cleaned):
         match = by_iso3.get(cleaned.upper())
@@ -324,6 +367,9 @@ def _match_bundled(cleaned: str) -> dict | None:
     named = _region_indexes().get(cleaned)
     if named is not None:
         return _slim_region(named)
+    custom = _custom_indexes().get(cleaned)
+    if custom is not None:
+        return _slim_custom(custom)
     return None
 
 
@@ -443,14 +489,15 @@ def _split_subnational(cleaned: str) -> tuple[dict, str] | None:
 def should_geocode(query: str) -> bool:
     """True when a failed :func:`lookup_region` may fall through to Nominatim.
 
-    ISO3-shaped tokens, hierarchical admin keys, and Natural Earth regions
-    stay off Nominatim even when the lookup itself failed (typo in the unit).
+    ISO3-shaped tokens, hierarchical admin keys, Natural Earth regions, and
+    bundled custom forecast boxes stay off Nominatim even when the lookup
+    itself failed (typo in the unit).
     """
     text = query.strip()
     if not text:
         return False
     cleaned = clean_region_name(text)
-    if _is_iso3_token(cleaned) or cleaned in _region_indexes():
+    if _is_iso3_token(cleaned) or cleaned in _region_indexes() or cleaned in _custom_indexes():
         return False
     return _split_subnational(cleaned) is None
 
@@ -504,7 +551,8 @@ def geocode_nominatim(query: str) -> dict:
         raise DataError(
             f"{query!r} is not a known ISO3 code, country name, named region, "
             "or sub-national region, and Nominatim found no matching place. "
-            "Pass an ISO3 code, country-admin1, a named region (e.g. East Africa), "
+            "Pass an ISO3 code, country-admin1, a named region "
+            "(e.g. East Africa, Indian Ocean), "
             "or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
         )
     hit = hits[0]
@@ -528,12 +576,12 @@ def geocode_nominatim(query: str) -> dict:
 
 
 def lookup_region(query: str) -> dict:
-    """Resolve ISO3, country, Natural Earth region, or ``country-admin`` to a Feature."""
+    """Resolve ISO3, country, NE region, custom box, or ``country-admin`` to a Feature."""
     text = query.strip()
     if not text:
         raise UsageError(
             "region query must be a non-empty ISO3 code, country name, "
-            "named region (e.g. East Africa), or sub-national region "
+            "named region (e.g. East Africa, Indian Ocean), or sub-national region "
             "(e.g. kenya-nairobi)."
         )
 
@@ -559,7 +607,7 @@ def lookup_region(query: str) -> dict:
 
     raise DataError(
         f"{query!r} is not a known ISO3 code, country name, named region "
-        "(e.g. East Africa), or sub-national region "
+        "(e.g. East Africa, Indian Ocean), or sub-national region "
         "(country-admin1 / country-admin1-admin2)."
     )
 

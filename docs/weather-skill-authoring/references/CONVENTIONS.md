@@ -16,9 +16,7 @@ This file is the naming contract. Dims and Zarr shapes live in
 | Canonical special | You declare it with the exact flags below. The decorator parses the string. | `--bbox`, `--date`, `--start-time`, `--end-time`, `--variable` / `-v` |
 | Everything else | Ordinary `argparse`. Reuse an existing name when the meaning matches. | `--input` / `-i`, `--geojson`, `--title` |
 
-The linter treats the specials as a closed set (WSK101). Input and
-output *paths* are free-form: `-i/--input` is the usual single-Zarr
-name, but `--forecast` vs `--obs` is better when the roles differ.
+The linter treats the specials as a closed set (WSK101).
 
 ## Canonical specials
 
@@ -53,7 +51,8 @@ and relative dates are not decorator flags.
 ```
 
 - **resolve-region** turns an ISO3 code, a Natural Earth multi-country
-  region (`East Africa`), or a `country-admin…` key into a bbox (and
+  region (`East Africa`), a custom box (`Indian Ocean`),
+  or a `country-admin…` key into a bbox (and
   optional GeoJSON). Anything else falls through to OSM Nominatim
   (`limit=1`) for landmarks.
 - **resolve-time** is calendar math against UTC today (or `--as-of`).
@@ -64,11 +63,12 @@ Consumer skills take `--bbox`. Polygon clipping is skill-specific
 
 ## Inputs and outputs
 
-| Concept | Usual flag | Notes |
-| --- | --- | --- |
-| Zarr input | `-i` / `--input` | `type=Dataset(...)`. Arrives as `ds` (a list if `nargs` / `append`). Name the flag by role when inputs differ (`--forecast`, `--obs`). |
-| Opaque file | whatever fits | GeoJSON, PNG, … — `type=Path`, not `Dataset`. |
-| Output path | `-o` / `--output`, repeatable | Owned by the decorator (`output=True` default). Count must match returned artifacts. |
+- One Zarr input: `-i` / `--input`. Inputs with different roles get a flag
+  each, named by role (`--forecast`, `--obs`).
+- Output: `-o` / `--output`, added by the decorator.
+
+How inputs are opened and outputs written is in
+[the authoring guide](../SKILL.md#inputs).
 
 ## Fetchers
 
@@ -90,8 +90,7 @@ Optional IDENT selects a product:
 ```
 
 Agents call the fetcher directly. To end a rolling window on that day,
-pass the printed date as resolve-time `--as-of`. Latest-available is
-not a YAML field and not a decorator date flag.
+pass the printed date to resolve-time as `--as-of`.
 
 ### `metadata.variables`
 
@@ -122,7 +121,6 @@ does not treat them as canonical specials.
 | `--align-on` | `date` or `year` |
 | `--workers` | Parallelism |
 | `--title` | Plot title |
-| `--probe-latest` | Fetchers only (see above) |
 
 ## How the linter checks this
 
@@ -130,6 +128,4 @@ does not treat them as canonical specials.
 
 | Rule | What it catches |
 | --- | --- |
-| WSK101 | A non-canonical spelling of a special (`-b` for bbox). Use `--bbox`. |
-| WSK201 | The same one-off flag on several skills (survey; off by default). Promote it or rename it. |
-| WSK202 | The same flag name with a different shape across skills (error). |
+| WSK101 | A flag that collides with one core owns: a non-canonical spelling of a special (`-b` for bbox; use `--bbox`), or declaring `-o` / `--output` yourself. |

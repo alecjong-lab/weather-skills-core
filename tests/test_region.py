@@ -248,7 +248,7 @@ def _mount_kenya_hit(*, geojson=None):
 
 
 def test_should_geocode_landmarks_not_admin_keys():
-    """Landmarks may hit Nominatim; ISO3, admin keys, and NE regions must not."""
+    """Landmarks may hit Nominatim; ISO3, admin keys, NE regions, and custom boxes must not."""
     assert should_geocode("Mount Kenya") is True
     assert should_geocode("Mount Kenya, Kenya") is True
     assert should_geocode("kenya-nairbi") is False
@@ -259,6 +259,9 @@ def test_should_geocode_landmarks_not_admin_keys():
     assert should_geocode("Eastern Africa") is False
     assert should_geocode("Western Africa") is False
     assert should_geocode("Sub-Saharan Africa") is False
+    assert should_geocode("Indian Ocean") is False
+    assert should_geocode("Indian Ocean basin") is False
+    assert should_geocode("IOB") is False
 
 
 def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
@@ -273,17 +276,44 @@ def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
     kn, kw, ks, ke = bbox_from_feature(kenya)
     east = lookup_region("East Africa")
     eastern = lookup_region("Eastern Africa")
+    # "East Africa" is the directional alias of the UN Eastern Africa grouping.
+    assert east == eastern
     assert east["properties"]["name"] == "Eastern Africa"
     assert east["properties"]["level"] == "region"
-    assert east["properties"]["region_name"] == "eastern_africa"
     assert east["geometry"]["type"] == "MultiPolygon"
     n, w, s, e = bbox_from_feature(east)
-    assert bbox_from_feature(eastern) == (n, w, s, e)
     assert s <= ks <= kn <= n
     assert w <= kw <= ke <= e
-    # UN-style Eastern Africa includes Madagascar, not a Ugandan POI.
-    assert s < -20
     assert n > 10
+    assert s < -20  # keeps Madagascar
+
+
+def test_lookup_indian_ocean_basin_not_nominatim(monkeypatch):
+    """Indian Ocean is the conventional basin box, never a Nominatim centroid."""
+
+    def _fail_nominatim(query):
+        raise AssertionError(f"Nominatim should not run for Indian Ocean; got {query!r}")
+
+    monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
+
+    feature = lookup_region("Indian Ocean basin")
+    props = feature["properties"]
+    assert props["name"] == "Indian Ocean basin"
+    assert props["level"] == "custom"
+    assert props["iso3"] is None
+    n, w, s, e = bbox_from_feature(feature)
+    assert (n, w, s, e) == (30.0, 20.0, -40.0, 120.0)
+    assert feature["geometry"]["type"] == "Polygon"
+
+    aliases = (
+        lookup_region("Indian Ocean"),
+        lookup_region("Indian Ocean Basin"),
+        lookup_region("Indian Ocean basin region"),
+        lookup_region("IOB"),
+    )
+    for other in aliases:
+        assert bbox_from_feature(other) == (n, w, s, e)
+        assert other["properties"]["name"] == "Indian Ocean basin"
 
 
 def test_south_africa_is_the_country_not_the_subregion():

@@ -4,8 +4,7 @@ The JSON schema is stable: ``findings`` (list of ``{rule, severity, skill,
 flag, file, message}``), ``score`` (``{"aggregate": int, "per_skill":
 {key: int}}`` where ``key`` is the collision-proof relative script path, not
 the display name -- two scripts in one skill directory can share a name),
-``skipped_rules`` (list of ``{rule, title, reason}``), and ``notes`` (list of
-strings). New keys may be added; existing keys keep their meaning.
+and ``notes`` (list of strings). New keys may be added; existing keys keep their meaning.
 """
 
 import json
@@ -25,11 +24,9 @@ def render_text(report: LintReport) -> str:
             where = f" [{finding.flag}]" if finding.flag else ""
             lines.append(f"  {finding.rule} {finding.severity}{where} {finding.message}")
         lines.append("")
-    for skipped in report.skipped_rules:
-        lines.append(f"Skipped: {skipped['rule']} ({skipped['title']}) — {skipped['reason']}")
     for note in report.notes:
         lines.append(f"Note: {note}")
-    if report.skipped_rules or report.notes:
+    if report.notes:
         lines.append("")
     lines.append(
         f"Aggregate score: {report.aggregate}/100 "
@@ -46,7 +43,6 @@ def render_json(report: LintReport) -> str:
             "aggregate": report.aggregate,
             "per_skill": {skill["key"]: skill["score"] for skill in report.skills},
         },
-        "skipped_rules": report.skipped_rules,
         "notes": report.notes,
     }
     return json.dumps(payload, indent=2)

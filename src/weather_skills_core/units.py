@@ -24,10 +24,11 @@ are passed through.
 
 Fetch writes accumulated variables as **rates**. Use ``precip_amounts_to_rates``
 (deaccumulate cumulative-since-init ``step`` amounts, else divide by
-``data_interval``). Period **totals** come from ``rate_to_total`` after
-``aggregate-temporal`` stamps ``aggregation_period``. That helper refuses
+``data_interval``). Deaccumulate labels each interval at its **left** edge
+(lead 0 = first native period). Period **totals** come from ``rate_to_total``
+after ``aggregate-temporal`` stamps ``aggregation_period``. That helper refuses
 amounts (and ``cell_methods`` ``sum``) so multiplying by the period cannot
-double-count. Plotters may convert in memory via ``precip_for_display``.
+double-count.
 
 Native cell geometry is XOR: uniform axes get scalar ``data_interval``;
 irregular axes get CF ``{dim}_bounds``. Aggregation adds
@@ -76,14 +77,6 @@ _RATE_RE = re.compile(
     rf"(?:/\s*{_TIME}\b|\b{_TIME}(?:\*\*|\^)?-1\b|\b(?:W|watts?)\b)",
     re.IGNORECASE,
 )
-
-# CLI period label → the aggregation_period string stamped for that window.
-PERIOD_TO_AGGREGATION = {
-    "daily": "1 day",
-    "weekly": "7 day",
-    "dekadal": "1 dekad",
-    "monthly": "1 month",
-}
 
 # The vocabulary for every standard kind, in classification precedence order.
 #   units_required         must carry a units attr for explicit skill treatment
@@ -341,7 +334,7 @@ def _axis_tick_diffs(values):
 
 
 def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
-    """Refuse convert-to-totals when consecutive labels are finer than ``period``.
+    """Refuse rate → total when consecutive labels are finer than ``period``.
 
     A singleton axis is allowed: spacing cannot be inferred, and one sample
     cannot be an overlapping series. Typical after aggregating a short fetch
@@ -365,10 +358,9 @@ def assert_nonoverlapping_intervals(ds, dim: str, period: str) -> None:
     if dt < base:
         raise UsageError(
             f"spacing on {dim!r} ({format_duration(dt)}) is smaller than "
-            f"aggregation_period {period!r}; refusing convert-to-totals "
+            f"aggregation_period {period!r}; refusing to convert to totals "
             "(overlapping intervals would overcount). "
-            f"Run select --dim {dim} to keep a non-overlapping subset, "
-            "then convert-to-totals."
+            f"Keep a non-overlapping subset of {dim!r} first."
         )
 
 
@@ -412,47 +404,6 @@ def rate_to_total(da, period: str):
     return total
 
 
-def precip_for_display(ds, name: str):
-    """In-memory precip rate → period total for plotting.
-
-    Uses stamped ``aggregation_period`` (from ``aggregate-temporal``). No-op
-    when the variable is not a precip rate, has no period, or the time axis
-    would overlap (same gates as convert-to-totals). Plotters call this so
-    precip defaults to ``mm`` totals without a separate Zarr.
-    """
-    if name not in ds.data_vars:
-        return ds
-    da = ds[name]
-    units = variable_units(da) or da.attrs.get("units")
-    kind = classify_variable(name, units=units, standard_name=da.attrs.get("standard_name"))
-    if kind != "precip":
-        return ds
-    period = da.attrs.get(AGGREGATION_PERIOD_ATTR)
-    if not (isinstance(period, str) and period.strip()):
-        return ds
-    dim = "step" if "step" in da.dims else "time" if "time" in da.dims else None
-    if dim is None:
-        return ds
-    try:
-        assert_nonoverlapping_intervals(ds, dim, period)
-        total = rate_to_total(da, period)
-    except UsageError:
-        return ds
-    plain = total.pint.dequantify() if total.pint.units is not None else total
-    attrs = {**da.attrs, **plain.attrs}
-    attrs["units"] = STANDARD["precip_amount"]["units"]
-    attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
-    attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
-    if looks_like_rate_display_name(attrs.get("GRIB_name")):
-        attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
-    attrs["cell_methods"] = format_cell_methods(dim, "sum")
-    attrs.pop(AGGREGATION_PERIOD_ATTR, None)
-    out = ds.copy(deep=False)
-    out[name] = plain
-    out[name].attrs = attrs
-    return out
-
-
 def quantify_dataset(ds):
     """Attach pint units to data vars; leave unitless vars and coords alone.
 
@@ -472,6 +423,7 @@ def quantify_dataset(ds):
             )
 
     out = ds.copy(deep=False)
+    saved_encoding = dict(out.encoding)
     saved_coord_units = {}
     for name in list(out.coords):
         if "units" in out[name].attrs:
@@ -488,6 +440,8 @@ def quantify_dataset(ds):
 
     for name, units in saved_coord_units.items():
         out[name].attrs["units"] = units
+    # pint.quantify() drops Dataset.encoding (Zarr source path); restore it.
+    out.encoding.update(saved_encoding)
     return out
 
 
@@ -668,59 +622,80 @@ def data_interval_of(ds) -> str | None:
     return None
 
 
-def stamp_data_interval(ds, period=None, dim=None, origin=None):
-    """Stamp native cell geometry: scalar ``data_interval`` or CF bounds.
+def _cf_bounds_name(ds, axis) -> str | None:
+    """CF bounds variable for ``axis``, or None."""
+    if axis not in ds.dims and axis not in ds.coords:
+        return None
+    name = ds[axis].attrs.get("bounds")
+    if isinstance(name, str) and name in ds:
+        return name
+    extra = f"{axis}_bounds"
+    return extra if extra in ds else None
 
-    ``period`` is a pint duration string (``"1 day"``, ``"30 minute"``) and
-    always writes the scalar attr (caller knows the axis is uniform). When
-    omitted, spacing is inferred from ``dim`` (or ``time`` / ``step``): equal
-    steps get ``data_interval``; unequal steps get ``{dim}_bounds`` (start,
-    end) and no ``data_interval``. ``origin`` is the left edge of the first
-    cell when writing bounds. Timedelta ``step`` defaults to 0; datetime
-    defaults to ``t0 - (t1 - t0)`` (right-labeled first cell).
-    """
-    if period is not None:
-        period = format_duration(parse_aggregation_period(period))
-        for name in ds.data_vars:
-            ds[name].attrs[DATA_INTERVAL_ATTR] = period
-        return ds
 
-    axis = _time_or_step_dim(ds, dim)
-    if axis is None:
-        raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
-    values = np.asarray(ds[axis].values)
-    if values.size < 2:
-        raise UsageError(
-            f"cannot stamp data_interval: need at least 2 points on {axis!r} "
-            "to infer spacing (or pass period=)"
-        )
-    diffs, unit = _axis_tick_diffs(values)
-    if diffs.size == 0 or np.any(diffs <= 0):
-        raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
-    if np.all(diffs == diffs[0]):
-        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
-        for name in ds.data_vars:
-            ds[name].attrs[DATA_INTERVAL_ATTR] = period
-        return ds
+def _apply_scalar_interval(ds, period, axis=None):
+    """Write ``data_interval`` on every data var; drop bounds so XOR holds."""
+    name = _cf_bounds_name(ds, axis) if axis is not None else None
+    if name is not None:
+        ds = ds.drop_vars(name)
+        ds[axis].attrs.pop("bounds", None)
+    for var in ds.data_vars:
+        ds[var].attrs[DATA_INTERVAL_ATTR] = period
+    return ds
 
-    if origin is None:
-        origin = _default_bounds_origin(values)
-        if origin is None:
-            raise UsageError(
-                f"irregular {axis!r} axis needs an origin for CF bounds "
-                "(timedelta step defaults to 0; datetime defaults to t0 minus the first gap)"
-            )
-    n = values.size
-    pairs = np.empty((n, 2), dtype=values.dtype)
-    pairs[0, 0] = np.asarray(origin).astype(values.dtype, copy=False)
-    pairs[1:, 0] = values[:-1]
-    pairs[:, 1] = values
+
+def _apply_bounds(ds, axis, pairs):
+    """Write CF ``{axis}_bounds`` (start, end per cell); drop ``data_interval`` so XOR holds."""
+    old = _cf_bounds_name(ds, axis)
+    if old is not None:
+        ds = ds.drop_vars(old)
     bound_name = f"{axis}_bounds"
     out = ds.assign_coords({bound_name: ((axis, _BOUNDS_NV_DIM), pairs)})
     out[axis].attrs["bounds"] = bound_name
     for name in out.data_vars:
         out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
     return out
+
+
+def stamp_data_interval(ds, period=None, dim=None):
+    """Stamp native cell geometry: scalar ``data_interval`` or CF bounds.
+
+    ``period`` (a pint duration such as ``"1 day"``) always writes the scalar
+    attr. Without it, an existing ``data_interval`` or CF bounds is kept;
+    otherwise the spacing of ``dim`` (or ``time`` / ``step``) is inferred:
+    even spacing gets ``data_interval``, uneven spacing gets ``{dim}_bounds``
+    with each label at the end of its cell. A one-sample axis is left alone.
+    """
+    if period is not None:
+        period = format_duration(parse_aggregation_period(period))
+        try:
+            axis = _time_or_step_dim(ds, dim)
+        except UsageError:
+            axis = None
+        return _apply_scalar_interval(ds, period, axis=axis)
+
+    axis = _time_or_step_dim(ds, dim)
+    if axis is None:
+        raise UsageError("cannot stamp data_interval: no time/step dim and no period given")
+    if data_interval_of(ds) is not None or _cf_bounds_name(ds, axis):
+        return ds
+    ticks = np.asarray(ds[axis].values)
+    if ticks.size == 0:
+        raise UsageError(f"cannot stamp data_interval: empty {axis!r} axis")
+    if ticks.size == 1:
+        return ds
+    diffs, unit = _axis_tick_diffs(ticks)
+    if np.any(diffs <= 0):
+        raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
+    if np.all(diffs == diffs[0]):
+        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
+        return _apply_scalar_interval(ds, period, axis=axis)
+
+    first_start = _default_bounds_origin(ticks)
+    if first_start is None:
+        raise UsageError(f"irregular {axis!r} axis: cannot infer where the first cell starts")
+    starts = np.concatenate([[first_start], ticks[:-1]]).astype(ticks.dtype)
+    return _apply_bounds(ds, axis, np.stack([starts, ticks], axis=1))
 
 
 def _default_bounds_origin(values):
@@ -810,12 +785,14 @@ def _broadcast_along_step(delta_days, dims):
 def deaccumulate_along_step(ds, names=None):
     """Per-step diff along ``step``. Precip amounts become ``mm day-1`` rates.
 
-    Drops the first step. Refuses variables that already look like rates.
+    Labels each interval at its left edge (lead 0 = first period) and drops
+    the last input step. Refuses variables that already look like rates.
     """
     if "step" not in ds.dims:
         raise UsageError("deaccumulate requires a step dim")
     names = list(names) if names is not None else list(ds.data_vars)
-    out = ds.isel(step=slice(1, None))
+    had_valid = "valid_time" in ds.variables
+    out = ds.isel(step=slice(0, -1))
     delta_days = _step_delta_days(ds)
     for name in names:
         if name not in ds.data_vars:
@@ -829,9 +806,9 @@ def deaccumulate_along_step(ds, names=None):
             raise UsageError(f"'{name}' looks like a rate; refuse to deaccumulate")
         plain = da.pint.dequantify() if da.pint.units is not None else da
         src_units = plain.attrs.get("units") or units
-        sliced = plain.isel(step=slice(1, None))
+        left = plain.isel(step=slice(0, -1))
         diffs = np.clip(
-            sliced.values - plain.isel(step=slice(0, -1)).values,
+            plain.isel(step=slice(1, None)).values - left.values,
             a_min=0,
             a_max=None,
         )
@@ -840,28 +817,44 @@ def deaccumulate_along_step(ds, names=None):
             kind = kind_from_units(src_units)
         attrs = dict(plain.attrs)
         if kind == "precip_amount":
-            if "step" not in sliced.dims:
+            if "step" not in left.dims:
                 raise UsageError(f"variable {name!r} has no step dim")
             mm, _ = convert_values(diffs, src_units, STANDARD["precip_amount"]["units"])
-            rate = mm / _broadcast_along_step(delta_days, sliced.dims)
-            diffed = sliced.copy(data=rate)
+            rate = mm / _broadcast_along_step(delta_days, left.dims)
+            diffed = left.copy(data=rate)
             attrs["units"] = STANDARD["precip"]["units"]
             attrs["standard_name"] = STANDARD["precip"]["standard_name"]
         else:
-            diffed = sliced.copy(data=diffs)
+            diffed = left.copy(data=diffs)
         diffed.attrs = attrs
         out[name] = diffed
-    origin = np.asarray(ds["step"].values)[0]
-    return stamp_data_interval(out, dim="step", origin=origin)
+    if had_valid and "valid_time" in out.variables:
+        out = out.drop_vars("valid_time")
+        if "time" in out.coords and getattr(out["time"], "ndim", 1) == 0:
+            try:
+                out = out.assign_coords(
+                    valid_time=("step", out["time"].values + out["step"].values)
+                )
+            except (TypeError, ValueError):
+                pass
+    # Each output step is the cell [step, next input step): restamp from the
+    # input steps, since the dropped last step closes the final cell.
+    steps = np.asarray(ds["step"].values)
+    diffs, unit = _axis_tick_diffs(steps)
+    if np.all(diffs == diffs[0]):
+        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
+        return _apply_scalar_interval(out, period, axis="step")
+    return _apply_bounds(out, "step", np.stack([steps[:-1], steps[1:]], axis=1))
 
 
-def precip_amounts_to_rates(ds, *, interval=None):
+def precip_amounts_to_rates(ds, *, interval=None, deaccumulate=True):
     """Convert precip-amount data vars to ``mm day-1`` rates.
 
     Cumulative-since-init forecast amounts on ``step`` are deaccumulated
-    (companion non-amount vars keep their values but share the shortened
-    step axis). Otherwise amounts are divided by ``interval`` or
-    stamped/inferred ``data_interval``. Already-rate precip is unchanged.
+    when ``deaccumulate`` is true (companion non-amount vars keep their values
+    but share the shortened step axis, labeled at each interval's left edge).
+    Otherwise amounts are divided by ``interval`` or stamped/inferred
+    ``data_interval``. Already-rate precip is unchanged.
     """
     amount_names = []
     for name in ds.data_vars:
@@ -873,7 +866,7 @@ def precip_amounts_to_rates(ds, *, interval=None):
     if not amount_names:
         return ds
 
-    if "step" in ds.dims and ds.sizes["step"] >= 2:
+    if deaccumulate and "step" in ds.dims and ds.sizes["step"] >= 2:
         return deaccumulate_along_step(ds, names=amount_names)
 
     period = interval or data_interval_of(ds)

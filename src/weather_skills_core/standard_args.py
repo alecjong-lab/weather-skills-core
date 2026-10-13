@@ -67,10 +67,8 @@ def convert_standard_args(args, arguments) -> dict:
     """Build skill kwargs from parsed CLI.
 
     ``--bbox`` becomes an ``(N, W, S, E)`` float tuple. Dates become ``datetime.date``.
-    Named places are not a decorator flag — compose with the resolve-region skill
-    and pass the printed bbox here. Relative dates are not a decorator flag —
-    compose with the resolve-time skill and pass the printed `--date` /
-    `--start-time` / `--end-time`.
+    Only absolute values are parsed: a ``N/W/S/E`` bbox and ``YYYY-MM-DD``
+    dates. Place names and relative dates are resolved before the call.
 
     Raises UsageError if ``start_time`` is after ``end_time``.
     """

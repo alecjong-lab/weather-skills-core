@@ -1,25 +1,25 @@
-"""Provenance chain handling for weather-skill artifacts.
+"""Provenance graph handling for weather-skill artifacts.
 
-``weather_skills_history`` is a JSON-encoded append-only array of entries
-(oldest first). Each entry has ``skill``, ``version``, ``args``, and ``input``.
+``weather_skills_history`` is a JSON-encoded array of entries. A single-input
+path stays oldest-first (a path DAG). A multi-input skill records a join: the
+top-level array is just that skill's entry, and every parent subgraph lives
+under ``input[].history``. Each new entry also records the git ``commit``
+(and optional ``repo`` / ``dirty``) of the skill that ran.
 """
 
 import hashlib
 import html
+import inspect
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
-DEFAULT_SOFTWARE = "forecasting-skills"
-OFFICIAL_MARK_TEXT = "weather-skills provenance verified"
-# Circular rubber-stamp arcs (drawn uppercase for an inked look).
-_MARK_ARC_TOP = "WEATHER-SKILLS"
-_MARK_ARC_BOTTOM = "PROVENANCE VERIFIED"
 # Classic crimson rubber-stamp ink (RGBA) — opaque enough to read on maps.
-_MARK_INK = (158, 18, 36, 245)
+_MARK_INK = (139, 15, 32, 250)
 
 _EXIF_USER_COMMENT = 0x9286  # EXIF UserComment tag
 _HTML_META_RE = re.compile(
@@ -66,8 +66,12 @@ def coerce_chain(raw: str, label: str) -> list | None:
     return chain
 
 
-_ENTRY_KNOWN_KEYS = {"skill", "version", "args", "input"}
+_ENTRY_KNOWN_KEYS = {"skill", "version", "args", "input", "commit", "repo", "dirty"}
 _INPUT_ITEM_KNOWN_KEYS = {"basename", "hash", "history"}
+_GIT_TIMEOUT_SECONDS = 2
+_GITHUB_REMOTE_RE = re.compile(
+    r"^(?:git@github\.com:|https://github\.com/)([^/]+)/(.+?)(?:\.git)?/?$"
+)
 
 
 def _validate_input(value, loc: str, violations: list, notes: list) -> None:
@@ -129,6 +133,11 @@ def _validate_chain(chain, loc: str, violations: list, notes: list) -> None:
             violations.append(f"{eloc}: missing required key 'input'")
         else:
             _validate_input(entry["input"], f"{eloc}.input", violations, notes)
+        for key in ("commit", "repo"):
+            if key in entry and not (isinstance(entry[key], str) and entry[key]):
+                violations.append(f"{eloc}.{key}: must be a non-empty string")
+        if "dirty" in entry and not isinstance(entry["dirty"], bool):
+            violations.append(f"{eloc}.dirty: must be a boolean")
         for key in entry:
             if key not in _ENTRY_KNOWN_KEYS:
                 notes.append(f"{eloc}: unknown key {key!r}")
@@ -150,114 +159,27 @@ def chain_is_intact(history) -> bool:
     return not violations
 
 
-def _load_mark_font(size: int):
-    """Prefer a bold/readable TrueType font; fall back to PIL's default bitmap font."""
-    from PIL import ImageFont
-
-    candidates = (
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "DejaVuSans-Bold.ttf",
-        "DejaVuSans.ttf",
-    )
-    for path in candidates:
-        try:
-            return ImageFont.truetype(path, size=size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def _paste_rotated_char(stamp, char, font, fill, cx, cy, angle_deg, *, scale: int):
-    """Render one character, rotate it, and paste centered at ``(cx, cy)`` on ``stamp``."""
-    from PIL import Image, ImageDraw
-
-    # Oversized tile so rotated glyphs are not clipped.
-    tile_size = 48 * scale
-    tile = Image.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(tile)
-    stroke = max(1, getattr(font, "size", 12) // 16)
-    bbox = draw.textbbox((0, 0), char, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(
-        (tile_size / 2 - bbox[0] - tw / 2, tile_size / 2 - bbox[1] - th / 2),
-        char,
-        font=font,
-        fill=fill,
-        stroke_width=stroke,
-        stroke_fill=(255, 255, 255, 230),
-    )
-    rotated = tile.rotate(-angle_deg, resample=Image.Resampling.BICUBIC, expand=True)
-    stamp.paste(rotated, (int(cx - rotated.width / 2), int(cy - rotated.height / 2)), rotated)
-
-
-def _draw_arc_text(stamp, text, cx, cy, radius, font, fill, *, top: bool, scale: int):
-    """Draw ``text`` along a circular arc (top over the top; bottom under)."""
-    import math
-
-    if not text:
-        return
-    # Angular span ~110° so labels stay readable and don't collide.
-    span = min(2.0, 0.22 * len(text) + 0.7)
-    if top:
-        start = -math.pi / 2 - span / 2
-        step = span / max(len(text) - 1, 1)
-    else:
-        start = math.pi / 2 + span / 2
-        step = -span / max(len(text) - 1, 1)
-
-    for i, char in enumerate(text):
-        if char == " ":
-            continue
-        angle = start + i * step
-        x = cx + radius * math.cos(angle)
-        y = cy + radius * math.sin(angle)
-        tangent_deg = math.degrees(angle) + (90.0 if top else -90.0)
-        _paste_rotated_char(stamp, char, font, fill, x, y, tangent_deg, scale=scale)
-
-
 def _render_circular_stamp(diameter: int):
-    """Build a circular old-school rubber stamp as an RGBA image of size ``diameter``."""
+    """Build a small circular rubber stamp: ring + center star, no text."""
     import math
 
     from PIL import Image, ImageDraw
 
-    # Draw at 3× then downscale so type stays sharp at the smaller display size.
-    scale = 3
-    size = max(diameter, 32) * scale
+    scale = 4
+    size = max(diameter, 24) * scale
     stamp = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(stamp)
     cx = cy = size / 2
     ink = _MARK_INK
 
-    # Double ring — classic rubber-stamp silhouette (thin relative to diameter).
     outer_r = size / 2 - scale
     draw.ellipse(
         (cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r),
         outline=ink,
         width=max(2 * scale, size // 22),
     )
-    inner_r = outer_r * 0.78
-    draw.ellipse(
-        (cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r),
-        outline=ink,
-        width=max(scale, size // 36),
-    )
 
-    # Slightly larger type relative to diameter so arc text stays legible when small.
-    font = _load_mark_font(max(8 * scale, int(size * 0.125)))
-    _draw_arc_text(stamp, _MARK_ARC_TOP, cx, cy, outer_r * 0.87, font, ink, top=True, scale=scale)
-    _draw_arc_text(
-        stamp, _MARK_ARC_BOTTOM, cx, cy, outer_r * 0.87, font, ink, top=False, scale=scale
-    )
-
-    # Center medallion: a filled star so the stamp reads at a glance.
-    star_r = outer_r * 0.22
+    star_r = outer_r * 0.48
     pts = []
     for i in range(10):
         r = star_r if i % 2 == 0 else star_r * 0.42
@@ -266,7 +188,7 @@ def _render_circular_stamp(diameter: int):
     draw.polygon(pts, fill=ink)
 
     # Slight rotation so it looks hand-inked rather than UI chrome.
-    stamp = stamp.rotate(-12, resample=Image.Resampling.BICUBIC, expand=True)
+    stamp = stamp.rotate(-6, resample=Image.Resampling.BICUBIC, expand=True)
     out_w = max(1, round(stamp.width / scale))
     out_h = max(1, round(stamp.height / scale))
     return stamp.resize((out_w, out_h), resample=Image.Resampling.LANCZOS)
@@ -283,8 +205,8 @@ def _draw_official_mark(img):
     if min(w, h) < 96:
         return img.copy()
 
-    # Small corner mark (~10% of the short side) so it reads as ink, not chrome.
-    diameter = max(36, min(int(min(w, h) * 0.10), 72))
+    # Compact star-only seal; ~6% of the short side.
+    diameter = max(36, min(int(min(w, h) * 0.06), 48))
     stamp = _render_circular_stamp(diameter)
     margin = max(4, int(min(w, h) * 0.015))
     if stamp.width + 2 * margin > w or stamp.height + 2 * margin > h:
@@ -299,9 +221,10 @@ def _draw_official_mark(img):
     marked = Image.alpha_composite(base, overlay)
     if img.mode == "RGBA":
         return marked
-    if img.mode == "RGB":
-        return marked.convert("RGB")
-    return marked.convert(img.mode)
+    # Stay in RGB after compositing. Converting a palette image back to ``P``
+    # requantizes and can merge nearby fills (BoM IOD pink / blue both become
+    # one purple).
+    return marked.convert("RGB")
 
 
 def load_history(zarr_path: Path) -> list:
@@ -320,15 +243,107 @@ def load_history(zarr_path: Path) -> list:
     return [] if parsed is None else parsed
 
 
-def input_ref(path: Path) -> dict:
-    """Single-input ``input`` value: ``{basename, hash}``."""
+def input_ref(path: Path, history=None) -> dict:
+    """One parent ``input`` value: ``{basename, hash}`` plus optional ``history``."""
     path = Path(path)
-    return {"basename": path.name, "hash": hash_zarr(path)}
+    ref = {"basename": path.name, "hash": hash_zarr(path)}
+    if history is not None:
+        ref["history"] = list(history)
+    return ref
 
 
-def build_entry(skill: str, version: str, args: dict, input) -> dict:
-    """Assemble a provenance entry."""
-    return {"skill": skill, "version": version, "args": args, "input": input}
+def origin_skill(history) -> str | None:
+    """Oldest skill name, walking into the first nested parent of a join."""
+    if not isinstance(history, list) or not history or not isinstance(history[0], dict):
+        return None
+    first = history[0]
+    if len(history) == 1:
+        parents = first.get("input")
+        for item in parents if isinstance(parents, list) else [parents]:
+            if isinstance(item, dict) and (found := origin_skill(item.get("history"))):
+                return found
+    skill = first.get("skill")
+    return skill.strip() if isinstance(skill, str) and skill.strip() else None
+
+
+def normalize_repo_url(url: str) -> str:
+    """Turn a git remote into an https clone URL when we recognize GitHub."""
+    text = url.strip()
+    match = _GITHUB_REMOTE_RE.match(text)
+    if match:
+        return f"https://github.com/{match[1]}/{match[2]}"
+    return text.removesuffix(".git")
+
+
+def _git(args: list[str], cwd: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _revision_from_direct_url(source_file: Path) -> dict | None:
+    """Read PEP 610 ``direct_url.json`` for the installed dist that owns ``source_file``."""
+    from importlib.metadata import distributions
+
+    for dist in distributions():
+        try:
+            owned = any(Path(f.locate()).resolve() == source_file for f in dist.files or [])
+            payload = json.loads(dist.read_text("direct_url.json") or "null") if owned else None
+        except (OSError, ValueError):
+            continue
+        commit = ((payload or {}).get("vcs_info") or {}).get("commit_id")
+        if commit:
+            revision = {"commit": commit}
+            if payload.get("url"):
+                revision["repo"] = normalize_repo_url(payload["url"])
+            return revision
+    return None
+
+
+def resolve_skill_revision(source=None) -> dict | None:
+    """Git identity of the skill that is running.
+
+    ``source`` may be a skill function or a filesystem path. Prefers the git
+    checkout that contains the file; falls back to the installed package's
+    ``direct_url.json`` (``uvx --from git+…@sha``). Returns ``None`` when
+    neither is available. Untracked files do not count as dirty.
+    """
+    if source is None:
+        return None
+    try:
+        path = Path(source if isinstance(source, (str, Path)) else inspect.getfile(source))
+        path = path.resolve()
+    except (OSError, TypeError):
+        return None
+    root = _git(["rev-parse", "--show-toplevel"], path.parent if path.is_file() else path)
+    if not root:
+        return _revision_from_direct_url(path) if path.is_file() else None
+    commit = _git(["rev-parse", "HEAD"], root)
+    if not commit:
+        return None
+    revision = {"commit": commit}
+    remote = _git(["config", "--get", "remote.origin.url"], root)
+    if remote:
+        revision["repo"] = normalize_repo_url(remote)
+    if _git(["status", "--porcelain", "-uno"], root):
+        revision["dirty"] = True
+    return revision
+
+
+def build_entry(skill: str, version: str, args: dict, input, revision=None) -> dict:
+    """Assemble a provenance entry, attaching git identity (``commit``/``repo``/``dirty``)."""
+    return {"skill": skill, "version": version, "args": args, "input": input, **(revision or {})}
 
 
 def stamp_zarr(ds, history: list, *, source: str | None = None) -> None:
@@ -349,7 +364,7 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
     zarr.consolidate_metadata(str(zarr_path))
 
 
-def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE) -> None:
+def stamp_figure(path: Path, history: list) -> None:
     """Embed ``weather_skills_history`` into a PNG, JPEG, or HTML file.
 
     When the chain is intact (non-empty and schema-valid), also draw a circular
@@ -374,7 +389,7 @@ def stamp_figure(path: Path, history: list, *, software: str = DEFAULT_SOFTWARE)
                 if isinstance(value, str) and key not in (HISTORY_ATTR, "Software"):
                     info.add_text(key, value)
             info.add_text(HISTORY_ATTR, payload)
-            info.add_text("Software", software)
+            info.add_text("Software", "weather-skills")
             out.save(path, pnginfo=info)
         return
 
