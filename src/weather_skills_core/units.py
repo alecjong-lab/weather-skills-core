@@ -705,8 +705,10 @@ def stamp_data_interval(ds, period=None, dim=None):
     ``period`` (a pint duration such as ``"1 day"``) always writes the scalar
     attr. Without it, an existing ``data_interval`` or CF bounds is kept;
     otherwise the spacing of ``dim`` (or ``time`` / ``step``) is inferred:
-    even spacing gets ``data_interval``, uneven spacing gets ``{dim}_bounds``
-    with each label at the end of its cell. A one-sample axis is left alone.
+    even spacing gets ``data_interval``, as does a datetime axis with missing
+    rows (every spacing a whole multiple of the smallest); other uneven spacing
+    (e.g. forecast leads going from 3- to 6-hourly) gets ``{dim}_bounds`` with
+    each label at the end of its cell. A one-sample axis is left alone.
     """
     if period is not None:
         period = format_duration(parse_aggregation_period(period))
@@ -729,8 +731,15 @@ def stamp_data_interval(ds, period=None, dim=None):
     diffs, unit = _axis_tick_diffs(ticks)
     if np.any(diffs <= 0):
         raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
-    if np.all(diffs == diffs[0]):
-        period = format_duration(ureg.Quantity(float(diffs[0]), unit).to("day"))
+    base = diffs.min()
+    # Even spacing, or a datetime axis whose spacings are whole multiples of the
+    # smallest (hourly station data with missing hours): a regular grid. Gaps are
+    # missing samples for coverage to count, not wider cells that would stretch
+    # the sample before each gap over it.
+    if np.all(diffs == base) or (
+        np.issubdtype(ticks.dtype, np.datetime64) and np.all(diffs % base == 0)
+    ):
+        period = format_duration(ureg.Quantity(float(base), unit).to("day"))
         return _apply_scalar_interval(ds, period, axis=axis)
 
     first_start = _default_bounds_origin(ticks)

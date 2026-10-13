@@ -447,7 +447,7 @@ def test_deaccumulate_origin_restamps_existing_interval():
 def test_stamp_data_interval_irregular_datetime_defaults_origin():
     """Irregular times bound the first bin from midnight of that day."""
     times = np.array(
-        ["2026-08-18T03:00", "2026-08-18T06:00", "2026-08-18T12:00"],
+        ["2026-08-18T03:00", "2026-08-18T06:00", "2026-08-18T10:00"],
         dtype="datetime64[ns]",
     )
     ds = xr.Dataset(
@@ -458,6 +458,21 @@ def test_stamp_data_interval_irregular_datetime_defaults_origin():
     bounds = np.asarray(out["time_bounds"].values)
     assert bounds[0, 0] == np.datetime64("2026-08-18T00:00")
     assert bounds[0, 1] == times[0]
+
+
+def test_stamp_data_interval_datetime_gaps_stay_regular():
+    """Missing hours are missing samples, not wider cells stretched over the gap."""
+    times = np.array(
+        ["2026-08-18T00:00", "2026-08-18T01:00", "2026-08-18T04:00", "2026-08-18T05:00"],
+        dtype="datetime64[ns]",
+    )
+    ds = xr.Dataset(
+        {"pm25": (("time",), np.ones(4), {"units": "ug m-3"})},
+        coords={"time": times},
+    )
+    out = stamp_data_interval(ds)
+    assert "time_bounds" not in out
+    assert out["pm25"].attrs["data_interval"] == "1 hour"
 
 
 def test_assert_nonoverlapping_uses_min_spacing_when_bounds_present():
