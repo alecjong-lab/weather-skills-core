@@ -128,6 +128,9 @@ does not treat them as canonical specials.
 
 | Rule | What it catches |
 | --- | --- |
-| WSK101 | A non-canonical spelling of a special (`-b` for bbox). Use `--bbox`. |
-| WSK201 | The same one-off flag on several skills (survey; off by default). Promote it or rename it. |
-| WSK202 | The same flag name with a different shape across skills (error). Input flags (`-i` / `--input`, `type=Dataset(...)`) are exempt: one skill takes one Zarr, another several. |
+| WSK101 | A flag that collides with one core owns: a non-canonical spelling of a special (`-b` for bbox; use `--bbox`), or declaring `-o` / `--output` yourself. |
+
+Each skill is checked on its own. Two skills using the same flag name in
+different ways is not a finding; the reuse advice above is a convention,
+not a lint rule. The linter also checks `SKILL.md` drift (WSK301), the
+version constant (WSK401), and the PEP 723 block (WSK402).
