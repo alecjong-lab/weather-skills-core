@@ -118,10 +118,6 @@ set `weather_skills_source`
 precipitation as rates, and stamp native spacing
 ([UNITS.md](references/UNITS.md)).
 
-Figure skills build on the `weather_skills_plotting` package from
-[weather-skills-plotting](https://github.com/rhiza-research/weather-skills-plotting);
-its docs cover the plot spec, `--spec`, and `--dump-spec`.
-
 ## Checklist
 
 - Script under `scripts/`, PEP 723 block declaring `weather-skills-core`.

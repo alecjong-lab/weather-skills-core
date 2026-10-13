@@ -62,10 +62,6 @@ The authoring guide covers the rest:
 | What dims must a Zarr have, and what is written on output? | [`STANDARD_DATASET.md`](docs/weather-skill-authoring/references/STANDARD_DATASET.md) |
 | Rates vs totals, and which unit attrs to stamp? | [`UNITS.md`](docs/weather-skill-authoring/references/UNITS.md) |
 
-Plot specs and figure helpers live in
-[weather-skills-plotting](https://github.com/rhiza-research/weather-skills-plotting),
-not here.
-
 ## Install
 
 ```bash
