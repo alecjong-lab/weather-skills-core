@@ -63,9 +63,15 @@ def test_bbox_subset_antimeridian_keeps_wings_drops_interior():
     assert list(sub["longitude"].values) == [-179.0, 179.0]
 
 
-def test_bbox_subset_single_row_latitude_passes_through():
+def test_bbox_subset_single_row_latitude_outside_bbox_raises():
     ds = make_gridded(lats=(1.0,))
-    sub = utils.bbox_subset(ds, (60.0, 10.5, 50.0, 12.5))
+    with pytest.raises(DataError, match="selects no grid cells"):
+        utils.bbox_subset(ds, (60.0, 10.5, 50.0, 12.5))
+
+
+def test_bbox_subset_single_row_latitude_inside_bbox_kept():
+    ds = make_gridded(lats=(1.0,))
+    sub = utils.bbox_subset(ds, (2.0, 10.5, 0.0, 12.5))
     assert list(sub["latitude"].values) == [1.0]
 
 

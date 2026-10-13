@@ -329,9 +329,7 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
             )
     lon_vals = np.asarray(ds[lon_dim].values)
     lon_ascending = lon_vals.size == 1 or lon_vals[1] > lon_vals[0]
-    lat_vals = np.asarray(ds[lat_dim].values)
-    if lat_vals.size > 1:  # a single latitude row passes through unsliced
-        ds = ds.sel({lat_dim: lat_slice(lat_vals, north, south)})
+    ds = ds.sel({lat_dim: lat_slice(np.asarray(ds[lat_dim].values), north, south)})
 
     if west <= east:
         # Contiguous longitude span. Slice in the axis's own monotonic order.
