@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from weather_skills_core.errors import UsageError
-from weather_skills_core.linting.discover import resolve_skill_dirs
+from weather_skills_core.linting.run import resolve_skill_dirs
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "linting"
 DECORATED_SCRIPT = "from weather_skills_core import weather_skill\n_SKILL_VERSION = '0.1.0'\n@weather_skill(name='s', version=_SKILL_VERSION)\ndef s():\n    ...\n"

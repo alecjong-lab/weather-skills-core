@@ -1,4 +1,4 @@
-"""Lint-run orchestration and the deterministic score rubric.
+"""Lint-run orchestration: find the skills under a path, lint them, and score them.
 
 Scoring: each skill's score is the mean of its per-rule scores, on a 0-100
 scale. A rule with no findings for the skill scores 1.0; otherwise the rule
@@ -9,11 +9,12 @@ whose script could not be analyzed (WSK001) scores 0. The aggregate is
 the mean of the per-skill scores. Scores inform; maintainers decide.
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from weather_skills_core.errors import UsageError
-from weather_skills_core.linting.discover import discover_skills
+from weather_skills_core.linting.extract import extract_skill
 from weather_skills_core.linting.rules import (
     RULES,
     Finding,
@@ -21,6 +22,77 @@ from weather_skills_core.linting.rules import (
     expand_selector,
     lint_skills,
 )
+
+#: A ``@weather_skill`` decorator application, matched on source text (not the
+#: AST) so a script that does not parse still marks its directory as a skill.
+_DECORATOR_RE = re.compile(r"@\s*(?:[A-Za-z_][\w.]*\.)?weather_skill\s*\(")
+
+
+def _is_skill_dir(path: Path) -> bool:
+    """A skill directory holds ``scripts/*.py`` plus evidence of skill-ness.
+
+    The evidence is a ``SKILL.md`` manifest or a script applying the
+    ``@weather_skill`` decorator; a bare ``scripts/*.py`` directory (an
+    ``examples/`` folder, a tools directory) is not a skill and must not
+    shadow a real ``skills/`` tree during layout detection.
+    """
+    scripts_dir = path / "scripts"
+    if not scripts_dir.is_dir() or not any(scripts_dir.glob("*.py")):
+        return False
+    if (path / "SKILL.md").is_file():
+        return True
+    for script in scripts_dir.glob("*.py"):
+        try:
+            source = script.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _DECORATOR_RE.search(source):
+            return True
+    return False
+
+
+def _skill_children(path: Path) -> list[Path]:
+    if not path.is_dir():
+        return []
+    return [child for child in sorted(path.iterdir()) if _is_skill_dir(child)]
+
+
+def resolve_skill_dirs(path: Path) -> list[Path]:
+    """Auto-detect the layout at ``path`` and return its skill directories.
+
+    Recognized layouts, checked in order: a repo root holding a ``skills/``
+    tree; a directory of skill directories (a ``skills/`` tree passed
+    directly); a single skill directory (``scripts/*.py`` plus a SKILL.md or
+    a ``@weather_skill``-decorated script); a ``scripts`` directory (the
+    skill is its parent). A ``skills/`` tree wins over the other layouts, so
+    a repo root that also carries its own ``scripts/*.py`` (or non-skill
+    directories that do) resolves to the tree rather than misdetecting as
+    one skill. Anything else raises :class:`UsageError` (exit 2).
+    """
+    p = path.resolve()
+    if not p.is_dir():
+        raise UsageError(
+            f"{path} is not a directory; lint a skill directory, a scripts directory, "
+            "a skills/ tree, or a repo root holding one."
+        )
+    try:
+        nested = _skill_children(p / "skills")
+        if nested:
+            return nested
+        children = _skill_children(p)
+        if children:
+            return children
+        if _is_skill_dir(p):
+            return [p]
+        if p.name == "scripts" and any(p.glob("*.py")):
+            return [p.parent]
+    except OSError as exc:
+        raise UsageError(f"could not scan {path} for skill layouts: {exc}") from exc
+    raise UsageError(
+        f"{path} does not match any skill layout (no scripts/*.py alongside a SKILL.md "
+        "or a @weather_skill script, no */scripts/*.py, no skills/*)."
+    )
+
 
 SEVERITY_RULE_SCORE = {"error": 0.0, "warning": 0.5, "info": 0.8}
 
@@ -102,7 +174,7 @@ def run_lint(
     target path or an unknown rule selector (exit 2 at the CLI).
     """
     active_rules = resolve_rule_set(select, extend_select, ignore)
-    decls = discover_skills(target)
+    decls = [decl for skill_dir in resolve_skill_dirs(target) for decl in extract_skill(skill_dir)]
     findings = lint_skills(decls, active_rules)
 
     skills = []
