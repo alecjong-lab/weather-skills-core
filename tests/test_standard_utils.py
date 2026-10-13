@@ -469,21 +469,6 @@ def test_grid_spacing_median_spacing():
     assert utils.grid_spacing([0.0, 0.25, 0.5, 0.75]) == pytest.approx(0.25)
 
 
-def test_pick_time_dim_prefers_time():
-    ds = make_gridded()
-    assert utils.pick_time_dim(ds) == "time"
-
-
-def test_pick_time_dim_override():
-    ds = make_gridded()
-    assert utils.pick_time_dim(ds, "time") == "time"
-
-
-def test_pick_time_dim_missing_override():
-    with pytest.raises(UsageError, match="not in dims"):
-        utils.pick_time_dim(make_gridded(), "nope")
-
-
 def test_apply_write_encoding_time_and_fill():
     import numpy as np
 

@@ -14,9 +14,10 @@ _ABS_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # Retryable HTTP status codes as whole tokens (avoid matching "14290", "50000").
 _STATUS_RE = re.compile(r"\b(?:429|500|502|503|504)\b")
-_TIMEOUT_MARKERS = ("timed out", "timeout")
-# Specific phrases only — bare "connection" appears on permanent urllib3 errors too.
-_CONNECTION_MARKERS = (
+# Specific connection phrases only — bare "connection" appears on permanent urllib3 errors too.
+_TRANSIENT_MARKERS = (
+    "timed out",
+    "timeout",
     "connection error",
     "connection reset",
     "connection refused",
@@ -32,11 +33,7 @@ def is_transient(exc: Exception) -> bool:
     with the caller.
     """
     text = str(exc).lower()
-    if _STATUS_RE.search(text):
-        return True
-    if any(marker in text for marker in _TIMEOUT_MARKERS):
-        return True
-    return any(marker in text for marker in _CONNECTION_MARKERS)
+    return bool(_STATUS_RE.search(text)) or any(m in text for m in _TRANSIENT_MARKERS)
 
 
 def normalize_step_coord(ds, dim: str = "step"):
@@ -232,14 +229,10 @@ def ensure_normalized_longitude(obj, lon_dim: str | None = None):
     (not a dimension) are wrapped in place and not sorted.
     """
     import numpy as np
-    import xarray as xr
 
-    is_da = isinstance(obj, xr.DataArray)
-    da_name = obj.name if is_da else None
-    ds = obj.to_dataset(name=da_name or "_") if is_da else obj
     if lon_dim is None:
         try:
-            _, lon_dim = detect_spatial_dims(ds)
+            _, lon_dim = detect_spatial_dims(obj)
         except UsageError:
             return obj
     if lon_dim not in obj.coords and lon_dim not in getattr(obj, "variables", ()):
@@ -248,23 +241,17 @@ def ensure_normalized_longitude(obj, lon_dim: str | None = None):
     if not lon_vals.size or float(np.nanmax(lon_vals)) <= 180.0:
         return obj
 
-    attrs = dict(ds[lon_dim].attrs)
-    lon = ((ds[lon_dim] + 180) % 360) - 180
-    lon.attrs = attrs
-    ds = ds.assign_coords({lon_dim: lon})
-    if lon_dim in ds.dims:
+    lon = ((obj[lon_dim] + 180) % 360) - 180
+    lon.attrs = dict(obj[lon_dim].attrs)
+    obj = obj.assign_coords({lon_dim: lon})
+    if lon_dim in obj.dims:
         # np.unique returns each unique value's first-occurrence index; keeping
         # those (in input order) drops any later duplicate the wrap produced.
-        _, first = np.unique(ds[lon_dim].values, return_index=True)
-        if len(first) < ds.sizes[lon_dim]:
-            ds = ds.isel({lon_dim: np.sort(first)})
-        ds = ds.sortby(lon_dim)
-    if is_da:
-        out = ds[da_name or "_"]
-        if da_name is None:
-            out.name = None
-        return out
-    return ds
+        _, first = np.unique(obj[lon_dim].values, return_index=True)
+        if len(first) < obj.sizes[lon_dim]:
+            obj = obj.isel({lon_dim: np.sort(first)})
+        obj = obj.sortby(lon_dim)
+    return obj
 
 
 def _point_spatial(ds):
@@ -330,33 +317,20 @@ def bbox_subset(ds, bbox, *, lat_dim: str | None = None, lon_dim: str | None = N
     # Wrap lon to [-180, 180] before the slice so a 0..360 input grid still
     # intersects bboxes that use negative west/east values.
     ds = ensure_normalized_longitude(ds, lon_dim=lon_dim)
-    lon_vals = np.asarray(ds[lon_dim].values)
-    if lon_vals.size == 0:
-        raise UsageError("lon axis has length 0; cannot subset.")
-    if lon_vals.size == 1:
-        lon_ascending = True
-    else:
-        lon_diffs = np.diff(lon_vals)
-        if (lon_diffs > 0).all():
-            lon_ascending = True
-        elif (lon_diffs < 0).all():
-            lon_ascending = False
-        else:
-            raise UsageError(
-                "lon axis is non-monotonic; cannot infer slice orientation. "
-                "Re-sort the input or pre-process before subsetting."
-            )
-
-    lat_vals = np.asarray(ds[lat_dim].values)
-    if lat_vals.size == 0:
-        raise UsageError("lat axis has length 0; cannot subset.")
-    if lat_vals.size > 1:
-        diffs = np.diff(lat_vals)
+    for axis, dim in (("lat", lat_dim), ("lon", lon_dim)):
+        vals = np.asarray(ds[dim].values)
+        if vals.size == 0:
+            raise UsageError(f"{axis} axis has length 0; cannot subset.")
+        diffs = np.diff(vals)
         if not ((diffs > 0).all() or (diffs < 0).all()):
             raise UsageError(
-                "lat axis is non-monotonic; cannot infer slice orientation. "
+                f"{axis} axis is non-monotonic; cannot infer slice orientation. "
                 "Re-sort the input or pre-process before subsetting."
             )
+    lon_vals = np.asarray(ds[lon_dim].values)
+    lon_ascending = lon_vals.size == 1 or lon_vals[1] > lon_vals[0]
+    lat_vals = np.asarray(ds[lat_dim].values)
+    if lat_vals.size > 1:  # a single latitude row passes through unsliced
         ds = ds.sel({lat_dim: lat_slice(lat_vals, north, south)})
 
     if west <= east:
@@ -471,25 +445,6 @@ def grid_spacing(coord_vals) -> float:
     if coord.size < 2:
         raise ValueError(f"Cannot infer spacing for coord with size {coord.size}")
     return float(abs(np.median(np.diff(coord))))
-
-
-def pick_time_dim(obj, override=None) -> str:
-    """Resolve a time-like dim: override, then ``time``, ``step``, then CF time."""
-    from weather_skills_core.cf import cf_dim
-
-    dims = list(obj.dims)
-    if override:
-        if override not in obj.dims:
-            raise UsageError(f"--time-dim {override!r} not in dims {dims}")
-        return override
-    if "time" in obj.dims:
-        return "time"
-    if "step" in obj.dims:
-        return "step"
-    cf = cf_dim(obj, "time")
-    if cf and cf in obj.dims:
-        return cf
-    raise UsageError(f"no time-like dim in {dims}; pass --time-dim")
 
 
 def apply_write_encoding(ds, *, time_units=None, time_calendar=None, fills=None):
