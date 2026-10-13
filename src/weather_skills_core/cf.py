@@ -130,9 +130,7 @@ def resolve_input_variable(inputs, ds, *, id=None, index=None):
     items = [item for item in (inputs or []) if isinstance(item, dict)]
     own = None
     if id is not None:
-        own = next(
-            (item.get("variable") for item in items if str(item.get("id")) == str(id)), None
-        )
+        own = next((item.get("variable") for item in items if str(item.get("id")) == str(id)), None)
     elif index is not None and index < len(items):
         own = items[index].get("variable")
     if own:

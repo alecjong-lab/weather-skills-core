@@ -380,9 +380,7 @@ def _clip_feature_south(feature: dict, south: float) -> dict:
     """Keep land at or north of ``south``; bbox south is exactly that latitude."""
     geometry = _clip_geometry_to_rect(feature["geometry"], -180.0, south, 180.0, 90.0)
     if geometry is None:
-        raise DataError(
-            f"{feature['properties'].get('name')!r} has no land north of {south}°."
-        )
+        raise DataError(f"{feature['properties'].get('name')!r} has no land north of {south}°.")
     north, west, _south, east = bbox_from_geometry(geometry)
     props = dict(feature["properties"])
     props["name"] = "East Africa"
