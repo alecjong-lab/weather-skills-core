@@ -132,9 +132,7 @@ def prepare_dataset_output(ds, *, first_ds=None):
     ds = normalize_unit_strings(ds)
     ds = stamp_precip_amounts(ds)
     ds = normalize_step_coord(ds)
-    ds = normalize_latlon_coords(ds)
-    ds.attrs.pop(INPUT_PATH_ATTR, None)
-    return ds
+    return normalize_latlon_coords(ds)
 
 
 def write_output(value, out_path, history, first_ds):
@@ -193,17 +191,6 @@ def _open_zarr(path, io_spec=None):
     return quantify_dataset(ds)
 
 
-def _iter_zarr_path_holders(value):
-    """Yield argument values that expose ``zarr_paths()``."""
-    if value is None:
-        return
-    items = value if isinstance(value, (list, tuple)) else (value,)
-    for item in items:
-        fn = getattr(item, "zarr_paths", None)
-        if callable(fn):
-            yield item
-
-
 def open_dataset_params(params, arguments):
     """Replace Dataset-typed Path values with opened/validated/quantified datasets.
 
@@ -213,60 +200,41 @@ def open_dataset_params(params, arguments):
     """
     input_paths: list[Path] = []
     upstream: list = []
-    first_ds = None
     cache: dict = {}
 
-    def remember(path, ds):
-        nonlocal first_ds
+    def open_one(path, io_spec=None):
+        path = Path(path)
         resolved = path.resolve()
-        cache[resolved] = ds
-        if resolved not in {p.resolve() for p in input_paths}:
+        if resolved not in cache:
+            cache[resolved] = _open_zarr(path, io_spec)
             input_paths.append(path)
             upstream.append(provenance_mod.load_history(path))
-        if first_ds is None:
-            first_ds = ds
+        ds = cache[resolved]
         ds.attrs[INPUT_PATH_ATTR] = str(path)
         return ds
 
     for arg in arguments:
-        if arg.dataset_type is None:
+        raw = params.get(arg.dest)
+        if arg.dataset_type is None or raw is None:
             continue
-        dest, raw = arg.dest, params.get(arg.dest)
-        if raw is None:
-            continue
-        paths = [Path(p) for p in raw] if isinstance(raw, (list, tuple)) else [Path(raw)]
-        if not paths:
-            continue
-        opened = []
-        for path in paths:
-            resolved = path.resolve()
-            ds = cache.get(resolved)
-            if ds is None:
-                ds = _open_zarr(path, arg.dataset_type.io_spec)
-            opened.append(remember(path, ds))
-        params[dest] = opened if isinstance(raw, (list, tuple)) else opened[0]
+        if isinstance(raw, (list, tuple)):
+            params[arg.dest] = [open_one(p, arg.dataset_type.io_spec) for p in raw]
+        else:
+            params[arg.dest] = open_one(raw, arg.dataset_type.io_spec)
 
-    seen_holders: list[object] = []
+    seen: set[int] = set()
     for raw in list(params.values()):
-        for holder in _iter_zarr_path_holders(raw):
-            if holder in seen_holders:
+        for holder in raw if isinstance(raw, (list, tuple)) else (raw,):
+            if not callable(getattr(holder, "zarr_paths", None)) or id(holder) in seen:
                 continue
-            seen_holders.append(holder)
-            opened = []
-            for path in holder.zarr_paths() or []:
-                path = Path(path)
-                resolved = path.resolve()
-                ds = cache.get(resolved)
-                if ds is None:
-                    ds = _open_zarr(path)
-                opened.append(remember(path, ds))
-            if not opened:
-                continue
+            seen.add(id(holder))
+            opened = [open_one(p) for p in holder.zarr_paths() or []]
             if len(opened) == 1:
                 holder.ds = opened[0]
-            else:
+            elif opened:
                 holder.datasets = opened
 
+    first_ds = next(iter(cache.values()), None)
     return params, input_paths, upstream, first_ds
 
 

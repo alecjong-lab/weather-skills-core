@@ -68,36 +68,21 @@ def normalize_latlon_coords(ds):
     """
     import numpy as np
 
-    names: list[str] = []
-    seen: set[str] = set()
-    for preferred in ("lat", "lon"):
-        for name in names_for(preferred):
-            if name in ds.coords and name not in seen:
-                names.append(name)
-                seen.add(name)
-    for name in ds.coords:
-        if name in seen:
-            continue
-        if ds[name].attrs.get("standard_name") in ("latitude", "longitude"):
-            names.append(name)
-            seen.add(name)
+    names = [n for key in ("lat", "lon") for n in names_for(key) if n in ds.coords]
+    names += [
+        n
+        for n in ds.coords
+        if n not in names and ds[n].attrs.get("standard_name") in ("latitude", "longitude")
+    ]
 
     updates = {}
-    for name in names:
+    for name in dict.fromkeys(names):
         values = np.asarray(ds[name].values)
         if not np.issubdtype(values.dtype, np.floating):
             continue
-        snapped = np.round(np.asarray(values, dtype=np.float64), _LATLON_DECIMALS).astype(
-            np.float32
-        )
-        already = (
-            values.dtype == np.float32
-            and values.shape == snapped.shape
-            and np.array_equal(values, snapped)
-        )
-        if already:
-            continue
-        updates[name] = (ds[name].dims, snapped, dict(ds[name].attrs))
+        snapped = np.round(values.astype(np.float64), _LATLON_DECIMALS).astype(np.float32)
+        if values.dtype != np.float32 or not np.array_equal(values, snapped):
+            updates[name] = (ds[name].dims, snapped, dict(ds[name].attrs))
     if not updates:
         return ds
     out = ds.assign_coords(updates)
@@ -287,13 +272,12 @@ def _point_spatial(ds):
     point_dim = next((n for n in names_for("point_id") if n in ds.dims), None)
     if point_dim is None:
         return None
-    lat = next(
-        (n for n in names_for("lat") if n in ds.coords and tuple(ds[n].dims) == (point_dim,)),
-        None,
-    )
-    lon = next(
-        (n for n in names_for("lon") if n in ds.coords and tuple(ds[n].dims) == (point_dim,)),
-        None,
+    lat, lon = (
+        next(
+            (n for n in names_for(key) if n in ds.coords and ds[n].dims == (point_dim,)),
+            None,
+        )
+        for key in ("lat", "lon")
     )
     if lat is None or lon is None:
         raise UsageError(

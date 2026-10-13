@@ -80,8 +80,6 @@ _CUSTOM_REGIONS = {
     "indian_ocean_basin": {
         "name": "Indian Ocean basin",
         "bbox": (30.0, 20.0, -40.0, 120.0),
-        "iso3": None,
-        "country": None,
         "aliases": (
             "Indian Ocean",
             "Indian Ocean Basin",
@@ -335,38 +333,21 @@ def _slim_country(feature: dict) -> dict:
     )
 
 
-def _clip_geometry_to_rect(geometry, west, south, east, north):
-    """Intersect a GeoJSON geometry with a lon/lat rectangle; return GeoJSON."""
-    from shapely.geometry import GeometryCollection, box, mapping, shape
-    from shapely.ops import unary_union
-
-    clipped = shape(geometry).intersection(
-        box(float(west), float(south), float(east), float(north))
-    )
-    if clipped.is_empty:
-        return None
-    if clipped.geom_type == "GeometryCollection" or isinstance(clipped, GeometryCollection):
-        parts = [
-            part
-            for part in clipped.geoms
-            if not part.is_empty and part.geom_type in ("Polygon", "MultiPolygon")
-        ]
-        if not parts:
-            return None
-        clipped = unary_union(parts)
-    return mapping(clipped)
-
-
 def _clip_feature_south(feature: dict, south: float) -> dict:
     """Keep land at or north of ``south``; bbox south is exactly that latitude."""
-    geometry = _clip_geometry_to_rect(feature["geometry"], -180.0, south, 180.0, 90.0)
-    if geometry is None:
+    from shapely.geometry import box, mapping, shape
+
+    clipped = shape(feature["geometry"]).intersection(box(-180.0, south, 180.0, 90.0))
+    if clipped.is_empty:
         raise DataError(f"{feature['properties'].get('name')!r} has no land north of {south}°.")
+    geometry = mapping(clipped)
     north, west, _south, east = bbox_from_geometry(geometry)
-    props = dict(feature["properties"])
-    props["name"] = "East Africa"
-    props["region_name"] = "east_africa"
-    props["bbox"] = [north, west, float(south), east]
+    props = {
+        **feature["properties"],
+        "name": "East Africa",
+        "region_name": "east_africa",
+        "bbox": [north, west, float(south), east],
+    }
     return {**feature, "geometry": geometry, "properties": props}
 
 

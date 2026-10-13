@@ -214,21 +214,13 @@ def format_units_for_display(units: str | None) -> str:
     if not isinstance(units, str) or not units.strip():
         return ""
     raw = units.strip()
-    display = {
-        "precip": "mm/day",
-        "precip_amount": "mm",
-        "temp": "°C",
-    }
-    for kind, nice in display.items():
+    for kind, nice in (("precip", "mm/day"), ("precip_amount", "mm"), ("temp", "°C")):
         if units_equal(raw, STANDARD[kind]["units"]):
             return nice
     try:
-        compact = format(ureg.Unit(raw), "cf")
+        return format(ureg.Unit(raw), "cf").replace(" d-1", "/day")
     except Exception:  # noqa: BLE001 — leave unparseable strings alone
         return raw
-    if units_equal(compact, STANDARD["temp"]["units"]):
-        return display["temp"]
-    return compact.replace(" d-1", "/day")
 
 
 def variable_units(da) -> str | None:
@@ -746,8 +738,7 @@ def _apply_scalar_interval(ds, period, axis=None):
     name = _cf_bounds_name(ds, axis) if axis is not None else None
     if name is not None:
         ds = ds.drop_vars(name)
-        if axis in ds.coords or axis in ds.dims:
-            ds[axis].attrs.pop("bounds", None)
+        ds[axis].attrs.pop("bounds", None)
     for var in ds.data_vars:
         ds[var].attrs[DATA_INTERVAL_ATTR] = period
     return ds
@@ -792,13 +783,9 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
             other = np.asarray(origin).reshape(()).astype(values.dtype, copy=False)
         except (TypeError, ValueError):
             return ds
-        coord = values.reshape(())
-        if other < coord:
-            values = np.stack([other, coord])
-        elif other > coord:
-            values = np.stack([coord, other])
-        else:
+        if other == values[0]:
             return ds
+        values = np.sort(np.stack([other, values[0]]))
     diffs, unit = _axis_tick_diffs(values)
     if diffs.size == 0 or np.any(diffs <= 0):
         raise UsageError(f"{axis!r} must be strictly increasing to stamp spacing")
@@ -817,7 +804,7 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
     n = ticks.size
     pairs = np.empty((n, 2), dtype=ticks.dtype)
     origin_arr = np.asarray(origin).astype(ticks.dtype, copy=False)
-    if _origin_is_right_of_last(origin_arr, ticks):
+    if origin_arr > ticks[-1]:  # left-labeled cells: origin closes the last one
         pairs[:, 0] = ticks
         pairs[:-1, 1] = ticks[1:]
         pairs[-1, 1] = origin_arr
@@ -831,19 +818,6 @@ def stamp_data_interval(ds, period=None, dim=None, origin=None):
     for name in out.data_vars:
         out[name].attrs.pop(DATA_INTERVAL_ATTR, None)
     return out
-
-
-def _origin_is_right_of_last(origin, ticks) -> bool:
-    """True when ``origin`` is after the last tick (left-labeled coords)."""
-    ticks = np.asarray(ticks)
-    if ticks.size == 0:
-        return False
-    try:
-        o = np.asarray(origin).reshape(())
-        last = ticks.reshape(-1)[-1]
-        return o > last
-    except (TypeError, ValueError):
-        return False
 
 
 def _default_bounds_origin(values):

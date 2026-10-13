@@ -11,40 +11,12 @@ from weather_skills_core.provenance import origin_skill
 
 _DATE_TAIL = re.compile(r"[_-]\d{4}-\d{2}-\d{2}(?:[_-]\d{2}-\d{2}-\d{2})?$")
 _VAR_TAIL = re.compile(r"[_-](?:precip|tp)$", re.I)
-_ACRONYMS = frozenset({"ecmwf", "s2s", "ghcn", "cmip6", "gefs", "oisst", "imerg", "smap"})
+_ACRONYMS = frozenset({"ecmwf", "s2s", "ghcn", "cmip6", "gefs", "oisst", "imerg", "smap", "chirps"})
 
 
 def _prettify_token(text: str) -> str:
     parts = [p for p in re.split(r"[_-]+", text.strip()) if p]
-    if not parts:
-        return text
-    out = []
-    for part in parts:
-        low = part.lower()
-        if low in _ACRONYMS:
-            out.append(part.upper())
-        elif low == "chirps":
-            out.append("CHIRPS")
-        else:
-            out.append(part.capitalize())
-    return " ".join(out)
-
-
-def _normalize_stem(stem: str) -> str:
-    base = _DATE_TAIL.sub("", stem)
-    return _VAR_TAIL.sub("", base)
-
-
-def _scheme_payload(token: str) -> str:
-    """Return the product id from a ``scheme:tail`` source token."""
-    head, _, tail = token.partition(":")
-    payload = (tail or head).strip()
-    if "/" in payload or "\\" in payload:
-        first = re.split(r"[/\\]", payload, maxsplit=1)[0].strip()
-        return first or payload
-    if payload.endswith(".zarr"):
-        return Path(payload).stem
-    return payload
+    return " ".join(p.upper() if p.lower() in _ACRONYMS else p.capitalize() for p in parts) or text
 
 
 def label_from_history(ds) -> str | None:
@@ -53,43 +25,31 @@ def label_from_history(ds) -> str | None:
         return None
     try:
         history = json.loads(raw) if isinstance(raw, str) else list(raw)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return None
     skill = origin_skill(history)
-    if skill is None:
-        return None
-    if skill.endswith("-fetch"):
-        return _prettify_token(skill[: -len("-fetch")])
-    return _prettify_token(skill)
+    return _prettify_token(skill.removesuffix("-fetch")) if skill else None
 
 
 def label_from_source_token(token: str) -> str:
+    """Product name from a source token: ``scheme:product/…``, a path, or a bare id."""
     text = token.strip()
-    if not text:
-        return ""
     if ":" in text:
-        return _prettify_token(_normalize_stem(_scheme_payload(text)))
-    if "/" in text or "\\" in text or text.endswith(".zarr"):
+        head, _, tail = text.partition(":")
+        # The product id is the first path segment after the scheme.
+        text = re.split(r"[/\\]", (tail or head).strip())[0].removesuffix(".zarr")
+    elif "/" in text or "\\" in text or text.endswith(".zarr"):
         text = Path(text).stem
-    return _prettify_token(_normalize_stem(text))
+    text = _VAR_TAIL.sub("", _DATE_TAIL.sub("", text))
+    return _prettify_token(text)
 
 
 def dataset_display_label(ds, fallback) -> str:
     """Short product name from ``weather_skills_source``, provenance, or ``fallback``."""
-    src = ds.attrs.get("weather_skills_source")
-    if isinstance(src, str) and src.strip():
-        label = label_from_source_token(src)
-        if label:
+    for token in (ds.attrs.get("weather_skills_source"), ds.encoding.get("source")):
+        if isinstance(token, str) and (label := label_from_source_token(token)):
             return label
-    enc = ds.encoding.get("source")
-    if isinstance(enc, str) and enc.strip():
-        label = label_from_source_token(enc)
-        if label:
-            return label
-    label = label_from_history(ds)
-    if label:
-        return label
-    return fallback() if callable(fallback) else str(fallback)
+    return label_from_history(ds) or (fallback() if callable(fallback) else str(fallback))
 
 
 def resolve_input_labels(
@@ -108,9 +68,4 @@ def resolve_input_labels(
 
 def combine_display_labels(labels: list[str]) -> str:
     """Join unique labels for a shared row title (e.g. one forecast row)."""
-    unique = list(dict.fromkeys(label for label in labels if label))
-    if not unique:
-        return ""
-    if len(unique) == 1:
-        return unique[0]
-    return " / ".join(unique)
+    return " / ".join(dict.fromkeys(label for label in labels if label))
