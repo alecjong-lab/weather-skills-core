@@ -101,26 +101,37 @@ the number of `--output` paths.
 
 ## Provenance
 
-Every writing skill records one node on the `weather_skills_history` DAG.
+The decorator records provenance for you. The only thing a skill sets is
+`weather_skills_source`, and only fetchers set it:
 
-| Attr | Who sets it | Meaning |
-| --- | --- | --- |
-| `weather_skills_source` | fetchers (optional) | Where the data came from, e.g. `chirps` or `dynamical:<catalog-id>`. Plots prettify this token for the short product name, so pick something that title-cases cleanly. |
-| `weather_skills_history` | every writing skill | JSON list of `{skill, version, args, input, commit?}` nodes |
+```python
+ds.attrs["weather_skills_source"] = "chirps"  # or "dynamical:<catalog-id>"
+```
 
-A single-input path stays oldest-first: the parent's nodes, then this
-skill. A multi-input skill is a join — the top-level list is only this
-skill's entry, and every parent subgraph is nested on that entry as
-`input: [{basename, hash, history}, …]`. Do not flatten the first
-parent into a linear spine.
+Plots turn this token into the short product name, so pick one that
+title-cases cleanly.
 
-`input` is `{basename, hash}` of one upstream Zarr, or a list of those
-objects (each may carry `history`). `commit` is the git SHA of the skill
-that ran (`repo` and `dirty` are recorded when known), so a reproduction
-can pin `uvx --from git+<repo>@<commit>`. Path write targets and Dataset
-path strings are omitted from `args`. Plots store the same JSON in file
-metadata. When the chain is intact, PNG/JPEG figures also get a corner
-`weather-skills provenance verified` mark; HTML figures get metadata only.
+Everything else is in `weather_skills_history`, a JSON list of entries.
+Each entry is one skill run:
+
+| Key | Meaning |
+| --- | --- |
+| `skill`, `version` | Which skill ran |
+| `args` | Its CLI arguments, minus input and output paths |
+| `input` | The Zarr(s) it read: `{basename, hash}`, a list of those, or `null` for a fetcher |
+| `commit`, `repo`, `dirty` | Git identity of the skill code, when known |
+
+Chaining works like this:
+
+- **One input:** the new history is the input's history plus one entry,
+  oldest first. A fetch → clip → aggregate pipeline is a flat list of
+  three entries.
+- **Several inputs** (e.g. `difference A B`): the history is a single
+  entry, and each item in its `input` list carries that parent's whole
+  history under `history`. Read it as a tree, not a list.
+
+Figures (PNG, JPEG, HTML) store the same JSON in file metadata. A PNG
+or JPEG with a valid history also gets a small star stamp in the corner.
 
 ## Writing Zarr
 
