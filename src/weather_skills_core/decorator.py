@@ -167,6 +167,15 @@ def write_output(value, out_path, history, first_ds):
         raise UsageError(
             f"--output {out_path} is an existing file, not a Zarr store; pass a new path"
         )
+    # Zarr needs equal dask chunks along each dim (the last may be short).
+    # Rolling windows, interpolation, and unify_chunks leave uneven ones
+    # (4, 4, 2, 3); rechunk those variables to their largest chunk, and drop
+    # the input's chunk encoding, which no longer lines up.
+    for name, var in value.variables.items():
+        if var.chunks and any(len(set(c[:-1])) > 1 or c[-1] > c[0] for c in var.chunks):
+            value[name] = var.chunk({d: max(c) for d, c in zip(var.dims, var.chunks)})
+            value[name].encoding.pop("chunks", None)
+            value[name].encoding.pop("preferred_chunks", None)
     if out_path.exists():
         shutil.rmtree(out_path)
     try:
