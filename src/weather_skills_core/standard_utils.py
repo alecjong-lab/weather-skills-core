@@ -92,8 +92,9 @@ def fill_missing_data_var_attrs(src, dst):
     """Fill attrs present on ``src`` but missing on matching ``dst`` data vars.
 
     Heals stripped metadata (regrid, etc.) without overwriting attrs a skill set.
-    Does not restore ``aggregation_period`` onto vars whose ``cell_methods``
-    already record a sum (period totals).
+    Does not restore ``aggregation_period`` or rate descriptions (``comment``,
+    ``short_name``, ``step_type``, e.g. "Average precipitation rate…", ``prate``,
+    ``avg``) onto vars whose ``cell_methods`` already record a sum (period totals).
     """
     from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, cell_methods_has_sum
 
@@ -102,11 +103,11 @@ def fill_missing_data_var_attrs(src, dst):
     for name in dst.data_vars:
         if name not in src.data_vars:
             continue
-        skip_period = cell_methods_has_sum(dst[name].attrs.get("cell_methods"))
+        is_total = cell_methods_has_sum(dst[name].attrs.get("cell_methods"))
         for key, value in src[name].attrs.items():
             if key in dst[name].attrs:
                 continue
-            if skip_period and key == AGGREGATION_PERIOD_ATTR:
+            if is_total and key in (AGGREGATION_PERIOD_ATTR, "comment", "short_name", "step_type"):
                 continue
             if not dirty:
                 out = dst.copy()

@@ -638,3 +638,30 @@ def test_roll_and_agg_mean_window():
 def test_roll_and_agg_rejects_sum():
     with pytest.raises(UsageError, match="unsupported rolling method"):
         utils.roll_and_agg(make_gridded(n_time=5), 3, "time", method="sum")
+
+
+def test_fill_missing_attrs_skips_rate_descriptions_on_totals():
+    rate_attrs = {
+        "units": "mm day-1",
+        "comment": "Average precipitation rate since the previous forecast step.",
+        "short_name": "prate",
+        "step_type": "avg",
+        "aggregation_period": "7 day",
+        "long_name": "Precipitation rate",
+    }
+    src = xr.Dataset({"precip": ("time", [1.0], rate_attrs)})
+    dst = xr.Dataset({"precip": ("time", [7.0], {"units": "mm", "cell_methods": "time: sum"})})
+    out = utils.fill_missing_data_var_attrs(src, dst)
+    attrs = out["precip"].attrs
+    for key in ("comment", "short_name", "step_type", "aggregation_period"):
+        assert key not in attrs
+    assert attrs["units"] == "mm"
+    assert attrs["long_name"] == "Precipitation rate"
+
+
+def test_fill_missing_attrs_restores_comment_on_rates():
+    src = xr.Dataset({"precip": ("time", [1.0], {"comment": "rate", "step_type": "avg"})})
+    dst = xr.Dataset({"precip": ("time", [1.0], {"cell_methods": "time: mean"})})
+    out = utils.fill_missing_data_var_attrs(src, dst)
+    assert out["precip"].attrs["comment"] == "rate"
+    assert out["precip"].attrs["step_type"] == "avg"
