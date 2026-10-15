@@ -616,7 +616,7 @@ def test_run_loop_write_stamps_amount_standard_name(tmp_path):
 
     copy(["-i", str(src), "-o", str(out)])
     written = xr.open_zarr(out, consolidated=True)
-    assert written["tp"].attrs["standard_name"] == "lwe_thickness_of_precipitation_amount"
+    assert written["tp"].attrs["standard_name"] == "precipitation_amount"  # CF: kg m-2 is a mass
 
 
 def test_run_loop_write_snaps_latlon_to_float32(tmp_path):

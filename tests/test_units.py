@@ -612,6 +612,17 @@ def test_stamp_precip_amounts_overwrites_rate_display_names():
     assert stamped["precip"].attrs["long_name"] == "CHIRPS daily precipitation"
 
 
+def test_stamp_precip_amounts_mass_units_are_precipitation_amount():
+    """kg m-2 is a mass per area: CF precipitation_amount, not lwe_thickness (a depth)."""
+    ds = make_gridded(n_time=1, fill=1.0, units="kg m-2")
+    ds["precip"].attrs["standard_name"] = "precipitation_amount"
+    assert stamp_precip_amounts(ds)["precip"].attrs["standard_name"] == "precipitation_amount"
+    depth = make_gridded(n_time=1, fill=1.0, units="m")
+    assert stamp_precip_amounts(depth)["precip"].attrs["standard_name"] == (
+        "lwe_thickness_of_precipitation_amount"
+    )
+
+
 def test_precip_amounts_to_rates_daily_and_step():
     """Daily amounts stay numerically; step amounts become per-step rates."""
     daily = make_gridded(n_time=2, fill=4.0, units="mm")

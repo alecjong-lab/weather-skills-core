@@ -631,7 +631,10 @@ def stamp_precip_amounts(ds):
         if not isinstance(units, str):
             continue
         if kind_from_units(units) == "precip_amount":
-            ds[name].attrs["standard_name"] = amount_sn
+            # CF: lwe_thickness_... is a depth (canonical unit m); a mass per
+            # area (kg m-2) is precipitation_amount.
+            mass = ureg.Unit(units).dimensionality == ureg.Unit("kg m-2").dimensionality
+            ds[name].attrs["standard_name"] = "precipitation_amount" if mass else amount_sn
             long_name = ds[name].attrs.get("long_name")
             if not (
                 isinstance(long_name, str) and long_name.strip()
