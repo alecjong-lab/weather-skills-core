@@ -532,8 +532,12 @@ def convert_dataarray(da, dst_units: str):
     """
     quantified_in = da.pint.units is not None
     qda = da if quantified_in else da.pint.quantify()
+    # Keep a float32 field float32: the registry stores scalars (the water
+    # density, conversion factors) as 0-d float64 arrays, which upcast.
+    keep = da.dtype if da.dtype.kind == "f" else None
     try:
         out = qda.pint.to(dst_units)
+        out = out.astype(keep) if keep else out
         if quantified_in:
             return out, False
         out = out.pint.dequantify()
@@ -549,6 +553,7 @@ def convert_dataarray(da, dst_units: str):
             converted = density_scaled.to(dst_units)
         except pint_xarray.pint.DimensionalityError:
             continue
+        converted = converted.astype(keep) if keep else converted
         if quantified_in:
             return da.copy(data=converted), True
         out = da.copy(data=np.asarray(converted.magnitude))

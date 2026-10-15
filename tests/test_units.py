@@ -14,6 +14,7 @@ from weather_skills_core.units import (
     STANDARD,
     assert_nonoverlapping_intervals,
     classify_variable,
+    convert_dataarray,
     convert_values,
     deaccumulate_along_step,
     dequantify_dataset,
@@ -745,3 +746,16 @@ def test_rate_to_total_converts_mass_flux_through_water_density():
     total = rate_to_total(quantify_dataset(ds)["precip"], "1 day")
     assert str(total.pint.units) in ("millimeter", "mm")
     np.testing.assert_allclose(total.pint.dequantify().values, [1.0])
+
+
+def test_convert_dataarray_keeps_float32():
+    """kg m-2 s-1 -> mm day-1 goes through the water density; float32 stays float32."""
+    da = make_gridded(n_time=1, fill=1e-4, units="kg m-2 s-1")["precip"].astype("float32")
+    da.attrs["units"] = "kg m-2 s-1"
+    for src in (da, da.pint.quantify()):
+        out, density = convert_dataarray(src, "mm day-1")
+        assert density
+        assert out.dtype == np.float32
+        np.testing.assert_allclose(
+            out.pint.dequantify().values if out.pint.units else out.values, 8.64, rtol=1e-5
+        )
