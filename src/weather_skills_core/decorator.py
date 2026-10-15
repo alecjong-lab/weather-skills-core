@@ -173,7 +173,7 @@ def write_output(value, out_path, history, first_ds):
     # the input's chunk encoding, which no longer lines up.
     for name, var in value.variables.items():
         if var.chunks and any(len(set(c[:-1])) > 1 or c[-1] > c[0] for c in var.chunks):
-            value[name] = var.chunk({d: max(c) for d, c in zip(var.dims, var.chunks)})
+            value[name] = var.chunk({d: max(c) for d, c in var.chunksizes.items()})
             value[name].encoding.pop("chunks", None)
             value[name].encoding.pop("preferred_chunks", None)
     if out_path.exists():
