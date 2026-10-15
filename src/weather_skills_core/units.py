@@ -424,12 +424,9 @@ def rate_to_total(da, period: str, dim: str | None = None):
     qda = da if quantified_in else da.pint.quantify()
     if qda.pint.units is None:
         raise UsageError(f"variable {da.name!r} has no units to convert to totals")
-    total = qda * base
-    # Prefer mm for precip depth rates.
-    try:
-        total = total.pint.to(STANDARD["precip_amount"]["units"])
-    except (pint_xarray.pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
-        pass
+    # To mm; a mass flux (kg m-2 s-1) goes through liquid-water density. A rate
+    # that cannot become a depth raises rather than being labelled mm unconverted.
+    total, _ = convert_dataarray(qda * base, STANDARD["precip_amount"]["units"])
     return total
 
 

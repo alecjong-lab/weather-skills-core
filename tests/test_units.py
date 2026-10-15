@@ -723,3 +723,14 @@ def test_to_standard_units_keeps_temperature_differences_as_differences():
     out = to_standard_units(quantify_dataset(ds), variables=["t2m"]).pint.dequantify()
     assert float(out["t2m"].mean()) == pytest.approx(2.0)
     assert units_equal(out["t2m"].attrs["units"], "delta_degC")
+
+
+def test_rate_to_total_converts_mass_flux_through_water_density():
+    """kg m-2 s-1 x 1 day is 86400 kg m-2 = 86400 mm, not 1 labelled mm."""
+    ds = xr.Dataset(
+        {"precip": (("time",), [1.0 / 86400], {"units": "kg m-2 s-1"})},
+        coords={"time": np.array(["2026-01-01"], dtype="datetime64[D]")},
+    )
+    total = rate_to_total(quantify_dataset(ds)["precip"], "1 day")
+    assert str(total.pint.units) in ("millimeter", "mm")
+    np.testing.assert_allclose(total.pint.dequantify().values, [1.0])
