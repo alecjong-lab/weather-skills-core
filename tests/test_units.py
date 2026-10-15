@@ -759,3 +759,19 @@ def test_convert_dataarray_keeps_float32():
         np.testing.assert_allclose(
             out.pint.dequantify().values if out.pint.units else out.values, 8.64, rtol=1e-5
         )
+
+
+def test_stamp_precip_amounts_leaves_non_precip_kg_m2_alone():
+    """Total column water / water vapour in kg m-2 are not precipitation."""
+    ds = make_gridded(n_time=1, fill=20.0, units="kg m-2", name="tcw")
+    ds["tcw"].attrs.update(
+        standard_name="atmosphere_mass_content_of_water_vapor", long_name="Total column water"
+    )
+    out = stamp_precip_amounts(ds)
+    assert out["tcw"].attrs["standard_name"] == "atmosphere_mass_content_of_water_vapor"
+    assert out["tcw"].attrs["long_name"] == "Total column water"
+    # A precip rate turned into a total still gets the amount name.
+    rate = make_gridded(n_time=1, fill=5.0, units="mm", name="precip")
+    rate["precip"].attrs["standard_name"] = "lwe_precipitation_rate"
+    stamped = stamp_precip_amounts(rate)["precip"].attrs["standard_name"]
+    assert stamped == "lwe_thickness_of_precipitation_amount"

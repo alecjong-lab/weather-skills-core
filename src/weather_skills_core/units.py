@@ -629,13 +629,22 @@ def looks_like_rate_display_name(value) -> bool:
 
 
 def stamp_precip_amounts(ds):
-    """Stamp amount CF metadata when units are precip depth/mass (overwrite rate names)."""
+    """Stamp amount CF metadata on precip variables whose units are a depth/mass.
+
+    Overwrites rate names left after a rate became a total. Variables that are
+    not precip by name or standard_name are left alone, whatever their units.
+    """
     amount_sn = STANDARD["precip_amount"]["standard_name"]
     for name in ds.data_vars:
         units = ds[name].attrs.get("units")
         if not isinstance(units, str):
             continue
-        if kind_from_units(units) == "precip_amount":
+        # Only variables already precip by name or standard_name: units alone
+        # would relabel total column water or water vapour (kg m-2) as rain.
+        kind = classify_variable(
+            name, units=units, standard_name=ds[name].attrs.get("standard_name")
+        )
+        if kind in ("precip", "precip_amount") and kind_from_units(units) == "precip_amount":
             # CF: lwe_thickness_... is a depth (canonical unit m); a mass per
             # area (kg m-2) is precipitation_amount.
             mass = ureg.Unit(units).dimensionality == ureg.Unit("kg m-2").dimensionality

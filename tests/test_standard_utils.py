@@ -25,7 +25,7 @@ def test_parse_date_rejects_compact():
 
 
 def test_parse_bbox_valid():
-    assert utils.parse_bbox("1/2/3/4") == (1.0, 2.0, 3.0, 4.0)
+    assert utils.parse_bbox("4/2/1/3") == (4.0, 2.0, 1.0, 3.0)
 
 
 def test_parse_bbox_negative_values():
@@ -718,3 +718,22 @@ def test_roll_and_agg_mean_of_celsius():
     out = utils.roll_and_agg(quantify_dataset(ds), 3, "time", "mean")
     assert str(out["tmax"].pint.units) == "degree_Celsius"
     np.testing.assert_allclose(out["tmax"].pint.magnitude[:, 0, 0], [1, 2, 3])
+
+
+def test_normalize_step_coord_keeps_attrs():
+    steps = (np.arange(3) * np.timedelta64(6, "h")).astype("timedelta64[h]")
+    ds = xr.Dataset({"tp": (("step",), np.ones(3))}, coords={"step": steps})
+    ds["step"].attrs.update(standard_name="forecast_period", long_name="lead time")
+    out = utils.normalize_step_coord(ds)
+    assert out["step"].dtype == np.dtype("timedelta64[ns]")
+    assert out["step"].attrs["standard_name"] == "forecast_period"
+
+
+@pytest.mark.parametrize("bbox", ["-5/34/5/42", "95/0/0/10", "0/0/-91/10"])
+def test_parse_bbox_rejects_bad_latitudes(bbox):
+    with pytest.raises(UsageError, match="S <= N"):
+        utils.parse_bbox(bbox)
+
+
+def test_parse_bbox_allows_antimeridian():
+    assert utils.parse_bbox("5/170/-5/-170") == (5.0, 170.0, -5.0, -170.0)

@@ -51,7 +51,10 @@ def normalize_step_coord(ds, dim: str = "step"):
         return ds
     if values.dtype == np.dtype("timedelta64[ns]"):
         return ds
-    return ds.assign_coords({dim: values.astype("timedelta64[ns]")})
+    # Keep the coord's attrs (standard_name=forecast_period, long_name).
+    return ds.assign_coords(
+        {dim: (ds[dim].dims, values.astype("timedelta64[ns]"), dict(ds[dim].attrs))}
+    )
 
 
 _LATLON_DECIMALS = 5
@@ -159,6 +162,11 @@ def parse_bbox(bbox: str) -> tuple:
         north, west, south, east = (float(x) for x in bbox.split("/"))
     except ValueError:
         raise UsageError("--bbox must be four decimal degrees N/W/S/E.") from None
+    if not (-90 <= south <= north <= 90):
+        raise UsageError(
+            f"--bbox {bbox}: needs -90 <= S <= N <= 90 (order is N/W/S/E); "
+            "west > east is fine and crosses the antimeridian."
+        )
     return north, west, south, east
 
 
