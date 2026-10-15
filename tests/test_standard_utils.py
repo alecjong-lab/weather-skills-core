@@ -595,6 +595,48 @@ def test_clip_by_geometry_grid_keeps_any_cell_overlap():
     assert list(out.longitude.values) == [11.0]
 
 
+def test_clip_by_geometry_keeps_missing_row_inside_geometry():
+    from shapely.geometry import box
+
+    ds = make_gridded()
+    ds["precip"][:, 1, :] = np.nan  # lat=2 row has no data but lies inside
+    out = utils.clip_by_geometry(ds, box(10.5, 0.5, 12.5, 3.5), drop=True)
+    assert list(out.latitude.values) == [1.0, 2.0, 3.0]
+
+
+def test_clip_by_geometry_masks_only_grid_variables():
+    from shapely.geometry import box
+
+    ds = make_gridded()
+    ds["time_bnds"] = (("time", "nv"), np.zeros((2, 2)))
+    for drop in (True, False):
+        out = utils.clip_by_geometry(ds, box(10.5, 0.5, 11.5, 1.5), drop=drop)
+        assert out["time_bnds"].dims == ("time", "nv")
+        assert int(out["precip"].isel(time=0).notnull().sum()) == 1
+
+
+def test_clip_by_geometry_grid_outside_geometry_bounds():
+    from shapely.geometry import box
+
+    # A 0..360 grid and a polygon that sits in a corner of it.
+    ds = make_gridded(lats=(-1.0, 0.0, 1.0), lons=(350.0, 355.0, 5.0, 10.0))
+    out = utils.clip_by_geometry(ds, box(7.0, -0.4, 8.0, 0.4), drop=True)
+    assert list(out.latitude.values) == [0.0]
+    assert list(out.longitude.values) == [5.0, 10.0]
+
+
+def test_clip_by_geometry_stations_keep_outside():
+    from shapely.geometry import box
+
+    ds = make_station()
+    ds["elevation"] = ("station_id", [1.0, 2.0, 3.0])
+    ds["source"] = ((), "tahmo")
+    out = utils.clip_by_geometry(ds, box(36.5, -0.5, 37.5, 0.5), drop=False)
+    assert out["source"].dims == ()
+    assert np.isnan(out["elevation"].values[[0, 2]]).all()
+    assert out["precip"].isel(time=0).notnull().values.tolist() == [False, True, False]
+
+
 def test_clip_by_geometry_empty_raises():
     from shapely.geometry import box
 

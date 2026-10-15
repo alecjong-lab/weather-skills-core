@@ -383,8 +383,14 @@ def clip_by_geometry(
         )
         if not mask.any():
             raise DataError("geometry selects no stations")
+        if drop:
+            return ds.isel({point_dim: np.nonzero(mask)[0]})
+        # NaN only the variables that run along the station axis; ds.where
+        # would broadcast the mask onto every other variable.
         keep = xr.DataArray(mask, dims=point_dim)
-        return ds.isel({point_dim: np.nonzero(mask)[0]}) if drop else ds.where(keep, drop=False)
+        return ds.assign(
+            {name: var.where(keep) for name, var in ds.data_vars.items() if point_dim in var.dims}
+        )
 
     if lat_dim is None or lon_dim is None:
         lat_dim, lon_dim = detect_spatial_dims(ds)
@@ -419,21 +425,39 @@ def clip_by_geometry(
         east = np.maximum(lon_edges[:-1], lon_edges[1:])
         south = np.minimum(lat_edges[:-1], lat_edges[1:])
         north = np.maximum(lat_edges[:-1], lat_edges[1:])
-        west2d, south2d = np.meshgrid(west, south)
-        east2d, north2d = np.meshgrid(east, north)
-        cells = shapely.box(west2d, south2d, east2d, north2d)
-        # Keep cells with a positive-area overlap (not just edge/corner touch).
-        mask = shapely.area(shapely.intersection(cells, geometry)) > 0.0
+        # Only cells inside the geometry's bounding box can overlap it; build
+        # cell boxes for that window alone, not for the whole (maybe global) grid.
+        g_west, g_south, g_east, g_north = geometry.bounds
+        rows = np.nonzero((north > g_south) & (south < g_north))[0]
+        cols = np.nonzero((east > g_west) & (west < g_east))[0]
+        mask = np.zeros((south.size, west.size), dtype=bool)
+        if rows.size and cols.size:
+            west2d, south2d = np.meshgrid(west[cols], south[rows])
+            east2d, north2d = np.meshgrid(east[cols], north[rows])
+            cells = shapely.box(west2d, south2d, east2d, north2d)
+            # Keep cells with a positive-area overlap (not just edge/corner touch).
+            mask[np.ix_(rows, cols)] = shapely.area(shapely.intersection(cells, geometry)) > 0.0
 
-    mask_da = xr.DataArray(
-        mask, dims=(lat_dim, lon_dim), coords={lat_dim: ds[lat_dim], lon_dim: ds[lon_dim]}
-    )
-    if not bool(mask_da.any()):
+    if not mask.any():
         raise DataError("geometry selects no grid cells")
-    out = ds.where(mask_da)
     if drop:
-        out = out.dropna(lat_dim, how="all").dropna(lon_dim, how="all")
-    return out
+        # Drop the rows and columns the geometry never touches, decided by the
+        # mask rather than the data: a row of missing values inside the polygon
+        # stays, so the grid keeps its regular spacing, and nothing is computed.
+        rows = mask.any(axis=1)
+        cols = mask.any(axis=0)
+        ds = ds.isel({lat_dim: np.nonzero(rows)[0], lon_dim: np.nonzero(cols)[0]})
+        mask = mask[rows][:, cols]
+    # NaN only the variables on the grid; ds.where would broadcast the mask
+    # onto every other variable (time bounds, station metadata, ...).
+    mask_da = xr.DataArray(mask, dims=(lat_dim, lon_dim))
+    return ds.assign(
+        {
+            name: var.where(mask_da)
+            for name, var in ds.data_vars.items()
+            if lat_dim in var.dims and lon_dim in var.dims
+        }
+    )
 
 
 def grid_spacing(coord_vals) -> float:
