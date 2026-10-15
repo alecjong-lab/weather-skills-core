@@ -341,6 +341,24 @@ def test_run_loop_output_kwarg_single(tmp_path):
     assert seen["output"] == out
 
 
+def test_run_loop_refuses_plain_file_output(tmp_path, capsys):
+    src = tmp_path / "in.zarr"
+    out = tmp_path / "notes.txt"
+    make_gridded().to_zarr(src, mode="w", consolidated=True)
+    out.write_text("keep me")
+
+    @weather_skill(name="copy", version="0.1.0")
+    @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
+    def copy(ds, **kwargs):
+        return ds
+
+    with pytest.raises(SystemExit) as exc:
+        copy(["-i", str(src), "-o", str(out)])
+    assert exc.value.code == 2
+    assert "existing file, not a Zarr store" in capsys.readouterr().err
+    assert out.read_text() == "keep me"
+
+
 def test_run_loop_no_artifact(tmp_path):
     src = tmp_path / "in.zarr"
     make_gridded().to_zarr(src, mode="w", consolidated=True)

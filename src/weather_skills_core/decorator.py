@@ -163,6 +163,10 @@ def write_output(value, out_path, history, first_ds):
         value.attrs = {**first_ds.attrs, **value.attrs}
     value.attrs.pop(INPUT_PATH_ATTR, None)
     provenance_mod.stamp_zarr(value, history)
+    if out_path.exists() and not out_path.is_dir():
+        raise UsageError(
+            f"--output {out_path} is an existing file, not a Zarr store; pass a new path"
+        )
     if out_path.exists():
         shutil.rmtree(out_path)
     try:
