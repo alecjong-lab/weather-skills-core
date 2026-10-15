@@ -603,11 +603,16 @@ def roll_and_agg(
         raise UsageError(
             f"rolling aggregation requires datetime64 or timedelta64 on {dim!r}; got dtype {dtype}"
         )
-    rolled = ds.rolling({dim: window}, min_periods=min_periods, center=False)
+    # Roll on plain numbers: pint refuses the window sum behind a mean for an
+    # offset unit (degree_Celsius), though mean/min/max of one are well defined.
+    quantified = any(getattr(ds[v].pint, "units", None) is not None for v in ds.data_vars)
+    plain = ds.pint.dequantify() if quantified else ds
+    rolled = plain.rolling({dim: window}, min_periods=min_periods, center=False)
     fn = {"mean": rolled.mean, "max": rolled.max, "min": rolled.min}.get(method)
     if fn is None:
         raise UsageError(f"unsupported rolling method {method!r}; use mean|min|max")
-    out = fn(skipna=True)
+    out = fn(skipna=True, keep_attrs=True)
+    out = out.pint.quantify() if quantified else out
     out = out.isel({dim: slice(window - 1, None)})
     step_by_align = {"center": (window - 1) // 2, "right": 0, "left": window - 1}
     if align not in step_by_align:

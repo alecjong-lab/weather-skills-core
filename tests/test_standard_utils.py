@@ -707,3 +707,14 @@ def test_fill_missing_attrs_restores_comment_on_rates():
     out = utils.fill_missing_data_var_attrs(src, dst)
     assert out["precip"].attrs["comment"] == "rate"
     assert out["precip"].attrs["step_type"] == "avg"
+
+
+def test_roll_and_agg_mean_of_celsius():
+    """A rolling mean of degree_Celsius used to raise pint OffsetUnitCalculusError."""
+    from weather_skills_core.units import quantify_dataset
+
+    ds = make_gridded(n_time=5, name="tmax", units="degree_Celsius")
+    ds["tmax"].values[:] = np.arange(5.0)[:, None, None]
+    out = utils.roll_and_agg(quantify_dataset(ds), 3, "time", "mean")
+    assert str(out["tmax"].pint.units) == "degree_Celsius"
+    np.testing.assert_allclose(out["tmax"].pint.magnitude[:, 0, 0], [1, 2, 3])
