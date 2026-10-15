@@ -327,7 +327,6 @@ def weather_skill(
                 "extra runtime information"
             )
 
-        has_bbox = any(arg.dest == "bbox" for arg in arguments)
         parser = argparse.ArgumentParser(
             description=fn.__doc__,
             epilog=f"skill version: {version}",
@@ -358,12 +357,18 @@ def weather_skill(
             parser.add_argument(*arg.option_strings, **kwargs)
 
         strip_dests = {arg.dest for arg in arguments if arg.dataset_type is not None} | {"output"}
+        # Options taking one value (store/append), for rewrite_negative_values.
+        value_options = {
+            opt
+            for action in parser._actions
+            if action.nargs is None
+            for opt in action.option_strings
+        }
 
         @functools.wraps(fn)
         def wrapper(argv=None):
             argv = sys.argv[1:] if argv is None else list(argv)
-            if has_bbox:
-                argv = standard_args.rewrite_bbox_argv(argv)
+            argv = standard_args.rewrite_negative_values(argv, value_options)
 
             try:
                 probing = any(

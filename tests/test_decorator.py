@@ -17,11 +17,33 @@ from weather_skills_core.provenance import (
     load_history,
     stamp_zarr,
 )
-from weather_skills_core.standard_args import rewrite_bbox_argv
+from weather_skills_core.standard_args import rewrite_negative_values
 
 
-def test_rewrite_bbox_equals_form():
-    assert rewrite_bbox_argv(["--bbox", "-10/20/-20/30"]) == ["--bbox=-10/20/-20/30"]
+def test_rewrite_negative_values():
+    opts = {"--bbox", "--point", "-o"}
+    assert rewrite_negative_values(["--bbox", "-10/20/-20/30"], opts) == ["--bbox=-10/20/-20/30"]
+    assert rewrite_negative_values(["--point", "-1.28,36.82,NBO"], opts) == [
+        "--point=-1.28,36.82,NBO"
+    ]
+    assert rewrite_negative_values(["--point", "-.5,36"], opts) == ["--point=-.5,36"]
+    # A real flag after a value option is left for argparse to report.
+    assert rewrite_negative_values(["--point", "-o", "x"], opts) == ["--point", "-o", "x"]
+    # Options not taking a value are untouched.
+    assert rewrite_negative_values(["--flag", "-1,2"], opts) == ["--flag", "-1,2"]
+
+
+def test_negative_point_parses_without_equals(tmp_path):
+    seen = {}
+
+    @weather_skill(name="pts", version="1.0.0", output=False)
+    @weather_skill.argument("--point", action="append")
+    @weather_skill.argument("--bbox")
+    def pts(point, bbox, **kwargs):
+        seen.update(point=point, bbox=bbox)
+
+    pts(["--point", "-1.28,36.82,NBO", "--point", "-4.04,39.67", "--bbox", "-3/39/-5/40"])
+    assert seen == {"point": ["-1.28,36.82,NBO", "-4.04,39.67"], "bbox": (-3.0, 39.0, -5.0, 40.0)}
 
 
 def test_parser_basic_flags():
