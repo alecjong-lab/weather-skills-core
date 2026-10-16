@@ -34,6 +34,8 @@ One question per file:
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core",
 # ]
 # ///
+"""Smooth a gridded Zarr over a lat/lon box and date range."""
+
 from weather_skills_core import Dataset, weather_skill
 
 # Kept in lockstep with SKILL.md metadata.version by CI; do not edit by hand.
@@ -47,7 +49,7 @@ _SKILL_VERSION = "0.1.0"
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--smoothing", type=int, help="Window width.")
 def my_skill(ds, output, bbox, start_time, end_time, smoothing, **kwargs):
-    """Shown as the CLI description."""
+    """Smooth a gridded Zarr over a lat/lon box and date range."""
     return ds
 
 
@@ -173,6 +175,10 @@ catalogs, recipes) goes in `references/*.md`, linked from here.
 - Examples use real values (a real bbox, dates, dataset ids), not
   placeholders.
 - Say each thing once: the body does not repeat the description.
+- The decorated function's docstring is the `--help` description: one
+  plain sentence starting with a verb, saying what the skill does, in line
+  with the `description`. The module docstring is the same sentence.
+  Implementation notes go in `#` comments.
 
 ## Checklist
 
