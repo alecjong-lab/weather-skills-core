@@ -702,6 +702,13 @@ def test_roll_and_agg_labels_uneven_time_exactly():
     assert center["time"].attrs["standard_name"] == "time"
 
 
+@pytest.mark.parametrize("align", ["left", "center", "right"])
+def test_roll_and_agg_window_longer_than_series_is_empty(align):
+    ds = make_gridded(n_time=3)
+    out = utils.roll_and_agg(ds, 5, "time", method="mean", align=align)
+    assert out.sizes["time"] == 0
+
+
 def test_roll_and_agg_rejects_sum():
     with pytest.raises(UsageError, match="unsupported rolling method"):
         utils.roll_and_agg(make_gridded(n_time=5), 3, "time", method="sum")

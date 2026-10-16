@@ -630,8 +630,8 @@ def roll_and_agg(
     step_shift = step_by_align[align]
     # Label each window with the original coordinate of its left/center/right
     # sample, so uneven or sub-daily spacing is labelled exactly.
-    n = ds.sizes[dim]
-    labels = ds[dim].values[window - 1 - step_shift : n - step_shift]
+    start = window - 1 - step_shift
+    labels = ds[dim].values[start : start + out.sizes[dim]]
     out = out.assign_coords({dim: (dim, labels, ds[dim].attrs)})
     if stride is None:
         return out
