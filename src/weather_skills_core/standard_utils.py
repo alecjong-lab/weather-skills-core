@@ -449,13 +449,16 @@ def clip_by_geometry(
     if not mask.any():
         raise DataError("geometry selects no grid cells")
     if drop:
-        # Drop the rows and columns the geometry never touches, decided by the
-        # mask rather than the data: a row of missing values inside the polygon
-        # stays, so the grid keeps its regular spacing, and nothing is computed.
-        rows = mask.any(axis=1)
-        cols = mask.any(axis=0)
-        ds = ds.isel({lat_dim: np.nonzero(rows)[0], lon_dim: np.nonzero(cols)[0]})
-        mask = mask[rows][:, cols]
+        # Trim to the span of rows and columns the geometry touches, decided by
+        # the mask rather than the data. Rows between the parts of a
+        # MultiPolygon stay (as NaN), so the grid keeps its regular spacing,
+        # and nothing is computed.
+        rows = np.nonzero(mask.any(axis=1))[0]
+        cols = np.nonzero(mask.any(axis=0))[0]
+        rows = slice(rows[0], rows[-1] + 1)
+        cols = slice(cols[0], cols[-1] + 1)
+        ds = ds.isel({lat_dim: rows, lon_dim: cols})
+        mask = mask[rows, cols]
     # NaN only the variables on the grid; ds.where would broadcast the mask
     # onto every other variable (time bounds, station metadata, ...).
     mask_da = xr.DataArray(mask, dims=(lat_dim, lon_dim))

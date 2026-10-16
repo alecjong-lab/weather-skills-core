@@ -422,3 +422,12 @@ def test_bbox_from_feature_prefers_stored_bbox():
         "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
     }
     assert bbox_from_feature(feature) == (1.0, 2.0, -1.0, 4.0)
+
+
+def test_http_json_read_timeout_is_data_error(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(region_mod.urllib.request, "urlopen", timeout)
+    with pytest.raises(DataError, match="timed out"):
+        region_mod._http_json("https://example.invalid/x.json", what="test fetch")

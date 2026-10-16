@@ -1,6 +1,6 @@
 """Resolve a place name to a bbox and a GeoJSON Feature.
 
-Lookup order (no network until a later step):
+Lookup order (geoBoundaries and Nominatim are the only network calls):
 
 1. Bundled Natural Earth countries — ISO3 or country name. The outline comes
    from geoBoundaries ADM0 (same source as admin units); the bundled 1:110m
@@ -232,6 +232,8 @@ def _http_json(url: str, *, what: str, missing=None):
         raise DataError(f"{what} failed: HTTP {exc.code} {exc.reason}") from None
     except urllib.error.URLError as exc:
         raise DataError(f"{what} failed: {exc.reason}") from None
+    except TimeoutError:
+        raise DataError(f"{what} timed out after {_HTTP_TIMEOUT}s") from None
     if raw.startswith(b"version https://git-lfs.github.com"):
         raise DataError(
             f"{what} returned a Git LFS pointer instead of JSON; cannot download {url}."

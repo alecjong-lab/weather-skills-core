@@ -604,6 +604,19 @@ def test_clip_by_geometry_keeps_missing_row_inside_geometry():
     assert list(out.latitude.values) == [1.0, 2.0, 3.0]
 
 
+def test_clip_by_geometry_multipolygon_keeps_rows_between_parts():
+    from shapely.geometry import MultiPolygon, box
+
+    ds = make_gridded()
+    # Two parts at lat=1 and lat=3, lon=10 and lon=13; the lat=2 row and the
+    # lon=11..12 columns between them stay (as NaN) so the grid stays regular.
+    geometry = MultiPolygon([box(9.6, 0.6, 10.4, 1.4), box(12.6, 2.6, 13.4, 3.4)])
+    out = utils.clip_by_geometry(ds, geometry, drop=True)
+    assert list(out.latitude.values) == [1.0, 2.0, 3.0]
+    assert list(out.longitude.values) == [10.0, 11.0, 12.0, 13.0]
+    assert np.isnan(out["precip"].sel(latitude=2.0)).all()
+
+
 def test_clip_by_geometry_masks_only_grid_variables():
     from shapely.geometry import box
 
