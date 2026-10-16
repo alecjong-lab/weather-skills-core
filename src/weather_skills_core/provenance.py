@@ -18,6 +18,8 @@ from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
+# Rubber-stamp red (RGBA), matching the [w-s] mark.
+_MARK_INK = (192, 40, 28, 235)
 
 _EXIF_USER_COMMENT = 0x9286  # EXIF UserComment tag
 _HTML_META_RE = re.compile(
@@ -157,11 +159,45 @@ def chain_is_intact(history) -> bool:
     return not violations
 
 
-def _draw_official_mark(img):
-    """Composite the red ``[w-s]`` linocut stamp onto ``img`` to mark verified provenance.
+def _render_circular_stamp(diameter: int):
+    """Build a small circular rubber stamp: ring + center star, no text."""
+    import math
 
-    Placed bottom-right on a transparent background. No-ops (returns a copy)
-    when the image is too small.
+    from PIL import Image, ImageDraw
+
+    scale = 4
+    size = max(diameter, 24) * scale
+    stamp = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(stamp)
+    cx = cy = size / 2
+    ink = _MARK_INK
+
+    outer_r = size / 2 - scale
+    draw.ellipse(
+        (cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r),
+        outline=ink,
+        width=max(scale, size // 40),
+    )
+
+    star_r = outer_r * 0.42
+    pts = []
+    for i in range(10):
+        r = star_r if i % 2 == 0 else star_r * 0.38
+        a = -math.pi / 2 + i * math.pi / 5
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    draw.polygon(pts, fill=ink)
+
+    # Slight rotation so it looks hand-inked rather than UI chrome.
+    stamp = stamp.rotate(-6, resample=Image.Resampling.BICUBIC, expand=True)
+    out_w = max(1, round(stamp.width / scale))
+    out_h = max(1, round(stamp.height / scale))
+    return stamp.resize((out_w, out_h), resample=Image.Resampling.LANCZOS)
+
+
+def _draw_official_mark(img):
+    """Composite a circular ``weather-skills provenance verified`` rubber stamp onto ``img``.
+
+    Placed bottom-right. No-ops (returns a copy) when the image is too small.
     """
     from PIL import Image
 
@@ -169,14 +205,9 @@ def _draw_official_mark(img):
     if min(w, h) < 96:
         return img.copy()
 
-    # Pre-rendered so the serif face doesn't depend on fonts in the skill sandbox.
-    # ~6% of the short side wide.
-    stamp_path = Path(__file__).parent / "data" / "stamp.png"
-    with Image.open(stamp_path) as src:
-        stamp = src.convert("RGBA")
-    stamp_w = max(36, min(int(min(w, h) * 0.06), 72))
-    stamp_h = max(1, round(stamp.height * stamp_w / stamp.width))
-    stamp = stamp.resize((stamp_w, stamp_h), resample=Image.Resampling.LANCZOS)
+    # Compact star-only seal; ~6% of the short side.
+    diameter = max(36, min(int(min(w, h) * 0.06), 48))
+    stamp = _render_circular_stamp(diameter)
     margin = max(4, int(min(w, h) * 0.015))
     if stamp.width + 2 * margin > w or stamp.height + 2 * margin > h:
         return img.copy()
@@ -336,8 +367,9 @@ def restamp_zarr(zarr_path: Path, history: list) -> None:
 def stamp_figure(path: Path, history: list) -> None:
     """Embed ``weather_skills_history`` into a PNG, JPEG, or HTML file.
 
-    When the chain is intact (non-empty and schema-valid), also draw the red
-    ``[w-s]`` provenance stamp on PNG/JPEG pixels (bottom-right). HTML gets metadata only.
+    When the chain is intact (non-empty and schema-valid), also draw a circular
+    old-school ``weather-skills provenance verified`` rubber stamp on PNG/JPEG
+    pixels (bottom-right). HTML gets metadata only.
     """
     from weather_skills_core.errors import SkillError
 
