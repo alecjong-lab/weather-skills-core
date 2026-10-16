@@ -50,96 +50,31 @@ def stamp_cf_coords(ds, *, long_names: dict | None = None):
     return ds
 
 
-# Attrs whose value names other variables in the dataset (CF 1.13 §5, §7.1, §3.4).
-CF_REF_ATTRS = ("coordinates", "grid_mapping", "bounds", "ancillary_variables")
+def drop_dangling_cf_refs(ds):
+    """Strip CF reference attrs that name variables ``ds`` lacks.
 
-
-def _ref_holders(ds):
-    """Every attrs/encoding dict that can carry a CF variable reference."""
-    holders = [ds.attrs]
+    Covers ``coordinates``, ``ancillary_variables`` and ``bounds`` (each missing
+    name is removed; an emptied attr is deleted) and ``grid_mapping`` (deleted
+    whole if any name is missing). Checks attrs and encoding of every variable,
+    so a skill that drops ``spatial_ref`` or a bounds var does not write a
+    reference to it. Returns a shallow copy.
+    """
+    ds = ds.copy()
     for var in ds.variables.values():
-        holders.extend((var.attrs, var.encoding))
-    return holders
-
-
-def _map_ref_tokens(value: str, fn) -> str:
-    """Apply ``fn`` to each whitespace token (keeping a ``name:`` colon); drop ``None``s."""
-    out = []
-    for token in value.split():
-        name, colon = (token[:-1], ":") if token.endswith(":") else (token, "")
-        mapped = fn(name)
-        if mapped is not None:
-            out.append(f"{mapped}{colon}")
-    return " ".join(out)
-
-
-def bounds_of(ds, names) -> dict:
-    """``{name: bounds_var}`` for each of ``names`` whose CF ``bounds`` var is in ``ds``."""
-    found = {}
-    for name in names:
-        if name not in ds.variables:
-            continue
-        bounds = ds[name].attrs.get("bounds") or ds[name].encoding.get("bounds")
-        if bounds and bounds in ds.variables:
-            found[name] = bounds
-    return found
-
-
-def rename_cf_refs(ds, mapping: dict):
-    """Rewrite CF reference attrs (``CF_REF_ATTRS``) after ``ds.rename(mapping)``.
-
-    Covers variable attrs and encoding (xarray decodes ``coordinates`` into
-    encoding) and the dataset attrs. Mutates and returns ``ds``.
-    """
-    if not mapping:
-        return ds
-    for holder in _ref_holders(ds):
-        for key in CF_REF_ATTRS:
-            value = holder.get(key)
-            if isinstance(value, str):
-                holder[key] = _map_ref_tokens(value, lambda n: mapping.get(n, n))
+        for holder in (var.attrs, var.encoding):
+            for key in ("coordinates", "ancillary_variables", "bounds", "grid_mapping"):
+                value = holder.get(key)
+                if not isinstance(value, str):
+                    continue
+                tokens = value.split()
+                kept = [t for t in tokens if t.rstrip(":") in ds.variables]
+                if len(kept) == len(tokens):
+                    continue
+                if kept and key != "grid_mapping":
+                    holder[key] = " ".join(kept)
+                else:
+                    del holder[key]
     return ds
-
-
-def drop_cf_refs(ds, names):
-    """Remove ``names`` from CF reference attrs; delete an attr left empty.
-
-    A ``grid_mapping`` that named a dropped mapping variable is removed whole,
-    since its remaining tokens (coord lists) mean nothing without it.
-    Mutates and returns ``ds``.
-    """
-    names = set(names)
-    if not names:
-        return ds
-    for holder in _ref_holders(ds):
-        for key in CF_REF_ATTRS:
-            value = holder.get(key)
-            if not isinstance(value, str):
-                continue
-            mapping_names = {t[:-1] for t in value.split() if t.endswith(":")} or {value.strip()}
-            if key == "grid_mapping" and mapping_names & names:
-                del holder[key]
-                continue
-            kept = _map_ref_tokens(value, lambda n: None if n in names else n)
-            if kept:
-                holder[key] = kept
-            else:
-                del holder[key]
-    return ds
-
-
-def dangling_cf_refs(attrs: dict, ds) -> list:
-    """Names in ``attrs``'s CF reference attrs that ``ds`` does not contain."""
-    missing = []
-    for key in CF_REF_ATTRS:
-        value = attrs.get(key)
-        if not isinstance(value, str):
-            continue
-        for token in value.split():
-            name = token[:-1] if token.endswith(":") else token
-            if name not in ds.variables:
-                missing.append(name)
-    return missing
 
 
 def udunits_error(units, *, catch: tuple | None = None):

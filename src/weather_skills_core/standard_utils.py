@@ -97,11 +97,8 @@ def fill_missing_data_var_attrs(src, dst):
     Heals stripped metadata (regrid, etc.) without overwriting attrs a skill set.
     Does not restore ``aggregation_period`` or rate descriptions (``comment``,
     ``short_name``, ``step_type``, e.g. "Average precipitation rate…", ``prate``,
-    ``avg``) onto vars whose ``cell_methods`` already record a sum (period totals),
-    nor a CF reference attr (``coordinates``, ``grid_mapping``, ...) naming a
-    variable ``dst`` lacks (a skill dropped it on purpose).
+    ``avg``) onto vars whose ``cell_methods`` already record a sum (period totals).
     """
-    from weather_skills_core.cf import CF_REF_ATTRS, dangling_cf_refs
     from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, cell_methods_has_sum
 
     out = dst
@@ -114,8 +111,6 @@ def fill_missing_data_var_attrs(src, dst):
             if key in dst[name].attrs:
                 continue
             if is_total and key in (AGGREGATION_PERIOD_ATTR, "comment", "short_name", "step_type"):
-                continue
-            if key in CF_REF_ATTRS and dangling_cf_refs({key: value}, dst):
                 continue
             if not dirty:
                 out = dst.copy()
