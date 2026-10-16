@@ -677,6 +677,15 @@ def test_roll_and_agg_mean_window():
     np.testing.assert_allclose(out["precip"].values, 2.0)
 
 
+def test_roll_and_agg_left_align_on_half_hourly_time():
+    times = np.datetime64("2026-10-01T00:00") + np.arange(96) * np.timedelta64(30, "m")
+    ds = xr.Dataset({"precip": ("time", np.ones(96))}, coords={"time": times})
+    out = utils.roll_and_agg(ds, 48, "time", method="mean", align="left")
+    # Each label is the first sample of its 48-step (one-day) window.
+    assert out["time"].values[0] == times[0]
+    assert out["time"].values[-1] == times[48]
+
+
 def test_roll_and_agg_rejects_sum():
     with pytest.raises(UsageError, match="unsupported rolling method"):
         utils.roll_and_agg(make_gridded(n_time=5), 3, "time", method="sum")
