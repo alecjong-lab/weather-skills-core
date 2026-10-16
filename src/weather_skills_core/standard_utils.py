@@ -600,6 +600,8 @@ def roll_and_agg(
     """
     import numpy as np
 
+    from weather_skills_core import units  # noqa: F401  (registers the .pint accessor)
+
     if window < 1:
         raise UsageError(f"rolling window must be >= 1; got {window}")
     if window == 1 and stride is None:
@@ -626,15 +628,11 @@ def roll_and_agg(
     if align not in step_by_align:
         raise UsageError(f"align must be left/right/center; got {align!r}")
     step_shift = step_by_align[align]
-    # Timedelta axes: shift by steps, not calendar days.
-    if np.issubdtype(out[dim].dtype, np.timedelta64):
-        steps = np.asarray(ds[dim].values)
-        diffs = np.diff(steps.astype("timedelta64[ns]").astype(np.int64))
-        median_ns = int(np.median(diffs)) if diffs.size else 0
-        shift = np.timedelta64(step_shift * median_ns, "ns")
-    else:
-        shift = np.timedelta64(step_shift, "D")
-    out = out.assign_coords({dim: out[dim] - shift})
+    # Label each window with the original coordinate of its left/center/right
+    # sample, so uneven or sub-daily spacing is labelled exactly.
+    start = window - 1 - step_shift
+    labels = ds[dim].values[start : start + out.sizes[dim]]
+    out = out.assign_coords({dim: (dim, labels, ds[dim].attrs)})
     if stride is None:
         return out
     if isinstance(stride, int):
