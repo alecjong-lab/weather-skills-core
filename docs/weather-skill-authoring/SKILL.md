@@ -124,12 +124,10 @@ Agents pick a skill from its `description`, then call it from the
 `## Usage` section. Some hosts show only those two parts, so everything
 needed to run the skill lives in them.
 
-**`description`** (≤ 800 chars), in this order:
-
-1. What it does: input → action → output.
-2. When to use it.
-3. When not to, naming the skill to use instead.
-4. At most one gotcha that would make a call fail or give a wrong answer.
+**`description`** (≤ 800 chars, usually 2–3 sentences): what the skill
+does (input → output) and when to use it, written for someone seeing it for
+the first time. Name another skill only where a reader would otherwise pick
+the wrong one. Caveats, flag details, and pipeline rules go in Usage.
 
 **`## Usage`** (≤ 3500 chars, up to the next `##` heading):
 
