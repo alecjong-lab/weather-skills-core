@@ -118,9 +118,65 @@ set `weather_skills_source`
 precipitation as rates, and stamp native spacing
 ([UNITS.md](references/UNITS.md)).
 
+## Writing SKILL.md
+
+Agents pick a skill from its `description`, then call it from the
+`## Usage` section. Some hosts show only those two parts, so everything
+needed to run the skill lives in them.
+
+**`description`** (≤ 800 chars), in this order:
+
+1. What it does: input → action → output.
+2. When to use it.
+3. When not to, naming the skill to use instead.
+4. At most one gotcha that would make a call fail or give a wrong answer.
+
+**`## Usage`** (≤ 3500 chars, up to the next `##` heading):
+
+````markdown
+# my-skill
+
+One sentence on what it does.
+
+## Usage
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/x.py -i IN.zarr -o OUT.zarr --bbox N/W/S/E [--smoothing N]
+```
+
+### Arguments
+- `--bbox` — `N/W/S/E` decimal degrees.
+- `--smoothing` — window width in steps. Default: 1.
+
+### Output
+Dims, variables, units, and the attrs the skill stamps.
+
+### Notes
+- Only rules that change what the caller does.
+
+### Example
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/x.py -i chirps.zarr -o chirps_ken.zarr --bbox 5.5/33.5/-5/42.5
+```
+One line on what that produces.
+
+## Details
+
+Optional: background a caller rarely needs. Longer material (dataset
+catalogs, recipes) goes in `references/*.md`, linked from here.
+````
+
+- Describe how the skill works now, in the present tense. No history
+  ("now", "no longer", "previously", "fixed").
+- Every flag appears once under Arguments with its default; lint checks
+  both directions against the script.
+- Examples use real values (a real bbox, dates, dataset ids), not
+  placeholders.
+- Say each thing once: the body does not repeat the description.
+
 ## Checklist
 
 - Script under `scripts/`, PEP 723 block declaring `weather-skills-core`.
 - `_SKILL_VERSION` in the script matches `metadata.version` in `SKILL.md`.
-- Every flag is documented in `SKILL.md`.
+- `SKILL.md` follows [Writing SKILL.md](#writing-skillmd); every flag is under Arguments.
 - `uv run weather-skills-core lint skills/<name>` is clean.
