@@ -2,11 +2,12 @@
 
 Lookup order (no network until a later step):
 
-1. Bundled Natural Earth countries — ISO3 or country name.
+1. Bundled Natural Earth countries — ISO3 or country name. The outline comes
+   from geoBoundaries ADM0 (same source as admin units); the bundled 1:110m
+   outline is the fallback when geoBoundaries is unavailable.
 2. Bundled Natural Earth groupings — continent / UN / World Bank labels
-   (``Eastern Africa``, ``Sub-Saharan Africa``, …). ``East Africa`` is the
-   Eastern Africa grouping clipped at 15°S.
-3. Bundled custom forecast boxes — ``Kenya OND region``, ``Indian Ocean basin``, ….
+   (``Eastern Africa``, ``Sub-Saharan Africa``, …), on the 1:110m outlines.
+3. Bundled custom boxes — ``Indian Ocean basin``.
 4. geoBoundaries admin-1 / admin-2 — ``kenya-nairobi`` or ``KEN-nairobi``.
 5. OSM Nominatim — landmarks only, via :func:`geocode_nominatim`.
 
@@ -16,6 +17,7 @@ Rebuild the country file with ``tools/build_countries.py``.
 from __future__ import annotations
 
 import json
+import sys
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -28,9 +30,10 @@ from weather_skills_core.errors import DataError, UsageError
 _GB_API = "https://www.geoboundaries.org/api/current/gbOpen/{iso3}/ADM{level}/"
 _NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 _HTTP_TIMEOUT = 60
-_USER_AGENT = (
-    "weather-skills-core/resolve-region (https://github.com/rhiza-research/weather-skills)"
-)
+# Sent on every geoBoundaries / Nominatim request. Nominatim's usage policy requires
+# a User-Agent that identifies the app (the default Python-urllib one gets blocked);
+# the URL tells the service operators who to contact.
+_USER_AGENT = "weather-skills-core (https://github.com/rhiza-research/weather-skills-core)"
 _REGION_FIELDS = ("subregion", "continent", "region_un", "region_wb")
 _DIRECTIONAL_PREFIXES = (
     ("eastern_", "east_"),
@@ -72,35 +75,12 @@ _COUNTRY_ALIASES = {
     "west_bank": "palestine",
 }
 
-# ``East Africa`` is the NE Eastern Africa grouping clipped at this latitude
-# (Greater Horn / ICPAC-style view). ``Eastern Africa`` stays the full UN box.
-_EAST_AFRICA_SOUTH = -15.0
-
-# ``Kenya OND region`` analog box (N, W, S, E): 36.5–42°E, 5°S–5°N.
-_KENYA_OND_BBOX = (5.0, 36.5, -5.0, 42.0)
-
-# Forecast / briefing boxes that are not Natural Earth groupings or admin units.
+# Boxes that are not Natural Earth groupings or admin units.
 # ``bbox`` is (N, W, S, E). Aliases are passed through :func:`clean_region_name`.
 _CUSTOM_REGIONS = {
-    "kenya_ond_region": {
-        "name": "Kenya OND region",
-        "bbox": _KENYA_OND_BBOX,
-        "iso3": "KEN",
-        "country": "Kenya",
-        "aliases": (
-            "Kenya OND",
-            "OND Kenya",
-            "Central-Eastern Kenya",
-            "Central Eastern Kenya",
-            "Central and Eastern Kenya",
-            "CE Kenya",
-        ),
-    },
     "indian_ocean_basin": {
         "name": "Indian Ocean basin",
         "bbox": (30.0, 20.0, -40.0, 120.0),
-        "iso3": None,
-        "country": None,
         "aliases": (
             "Indian Ocean",
             "Indian Ocean Basin",
@@ -343,52 +323,39 @@ def _slim_custom(spec: dict) -> dict:
 
 
 def _slim_country(feature: dict) -> dict:
+    """Country Feature with the geoBoundaries ADM0 outline; bundled 1:110m if unavailable.
+
+    The bundled outline is coarse (Kenya has 37 vertices, ~20 km off in places)
+    and does not share edges with the geoBoundaries admin units, so it is only
+    the fallback when geoBoundaries has no ADM0 layer or cannot be reached.
+    """
     props = feature["properties"]
+    geometry, source = feature["geometry"], "Natural Earth 1:110m"
+    try:
+        parts = []
+        for gb_feature in _admin_collection(props["iso3"], 0).get("features") or []:
+            parts.extend(_polygon_parts(gb_feature.get("geometry") or {}))
+        if parts:
+            geometry = (
+                {"type": "Polygon", "coordinates": parts[0]}
+                if len(parts) == 1
+                else {"type": "MultiPolygon", "coordinates": parts}
+            )
+            source = "geoBoundaries gbOpen ADM0"
+    except (_AdminMissing, DataError) as exc:
+        print(
+            f"Warning: using the coarse Natural Earth 1:110m outline for {props['name']}: {exc}",
+            file=sys.stderr,
+        )
     return _feature(
-        feature["geometry"],
+        geometry,
         iso3=props["iso3"],
         name=props["name"],
         region_name=clean_region_name(props["name"]),
         level="country",
         country=props["name"],
+        boundary_source=source,
     )
-
-
-def _clip_geometry_to_rect(geometry, west, south, east, north):
-    """Intersect a GeoJSON geometry with a lon/lat rectangle; return GeoJSON."""
-    from shapely.geometry import GeometryCollection, box, mapping, shape
-    from shapely.ops import unary_union
-
-    clipped = shape(geometry).intersection(
-        box(float(west), float(south), float(east), float(north))
-    )
-    if clipped.is_empty:
-        return None
-    if clipped.geom_type == "GeometryCollection" or isinstance(clipped, GeometryCollection):
-        parts = [
-            part
-            for part in clipped.geoms
-            if not part.is_empty and part.geom_type in ("Polygon", "MultiPolygon")
-        ]
-        if not parts:
-            return None
-        clipped = unary_union(parts)
-    return mapping(clipped)
-
-
-def _clip_feature_south(feature: dict, south: float) -> dict:
-    """Keep land at or north of ``south``; bbox south is exactly that latitude."""
-    geometry = _clip_geometry_to_rect(feature["geometry"], -180.0, south, 180.0, 90.0)
-    if geometry is None:
-        raise DataError(
-            f"{feature['properties'].get('name')!r} has no land north of {south}°."
-        )
-    north, west, _south, east = bbox_from_geometry(geometry)
-    props = dict(feature["properties"])
-    props["name"] = "East Africa"
-    props["region_name"] = "east_africa"
-    props["bbox"] = [north, west, float(south), east]
-    return {**feature, "geometry": geometry, "properties": props}
 
 
 def _slim_region(spec: dict) -> dict:
@@ -426,10 +393,7 @@ def _match_bundled(cleaned: str) -> dict | None:
         return _slim_country(match)
     named = _region_indexes().get(cleaned)
     if named is not None:
-        feature = _slim_region(named)
-        if cleaned == "east_africa":
-            return _clip_feature_south(feature, _EAST_AFRICA_SOUTH)
-        return feature
+        return _slim_region(named)
     custom = _custom_indexes().get(cleaned)
     if custom is not None:
         return _slim_custom(custom)
@@ -615,7 +579,7 @@ def geocode_nominatim(query: str) -> dict:
             f"{query!r} is not a known ISO3 code, country name, named region, "
             "or sub-national region, and Nominatim found no matching place. "
             "Pass an ISO3 code, country-admin1, a named region "
-            "(e.g. East Africa, Kenya OND region), "
+            "(e.g. East Africa, Indian Ocean), "
             "or a more specific landmark (e.g. 'Mount Kenya, Kenya')."
         )
     hit = hits[0]
@@ -631,6 +595,8 @@ def geocode_nominatim(query: str) -> dict:
         level="nominatim",
         country=None,
         display_name=display,
+        osm_category=hit.get("category"),
+        osm_type=hit.get("type"),
         bbox=[north, west, south, east],
     )
 
@@ -644,7 +610,7 @@ def lookup_region(query: str) -> dict:
     if not text:
         raise UsageError(
             "region query must be a non-empty ISO3 code, country name, "
-            "named region (e.g. East Africa, Kenya OND region), or sub-national region "
+            "named region (e.g. East Africa, Indian Ocean), or sub-national region "
             "(e.g. kenya-nairobi)."
         )
 
@@ -670,7 +636,7 @@ def lookup_region(query: str) -> dict:
 
     raise DataError(
         f"{query!r} is not a known ISO3 code, country name, named region "
-        "(e.g. East Africa, Kenya OND region), or sub-national region "
+        "(e.g. East Africa, Indian Ocean), or sub-national region "
         "(country-admin1 / country-admin1-admin2)."
     )
 
