@@ -17,6 +17,9 @@ to the kind's display unit and may stamp CF ``standard_name``; the variable
   pressure-level ``t`` — callers convert those with ``convert_dataarray``.
 - ``precip`` → ``mm day-1``. Precip **rate** / flux.
 - ``precip_amount`` → ``mm``. Precip **total** (rate × period).
+- ``pressure`` → ``hPa``. Sea-level and surface air pressure (``msl``,
+  ``mslp``, ``prmsl``, ``air_pressure_at_mean_sea_level``,
+  ``surface_air_pressure``). Not pressure-level coordinates.
 
 ``temp`` and ``precip`` require a units attr (``units_required``). Other
 variables, including ``precip_amount``, may omit units. Unrecognized fields
@@ -133,6 +136,20 @@ STANDARD = {
         "depth_candidates": ("m", "mm"),
         "name_hints": (),
     },
+    "pressure": {
+        "units_required": False,
+        "units": "hPa",
+        "standard_name": None,
+        "standard_names": frozenset(
+            {"air_pressure_at_mean_sea_level", "air_pressure_at_sea_level", "surface_air_pressure"}
+        ),
+        "standard_name_endswith": (),
+        "standard_name_contains": (),
+        "unit_candidates": ("hPa", "Pa", "mbar"),
+        "depth_candidates": (),
+        # No "sp": as a prefix it would match speed, spi, …; ERA5 sp has a standard_name.
+        "name_hints": ("msl", "mslp", "prmsl", "mean_sea_level_pressure", "surface_pressure"),
+    },
 }
 
 # Colorbar / CF long_name for precip amounts (rate × period). Overwrites leftover
@@ -233,7 +250,15 @@ def classify_variable(name: str, *, units=None, standard_name=None) -> str | Non
     for kind, spec in STANDARD.items():
         if any(h == key or key.startswith(h) or key.endswith(h) for h in spec["name_hints"]):
             if kind == "precip" and isinstance(units, str) and units.strip():
-                return _precip_kind_from_hint_units(units)
+                found = _precip_kind_from_hint_units(units)
+                if found is None:
+                    # Not precip units after all (prmsl starts with "pr"): try the next kind.
+                    continue
+                return found
+            if kind == "pressure" and isinstance(units, str) and units.strip():
+                # A pressure-named anomaly in "1" or sigma is not a pressure.
+                if not units_convertible(units, STANDARD["pressure"]["units"]):
+                    continue
             return kind
     return None
 
@@ -563,11 +588,12 @@ def convert_dataarray(da, dst_units: str):
 
 
 def to_standard_units(ds, variables=None):
-    """Convert recognized air-temp / precip data vars to standard display units.
+    """Convert recognized air-temp / precip / pressure data vars to standard display units.
 
     Classification is by CF ``standard_name`` or named variable hints (with
     precip amount-vs-rate from units when needed). Air temperature →
-    ``degree_Celsius``; precip rates → ``mm day-1``; precip amounts → ``mm``.
+    ``degree_Celsius``; precip rates → ``mm day-1``; precip amounts → ``mm``;
+    sea-level and surface pressure → ``hPa``.
     SST, dewpoint, skin, soil, and pressure-level temperature are not the
     ``temp`` kind — convert those with ``convert_dataarray``. On a match,
     stamps the kind's CF ``standard_name`` (when set); the variable **name**
