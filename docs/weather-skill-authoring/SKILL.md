@@ -126,8 +126,10 @@ needed to run the skill lives in them.
 
 **`description`** (≤ 800 chars, usually 2–3 sentences): what the skill
 does (input → output) and when to use it, written for someone seeing it for
-the first time. Name another skill only where a reader would otherwise pick
-the wrong one. Caveats, flag details, and pipeline rules go in Usage.
+the first time. Agents see every description at once and pick the most
+specific match, so do not point to other skills; when two skills look alike,
+the more specialised one says what sets it apart. Caveats, flag details, and
+pipeline rules go in Usage.
 
 **`## Usage`** (≤ 3500 chars, up to the next `##` heading):
 
