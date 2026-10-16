@@ -18,8 +18,8 @@ from pathlib import Path
 
 HISTORY_ATTR = "weather_skills_history"
 SOURCE_ATTR = "weather_skills_source"
-# Classic crimson rubber-stamp ink (RGBA) — opaque enough to read on maps.
-_MARK_INK = (139, 15, 32, 250)
+# Rubber-stamp red (RGBA), matching the [w-s] mark.
+_MARK_INK = (192, 40, 28, 235)
 
 _EXIF_USER_COMMENT = 0x9286  # EXIF UserComment tag
 _HTML_META_RE = re.compile(
@@ -176,13 +176,13 @@ def _render_circular_stamp(diameter: int):
     draw.ellipse(
         (cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r),
         outline=ink,
-        width=max(2 * scale, size // 22),
+        width=max(scale, size // 40),
     )
 
-    star_r = outer_r * 0.48
+    star_r = outer_r * 0.42
     pts = []
     for i in range(10):
-        r = star_r if i % 2 == 0 else star_r * 0.42
+        r = star_r if i % 2 == 0 else star_r * 0.38
         a = -math.pi / 2 + i * math.pi / 5
         pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     draw.polygon(pts, fill=ink)
@@ -409,10 +409,14 @@ def stamp_figure(path: Path, history: list) -> None:
     if suffix in (".html", ".htm"):
         text = path.read_text(encoding="utf-8")
         meta = f'<meta name="{HISTORY_ATTR}" content="{html.escape(payload, quote=True)}">'
+        # Replace via a function: the JSON payload carries backslash escapes
+        # (e.g. \u2014 for an em dash) that re.sub would parse as a template.
         if _HTML_META_RE.search(text):
-            text = _HTML_META_RE.sub(meta, text, count=1)
+            text = _HTML_META_RE.sub(lambda m: meta, text, count=1)
         elif re.search(r"<head[^>]*>", text, re.IGNORECASE):
-            text = re.sub(r"(<head[^>]*>)", rf"\1\n{meta}", text, count=1, flags=re.IGNORECASE)
+            text = re.sub(
+                r"(<head[^>]*>)", lambda m: f"{m.group(1)}\n{meta}", text, count=1, flags=re.I
+            )
         else:
             text = meta + "\n" + text
         path.write_text(text, encoding="utf-8")
