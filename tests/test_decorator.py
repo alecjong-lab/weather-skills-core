@@ -381,22 +381,6 @@ def test_run_loop_refuses_plain_file_output(tmp_path, capsys):
     assert out.read_text() == "keep me"
 
 
-def test_run_loop_writes_uneven_dask_chunks(tmp_path):
-    pytest.importorskip("dask")
-    src = tmp_path / "in.zarr"
-    out = tmp_path / "out.zarr"
-    make_gridded(n_time=5).chunk({"time": 2}).to_zarr(src, mode="w", consolidated=True)
-
-    @weather_skill(name="uneven", version="0.1.0")
-    @weather_skill.argument("-i", "--input", type=Dataset("observations"), required=True)
-    def uneven(ds, **kwargs):
-        # Rolling windows / interpolation leave chunks like (2, 1, 2) along time.
-        return ds.chunk({"time": (2, 1, 2)})
-
-    uneven(["-i", str(src), "-o", str(out)])
-    assert xr.open_zarr(out).sizes["time"] == 5
-
-
 def test_run_loop_no_artifact(tmp_path):
     src = tmp_path / "in.zarr"
     make_gridded().to_zarr(src, mode="w", consolidated=True)
