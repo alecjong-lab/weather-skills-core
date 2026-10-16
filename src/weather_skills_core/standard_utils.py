@@ -628,12 +628,11 @@ def roll_and_agg(
     if align not in step_by_align:
         raise UsageError(f"align must be left/right/center; got {align!r}")
     step_shift = step_by_align[align]
-    # Shift the label by whole axis steps (median spacing), not calendar days,
-    # so sub-daily axes move by rows.
-    diffs = np.diff(np.asarray(ds[dim].values)).astype("timedelta64[ns]").astype(np.int64)
-    median_ns = int(np.median(diffs)) if diffs.size else 0
-    shift = np.timedelta64(step_shift * median_ns, "ns")
-    out = out.assign_coords({dim: out[dim] - shift})
+    # Label each window with the original coordinate of its left/center/right
+    # sample, so uneven or sub-daily spacing is labelled exactly.
+    n = ds.sizes[dim]
+    labels = ds[dim].values[window - 1 - step_shift : n - step_shift]
+    out = out.assign_coords({dim: (dim, labels, ds[dim].attrs)})
     if stride is None:
         return out
     if isinstance(stride, int):

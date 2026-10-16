@@ -686,6 +686,22 @@ def test_roll_and_agg_left_align_on_half_hourly_time():
     assert out["time"].values[-1] == times[48]
 
 
+def test_roll_and_agg_labels_uneven_time_exactly():
+    # Daily axis with 2026-10-04 missing: labels must be original timestamps.
+    times = np.array(
+        ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-05", "2026-10-06"],
+        dtype="datetime64[ns]",
+    )
+    ds = xr.Dataset({"precip": ("time", np.arange(5.0))}, coords={"time": times})
+    ds["time"].attrs["standard_name"] = "time"
+    left = utils.roll_and_agg(ds, 3, "time", method="mean", align="left")
+    np.testing.assert_array_equal(left["time"].values, times[:3])
+    np.testing.assert_allclose(left["precip"].values, [1.0, 2.0, 3.0])
+    center = utils.roll_and_agg(ds, 3, "time", method="mean", align="center")
+    np.testing.assert_array_equal(center["time"].values, times[1:4])
+    assert center["time"].attrs["standard_name"] == "time"
+
+
 def test_roll_and_agg_rejects_sum():
     with pytest.raises(UsageError, match="unsupported rolling method"):
         utils.roll_and_agg(make_gridded(n_time=5), 3, "time", method="sum")
