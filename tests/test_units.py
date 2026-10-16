@@ -147,6 +147,31 @@ def test_units_convertible():
     assert not units_convertible("1", "mm day-1")
 
 
+def test_pressure_is_a_standard_kind_in_hpa():
+    """MSLP / surface pressure in Pa convert to hPa; pressure-named anomalies do not."""
+    sn = "air_pressure_at_mean_sea_level"
+    assert classify_variable("msl", units="Pa", standard_name=sn) == "pressure"
+    assert classify_variable("sp", units="Pa", standard_name="surface_air_pressure") == "pressure"
+    assert classify_variable("prmsl", units="Pa") == "pressure"
+    assert classify_variable("msl", units="1") is None  # a normalized anomaly
+    assert classify_variable("speed", units="m s-1") is None
+    assert classify_variable("spi", units="1") is None
+
+    ds = make_gridded(name="msl", fill=101325.0, units="Pa")
+    ds["msl"].attrs["standard_name"] = sn
+    out = to_standard_units(ds)
+    assert out["msl"].attrs["units"] == "hPa"
+    assert out["msl"].attrs["standard_name"] == sn
+    np.testing.assert_allclose(out["msl"].values, 1013.25)
+    # A Pa difference (a pressure anomaly from `difference`) scales the same way.
+    diff = make_gridded(name="msl", fill=-250.0, units="Pa")
+    np.testing.assert_allclose(to_standard_units(diff)["msl"].values, -2.5)
+    assert (
+        to_standard_units(make_gridded(name="msl", fill=1.5, units="1"))["msl"].attrs["units"]
+        == "1"
+    )
+
+
 def test_to_standard_units_missing_variable():
     """A missing --variable name is a UsageError."""
     ds = make_gridded()
