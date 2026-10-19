@@ -88,7 +88,19 @@ def _clear_admin_cache():
     region_mod._nominatim_collection.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _offline_country_outlines(monkeypatch):
+    """Country lookups use the bundled outline unless a test supplies ADM0."""
+
+    def offline(iso3, level):
+        raise region_mod._AdminMissing(f"offline test: no ADM{level} for {iso3}")
+
+    monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", offline)
+
+
 def _fake_admin(iso3, level):
+    if level == 0:
+        raise region_mod._AdminMissing("offline test: no ADM0")
     if iso3 != "KEN":
         raise AssertionError(f"unexpected fetch {iso3} admin-{level}")
     if level == 1:
@@ -117,6 +129,32 @@ def test_resolve_kenya_iso3():
     assert 41.0 < e < 43.0
     assert list(gdf["iso3"]) == ["KEN"]
     assert list(gdf["name"]) == ["Kenya"]
+
+
+def test_country_outline_from_geoboundaries(monkeypatch):
+    """A country takes the geoBoundaries ADM0 outline when it is available."""
+    adm0 = {"type": "FeatureCollection", "features": _NAIROBI["features"]}
+    monkeypatch.setattr(
+        "weather_skills_core.region._load_admin_geojson",
+        lambda iso3, level: adm0 if (iso3, level) == ("KEN", 0) else None,
+    )
+    feature = lookup_region("Kenya")
+    assert feature["properties"]["boundary_source"] == "geoBoundaries gbOpen ADM0"
+    assert feature["geometry"]["type"] == "MultiPolygon"
+    assert len(feature["geometry"]["coordinates"]) == 2
+    assert bbox_from_feature(feature) == (1.0, 35.0, -1.4, 37.0)
+
+
+def test_country_outline_falls_back_with_warning(monkeypatch, capsys):
+    """When geoBoundaries cannot be reached, the bundled outline is used and named."""
+
+    def unreachable(iso3, level):
+        raise DataError("geoBoundaries ADM0 metadata for KEN failed: timed out")
+
+    monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", unreachable)
+    feature = lookup_region("KEN")
+    assert feature["properties"]["boundary_source"] == "Natural Earth 1:110m"
+    assert "coarse Natural Earth 1:110m outline for Kenya" in capsys.readouterr().err
 
 
 def test_resolve_by_name_case_insensitive():
@@ -239,6 +277,8 @@ def _mount_kenya_hit(*, geojson=None):
         {
             "display_name": "Mount Kenya, Kenya",
             "name": "Mount Kenya",
+            "category": "natural",
+            "type": "volcano",
             "boundingbox": ["-0.25", "-0.05", "37.2", "37.4"],
             "lat": "-0.15",
             "lon": "37.3",
@@ -248,7 +288,7 @@ def _mount_kenya_hit(*, geojson=None):
 
 
 def test_should_geocode_landmarks_not_admin_keys():
-    """Landmarks may hit Nominatim; ISO3, admin keys, and NE regions must not."""
+    """Landmarks may hit Nominatim; ISO3, admin keys, NE regions, and custom boxes must not."""
     assert should_geocode("Mount Kenya") is True
     assert should_geocode("Mount Kenya, Kenya") is True
     assert should_geocode("kenya-nairbi") is False
@@ -259,6 +299,9 @@ def test_should_geocode_landmarks_not_admin_keys():
     assert should_geocode("Eastern Africa") is False
     assert should_geocode("Western Africa") is False
     assert should_geocode("Sub-Saharan Africa") is False
+    assert should_geocode("Indian Ocean") is False
+    assert should_geocode("Indian Ocean basin") is False
+    assert should_geocode("IOB") is False
 
 
 def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
@@ -273,17 +316,44 @@ def test_lookup_ne_eastern_africa_not_nominatim(monkeypatch):
     kn, kw, ks, ke = bbox_from_feature(kenya)
     east = lookup_region("East Africa")
     eastern = lookup_region("Eastern Africa")
+    # "East Africa" is the directional alias of the UN Eastern Africa grouping.
+    assert east == eastern
     assert east["properties"]["name"] == "Eastern Africa"
     assert east["properties"]["level"] == "region"
-    assert east["properties"]["region_name"] == "eastern_africa"
     assert east["geometry"]["type"] == "MultiPolygon"
     n, w, s, e = bbox_from_feature(east)
-    assert bbox_from_feature(eastern) == (n, w, s, e)
     assert s <= ks <= kn <= n
     assert w <= kw <= ke <= e
-    # UN-style Eastern Africa includes Madagascar, not a Ugandan POI.
-    assert s < -20
     assert n > 10
+    assert s < -20  # keeps Madagascar
+
+
+def test_lookup_indian_ocean_basin_not_nominatim(monkeypatch):
+    """Indian Ocean is the conventional basin box, never a Nominatim centroid."""
+
+    def _fail_nominatim(query):
+        raise AssertionError(f"Nominatim should not run for Indian Ocean; got {query!r}")
+
+    monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
+
+    feature = lookup_region("Indian Ocean basin")
+    props = feature["properties"]
+    assert props["name"] == "Indian Ocean basin"
+    assert props["level"] == "custom"
+    assert props["iso3"] is None
+    n, w, s, e = bbox_from_feature(feature)
+    assert (n, w, s, e) == (30.0, 20.0, -40.0, 120.0)
+    assert feature["geometry"]["type"] == "Polygon"
+
+    aliases = (
+        lookup_region("Indian Ocean"),
+        lookup_region("Indian Ocean Basin"),
+        lookup_region("Indian Ocean basin region"),
+        lookup_region("IOB"),
+    )
+    for other in aliases:
+        assert bbox_from_feature(other) == (n, w, s, e)
+        assert other["properties"]["name"] == "Indian Ocean basin"
 
 
 def test_south_africa_is_the_country_not_the_subregion():
@@ -316,6 +386,7 @@ def test_geocode_nominatim_polygon(monkeypatch):
     assert props["level"] == "nominatim"
     assert props["name"] == "Mount Kenya"
     assert props["display_name"] == "Mount Kenya, Kenya"
+    assert (props["osm_category"], props["osm_type"]) == ("natural", "volcano")
     assert props["bbox"] == pytest.approx([-0.05, 37.2, -0.25, 37.4])
     n, w, s, e = bbox_from_feature(feature)
     assert (n, w, s, e) == pytest.approx((-0.05, 37.2, -0.25, 37.4))
@@ -351,3 +422,12 @@ def test_bbox_from_feature_prefers_stored_bbox():
         "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
     }
     assert bbox_from_feature(feature) == (1.0, 2.0, -1.0, 4.0)
+
+
+def test_http_json_read_timeout_is_data_error(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(region_mod.urllib.request, "urlopen", timeout)
+    with pytest.raises(DataError, match="timed out"):
+        region_mod._http_json("https://example.invalid/x.json", what="test fetch")

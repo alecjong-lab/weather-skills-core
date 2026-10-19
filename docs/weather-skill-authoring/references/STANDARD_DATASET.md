@@ -5,8 +5,8 @@ store with a small, shared dimension vocabulary. Skill A can feed skill
 B because both agree what `forecast` and `lat` mean.
 
 Declare what an input must have with `type=Dataset(...)`. The decorator
-opens the path, checks those dimensions, attaches pint units, and
-injects the opened `xarray.Dataset` as `ds`.
+opens the path, checks those dimensions, and passes the opened
+`xarray.Dataset` to the skill (see [Open and write](#open-and-write)).
 
 Units policy: [UNITS.md](UNITS.md). Flag names: [CONVENTIONS.md](CONVENTIONS.md).
 
@@ -91,35 +91,66 @@ def clip_region(ds, output, **kwargs):
     return ds
 ```
 
-Several Zarrs on one flag: `nargs=2` or `nargs="+"`. `--input` still
-arrives as `ds`, now a list. Separate Dataset flags when the roles
-differ (`--forecast` vs `--obs`).
-
-The decorator owns `-o/--output`. There is no output dim check — the
-returned cube is whatever the skill produced. Return count must match
-the number of `--output` paths.
+Outputs are not checked against a type: the decorator writes whatever
+Dataset the skill returns.
 
 ## Provenance
 
-Every writing skill appends one step to `weather_skills_history`.
+The decorator records provenance for you. The only thing a skill sets is
+`weather_skills_source`, and only fetchers set it:
 
-| Attr | Who sets it | Meaning |
-| --- | --- | --- |
-| `weather_skills_source` | fetchers (optional) | Where the data came from, e.g. `chirps` |
-| `weather_skills_history` | every writing skill | JSON list of `{skill, version, args, input}` |
+```python
+ds.attrs["weather_skills_source"] = "chirps"  # or "dynamical:<catalog-id>"
+```
 
-`input` is `{basename, hash}` of the upstream Zarr. Path write targets
-and Dataset path strings are omitted from `args`. Plots store the same
-JSON in file metadata. When the chain is intact, PNG/JPEG figures also
-get a corner `weather-skills provenance verified` mark; HTML figures
-get metadata only.
+Plots turn this token into the short product name, so pick one that
+title-cases cleanly.
 
-## Writing Zarr
+Everything else is in `weather_skills_history`, a JSON list of entries.
+Each entry is one skill run:
 
-- CF-compliant, `consolidated=True`
-- Missing values are NaN
-- Clear `.encoding` before `to_zarr`
+| Key | Meaning |
+| --- | --- |
+| `skill`, `version` | Which skill ran |
+| `args` | Its CLI arguments, minus input and output paths |
+| `input` | The Zarr(s) it read: `{basename, hash}`, a list of those, or `null` for a fetcher |
+| `commit`, `repo`, `dirty` | Git identity of the skill code, when known |
 
-The decorator stamps history and writes when you return an
-`xr.Dataset`. Fetchers should also stamp native cell geometry
-(`data_interval` or CF `{dim}_bounds`) — see [UNITS.md](UNITS.md).
+Chaining works like this:
+
+- **One input:** the new history is the input's history plus one entry,
+  oldest first. A fetch → clip → aggregate pipeline is a flat list of
+  three entries.
+- **Several inputs** (e.g. `difference A B`): the history is a single
+  entry, and each item in its `input` list carries that parent's whole
+  history under `history`. Read it as a tree, not a list.
+
+Figures (PNG, JPEG, HTML) store the same JSON in file metadata. A PNG
+or JPEG with a valid history also gets a small star stamp in the corner.
+
+## Open and write
+
+The decorator does all Zarr I/O. Skills never call `open_zarr` or
+`to_zarr` for their main input and output.
+
+**On open**, each `Dataset` input is checked against its declared dims,
+GRIB-style unit strings are normalized, `step` is cast to
+`timedelta64[ns]`, lat/lon are snapped (below), and pint units are
+attached from each variable's `units` attr.
+
+**On write**, a returned Dataset is converted back to plain unit
+strings and then:
+
+- `step` is cast to `timedelta64[ns]`;
+- lat/lon coords are rounded to 5 decimals and stored as `float32`, so
+  grids that agree to ~1 m line up exactly when two datasets are joined;
+- precipitation amounts get the amount CF `standard_name`;
+- data-variable attrs the skill dropped are copied back from the first
+  input (matching variable names), and global attrs are inherited from it;
+- provenance is stamped, encodings are cleared, and the store is written
+  with `consolidated=True`, replacing any existing store at that path.
+
+What the skill still owns: CF-compliant names and attrs on anything it
+creates, NaN for missing values, value conversions (`to_standard_units`),
+and, in fetchers, native cell geometry (`data_interval` or CF
+`{dim}_bounds`; see [UNITS.md](UNITS.md#native-spacing-vs-aggregation)).

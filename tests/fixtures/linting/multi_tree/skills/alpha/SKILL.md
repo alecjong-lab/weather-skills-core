@@ -1,6 +1,6 @@
 ---
 name: alpha
-description: Lint fixture; shares one-off flags with siblings.
+description: Lint fixture; declares flags its siblings declare differently.
 metadata:
   version: "0.1.0"
 ---

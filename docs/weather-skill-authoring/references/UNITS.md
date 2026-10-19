@@ -6,8 +6,7 @@ precipitation) carries a pint-parseable CF `units` attr. Other
 variables may include units optionally.
 
 On disk the attr is a string (`mm day-1`). In the skill body it is a
-pint quantity: the decorator **quantifies** on open and **dequantifies**
-before write. Implementation: `weather_skills_core.units`.
+pint quantity. Implementation: `weather_skills_core.units`.
 
 Dims and types: [STANDARD_DATASET.md](STANDARD_DATASET.md).
 
@@ -18,12 +17,13 @@ Dims and types: [STANDARD_DATASET.md](STANDARD_DATASET.md).
 | temp | `degree_Celsius` | Existing CF `standard_name` is kept |
 | precip (rate) | `mm day-1` | `lwe_precipitation_rate` |
 | precip (amount) | `mm` | Rate × period via totals utilities |
+| pressure | `hPa` | Sea-level and surface air pressure (`msl`, `mslp`, `prmsl`, CF `air_pressure_at_mean_sea_level`, `surface_air_pressure`); existing `standard_name` is kept |
 
 Mass precip flux (`kg m-2 s-1`) converts to a depth rate using liquid
 water density (1000 kg m⁻³). Custom pint durations: `pentad` (5 day)
 and `dekad` (10 day); week and month come from pint itself.
 
-`to_standard_units` converts a recognized temp/precip variable to the
+`to_standard_units` converts a recognized temp/precip/pressure variable to the
 table above and stamps that kind's `standard_name` when set. It leaves
 the **variable name** unchanged. Value conversion is skill-owned — the
 decorator does not call it for you.
@@ -58,12 +58,27 @@ stamps exactly one of:
 
 Never both. Deaccumulate uses the same pair.
 
+This is the **width of each cell**, not the gap between samples. Taking
+every 7th day of a daily series leaves 1-day cells, so `data_interval`
+stays `1 day`.
+
+**Forecast interval fields are left-labeled.** After deaccumulate (or a
+fetch that writes per-step rates), `step = 0` is the first native period
+`[init, init+interval)` — for daily precip, the 24h from init `2025-01-01`
+to `2025-01-02`. `step-to-time` stays `valid = init + step`, so that cell
+is `2025-01-01`. Instantaneous fields (analysis winds at 00Z) keep
+`step = 0` as the init instant.
+
+Once stamped, later skills keep that geometry: `stamp_data_interval`
+infers it from the axis only when nothing is stamped yet. A skill that
+changes cell width must pass `period=`, which overwrites the old stamp.
+
 **Aggregation** is a later window. Only `aggregate-temporal` stamps:
 
 | Attr | Where | Meaning |
 | --- | --- | --- |
 | `aggregation_period` | data variable (pint string) | Length of each aggregated interval (`7 day`, `21 day`) |
-| `aggregation_coverage` | time/step coordinate, 0–1 | Fraction of native samples present in that interval |
+| `aggregation_coverage` | time/step coordinate, 0–1 | Fraction of native samples with finite data in that interval (all-NaN times do not count) |
 | `cell_methods` | data variable | The operation (`time: mean`, `time: sum`) |
 
 `data_interval` is not the aggregation window. Convert-to-totals
@@ -81,16 +96,12 @@ durations (`21 day`) are also valid `--period` values.
 
 ## What the decorator does
 
-1. After opening a Zarr, `quantify_dataset` attaches pint units from
-   each data variable's `units` attr (when present).
-2. Known kinds with `units_required` (today: temp, precip) must have
-   parseable units. Other variables may omit them.
-3. Before writing, `dequantify_dataset` strips pint so stored attrs
-   stay plain strings. The write path also normalizes GRIB unit
-   strings, stamps precip-amount CF names when units are amounts
-   (including leftover rate-like `long_name` / `GRIB_name`), casts
-   `step` to `timedelta64[ns]`, and copies data-var attrs the skill
-   stripped from the first input (same variable names).
+On open, `quantify_dataset` attaches pint units from each variable's
+`units` attr and refuses temp or precip without parseable units. On
+write, `dequantify_dataset` turns them back into plain strings, and
+precip amounts get the amount CF names (leftover rate-like `long_name`
+/ `GRIB_name` become `Total precipitation`). The other open/write steps
+are in [STANDARD_DATASET.md](STANDARD_DATASET.md#open-and-write).
 
 ## `convert-to-totals`
 
@@ -131,8 +142,8 @@ is not treated as precip.
 | `units_equal` | Spelling-independent equality (`mm/day` ≈ `mm day-1`) |
 | `convert_dataarray` / `convert_values` | Explicit unit ↔ unit |
 | `to_standard_units` | Temp / precip → standard display units |
-| `stamp_data_interval` | Uniform `data_interval` or CF `{dim}_bounds` on fetch / deaccumulate |
-| `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate amount vars on `step`, else ÷ interval) |
+| `stamp_data_interval` | Stamp native `data_interval` or CF bounds (see above) |
+| `precip_amounts_to_rates` | Amount → `mm day-1` (deaccumulate amount vars on `step` at the left edge, else ÷ interval) |
 | `stamp_precip_amounts` | Amount units → amount CF `standard_name`; rewrite rate display names |
 | `rate_to_total` | Rate × period → amount (refuses precip totals) |
 | `parse_aggregation_period` | Parse an `aggregation_period` / duration string |
